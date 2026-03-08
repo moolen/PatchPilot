@@ -32,6 +32,7 @@ type Summary struct {
 	After        int                  `json:"after"`
 	Patches      []fixer.Patch        `json:"patches,omitempty"`
 	Findings     []FindingResult      `json:"findings,omitempty"`
+	Explanations []FixExplanation     `json:"explanations,omitempty"`
 	Unsupported  []UnsupportedFinding `json:"unsupported,omitempty"`
 	Verification *VerificationSummary `json:"verification,omitempty"`
 }
@@ -62,6 +63,16 @@ type UnsupportedFinding struct {
 	Ecosystem       string `json:"ecosystem"`
 	Target          string `json:"target,omitempty"`
 	Reason          string `json:"reason"`
+}
+
+type FixExplanation struct {
+	VulnerabilityID    string `json:"vulnerability_id"`
+	Package            string `json:"package"`
+	FileLocation       string `json:"file_location"`
+	Decision           string `json:"decision"`
+	Patch              string `json:"patch,omitempty"`
+	Rationale          string `json:"rationale"`
+	VerificationImpact string `json:"verification_impact"`
 }
 
 func SummarizeVerification(verification verifycheck.Report) *VerificationSummary {
@@ -171,6 +182,23 @@ func PrintSummary(w io.Writer, summary Summary) {
 				target = "unknown target"
 			}
 			fmt.Fprintf(w, "- [%s] %s %s -> %s (%s; %s)\n", finding.VulnerabilityID, finding.Package, finding.Installed, finding.FixedVersion, target, finding.Reason)
+		}
+	}
+	if len(summary.Explanations) > 0 {
+		fmt.Fprintln(w, "Fix explanations:")
+		for _, explanation := range summary.Explanations {
+			patch := explanation.Patch
+			if patch == "" {
+				patch = "no patch applied"
+			}
+			fmt.Fprintf(w, "- %s %s (%s): %s; %s; verification=%s\n",
+				explanation.VulnerabilityID,
+				explanation.Package,
+				explanation.FileLocation,
+				explanation.Decision,
+				patch,
+				explanation.VerificationImpact,
+			)
 		}
 	}
 }
@@ -497,6 +525,77 @@ func dedupePatches(patches []fixer.Patch) []fixer.Patch {
 		result = append(result, seen[key])
 	}
 	return result
+}
+
+func BuildFixExplanations(before, after *vuln.Report, patches []fixer.Patch, verification *VerificationSummary) []FixExplanation {
+	if before == nil {
+		return nil
+	}
+
+	afterRows := buildFindingRows(nil)
+	if after != nil {
+		afterRows = buildFindingRows(after.Findings)
+	}
+	afterKeys := map[string]struct{}{}
+	for _, row := range afterRows {
+		afterKeys[findingRowKey(row)] = struct{}{}
+	}
+
+	patchesByPackage := map[string][]fixer.Patch{}
+	for _, patch := range dedupePatches(patches) {
+		patchesByPackage[patch.Package] = append(patchesByPackage[patch.Package], patch)
+	}
+
+	verificationImpact := "no verification regressions detected"
+	if verification != nil && verification.Regressions > 0 {
+		verificationImpact = fmt.Sprintf("%d verification regression(s) detected", verification.Regressions)
+	}
+
+	rows := buildFindingRows(before.Findings)
+	explanations := make([]FixExplanation, 0, len(rows))
+	for _, row := range rows {
+		key := findingRowKey(row)
+		_, stillPresent := afterKeys[key]
+		decision := "fixed"
+		if stillPresent {
+			decision = "not fixed"
+		}
+
+		patchDescription := ""
+		candidates := patchesByPackage[row.Package]
+		if len(candidates) > 0 {
+			patch := candidates[0]
+			patchDescription = fmt.Sprintf("[%s] %s -> %s", patch.Manager, patch.From, patch.To)
+		}
+
+		rationale := "selected minimal fixed version reported by scanner"
+		if decision == "not fixed" && patchDescription == "" {
+			rationale = "no compatible automated patch was available for this finding"
+		}
+
+		explanations = append(explanations, FixExplanation{
+			VulnerabilityID:    row.VulnerabilityID,
+			Package:            row.Package,
+			FileLocation:       row.FileLocation,
+			Decision:           decision,
+			Patch:              patchDescription,
+			Rationale:          rationale,
+			VerificationImpact: verificationImpact,
+		})
+	}
+
+	sort.Slice(explanations, func(i, j int) bool {
+		left := explanations[i]
+		right := explanations[j]
+		if left.VulnerabilityID != right.VulnerabilityID {
+			return left.VulnerabilityID < right.VulnerabilityID
+		}
+		if left.Package != right.Package {
+			return left.Package < right.Package
+		}
+		return left.FileLocation < right.FileLocation
+	})
+	return explanations
 }
 
 func ensureStateDir(repo string) error {

@@ -32,6 +32,9 @@ func TestRootHelpShowsFlags(t *testing.T) {
 	if !strings.Contains(text, "--policy") {
 		t.Fatalf("expected --policy in help output, got:\n%s", text)
 	}
+	if !strings.Contains(text, "--json") {
+		t.Fatalf("expected --json in help output, got:\n%s", text)
+	}
 }
 
 func TestFixHelpShowsAgentFlags(t *testing.T) {
@@ -125,5 +128,25 @@ func TestResolveRepoClonesURLToTemp(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "Cloned https://example.com/repo.git to") {
 		t.Fatalf("expected clone location message, got:\n%s", errOut.String())
+	}
+}
+
+func TestSchemaCommandPrintsJSONSchema(t *testing.T) {
+	command := NewRootCommand()
+	var output strings.Builder
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"schema"})
+
+	if err := command.Execute(); err != nil {
+		t.Fatalf("Execute returned error for schema: %v", err)
+	}
+
+	text := output.String()
+	if !strings.Contains(text, "\"$schema\"") {
+		t.Fatalf("expected JSON schema output, got:\n%s", text)
+	}
+	if !strings.Contains(text, "\"PatchPilot Policy\"") {
+		t.Fatalf("expected schema title, got:\n%s", text)
 	}
 }

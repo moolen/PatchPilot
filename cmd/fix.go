@@ -21,6 +21,7 @@ type fixOptions struct {
 	AgentCommand     string
 	AgentMaxAttempts int
 	AgentArtifactDir string
+	JSONOutput       bool
 }
 
 type validationCycle struct {
@@ -33,12 +34,24 @@ type validationCycle struct {
 func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOptions) (resultErr error) {
 	if options.EnableAgent {
 		if strings.TrimSpace(options.AgentCommand) == "" {
-			return errors.New("--agent-command is required when --enable-agent is set")
+			return wrapWithExitCode(ExitCodePatchFailed, fmt.Errorf("%w: --agent-command is required when --enable-agent is set", errInvalidRuntimeConfig))
 		}
 		if options.AgentMaxAttempts <= 0 {
-			return errors.New("--agent-max-attempts must be greater than zero")
+			return wrapWithExitCode(ExitCodePatchFailed, fmt.Errorf("%w: --agent-max-attempts must be greater than zero", errInvalidRuntimeConfig))
 		}
 	}
+
+	var summaryForFailure *report.Summary
+	agentSucceeded := false
+	deterministicIssues := make([]string, 0)
+
+	tracker := newRunTracker("fix", repo, options.JSONOutput)
+	defer func() {
+		failure := classifyRunFailure(resultErr, summaryForFailure, options.EnableAgent, agentSucceeded, deterministicIssues)
+		if err := tracker.complete(resultErr, failure); err != nil && resultErr == nil {
+			resultErr = err
+		}
+	}()
 
 	defer func() {
 		hookErr := runPostExecutionHooks(ctx, repo, cfg, resultErr == nil)
@@ -53,156 +66,141 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	}()
 
 	logProgress("starting fix workflow for %s", repo)
+
+	stage := tracker.beginStage("configure_registry")
 	restoreRegistry, err := configureRegistryFromPolicy(repo, cfg)
 	if err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return wrapWithExitCode(ExitCodePatchFailed, err)
 	}
+	tracker.endStageSuccess(stage, nil)
 	defer restoreRegistry()
 
-	logProgress("step 1/14: generating SBOM")
+	logProgress("generating baseline SBOM")
+	stage = tracker.beginStage("generate_baseline_sbom")
 	if err := generateSBOM(ctx, repo, cfg); err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
+	tracker.endStageSuccess(stage, nil)
 
-	logProgress("step 2/14: scanning vulnerabilities (baseline)")
+	logProgress("scanning baseline vulnerabilities")
+	stage = tracker.beginStage("scan_baseline")
 	before, err := scanVulnerabilities(ctx, repo, cfg)
 	if err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
+	tracker.endStageSuccess(stage, map[string]any{
+		"findings":            len(before.Findings),
+		"ignored_without_fix": before.IgnoredWithoutFix,
+		"ignored_by_policy":   before.IgnoredByPolicy,
+	})
+	tracker.addCounter("findings_before", len(before.Findings))
 	logProgress("baseline findings with fix versions: %d", len(before.Findings))
 
-	logProgress("step 3/14: writing scan baseline")
+	logProgress("writing scan baseline")
+	stage = tracker.beginStage("write_baseline")
 	if err := report.WriteBaseline(repo, before); err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
+	tracker.endStageSuccess(stage, nil)
 
-	logProgress("step 4/14: discovering modules for verification")
+	logProgress("discovering modules for verification")
+	stage = tracker.beginStage("discover_verification_modules")
 	verificationDirs, err := discoverVerificationDirs(repo, cfg)
 	if err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
+	tracker.endStageSuccess(stage, map[string]any{"modules": len(verificationDirs)})
 	logProgress("discovered %d module(s)", len(verificationDirs))
 
-	logProgress("step 5/14: running baseline verification checks")
+	logProgress("running baseline verification checks")
+	stage = tracker.beginStage("verification_baseline")
 	verificationBaseline, err := runVerificationChecks(ctx, repo, verificationDirs, cfg)
 	if err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
 	if len(verificationBaseline.Modules) > 0 {
 		if err := report.WriteVerificationBaseline(repo, verificationBaseline); err != nil {
+			tracker.endStageFailure(stage, err, nil)
 			return err
 		}
 	}
+	tracker.endStageSuccess(stage, map[string]any{
+		"modules": len(verificationBaseline.Modules),
+	})
 
-	deterministicIssues := make([]string, 0)
 	fileOptions := fileOptionsFromPolicy(cfg)
+	dockerOptions := dockerOptionsFromPolicy(cfg)
 
-	logProgress("step 6/14: applying Go runtime bumps")
-	runtimePatches, err := fixer.ApplyGoRuntimeFixesWithOptions(ctx, repo, fileOptions)
-	if err != nil {
-		if !options.EnableAgent {
-			return wrapWithExitCode(ExitCodePatchFailed, err)
+	logProgress("applying deterministic fixes")
+	stage = tracker.beginStage("apply_deterministic_fixes")
+	allPatches := make([]fixer.Patch, 0)
+	engineDetails := map[string]any{}
+	for _, engine := range fixer.DefaultEngines(fileOptions, dockerOptions) {
+		patches, applyErr := engine.Apply(ctx, repo, before.Findings)
+		if applyErr != nil {
+			if !options.EnableAgent {
+				tracker.endStageFailure(stage, applyErr, map[string]any{"engine": engine.Name()})
+				return wrapWithExitCode(ExitCodePatchFailed, applyErr)
+			}
+			issue := fmt.Sprintf("%s fixes failed: %v", engine.Name(), applyErr)
+			deterministicIssues = append(deterministicIssues, issue)
+			engineDetails[engine.Name()] = map[string]any{
+				"status": "failed",
+				"error":  applyErr.Error(),
+			}
+			logProgress("%s", issue)
+			continue
 		}
-		issue := fmt.Sprintf("go runtime bumps failed: %v", err)
-		deterministicIssues = append(deterministicIssues, issue)
-		logProgress("%s", issue)
-	} else {
-		logProgress("applied %d Go runtime bump(s)", len(runtimePatches))
-	}
-
-	logProgress("step 7/14: applying Go module fixes")
-	goPatches, err := fixer.ApplyGoModuleFixesWithOptions(ctx, repo, before.Findings, fileOptions)
-	if err != nil {
-		if !options.EnableAgent {
-			return wrapWithExitCode(ExitCodePatchFailed, err)
+		allPatches = append(allPatches, patches...)
+		engineDetails[engine.Name()] = map[string]any{
+			"status":  "applied",
+			"patches": len(patches),
 		}
-		issue := fmt.Sprintf("go module fixes failed: %v", err)
-		deterministicIssues = append(deterministicIssues, issue)
-		logProgress("%s", issue)
-	} else {
-		logProgress("applied %d Go patch(es)", len(goPatches))
+		logProgress("applied %d patch(es) via %s", len(patches), engine.Name())
 	}
+	tracker.endStageSuccess(stage, map[string]any{
+		"engines":       engineDetails,
+		"patches_total": len(allPatches),
+		"issues":        len(deterministicIssues),
+	})
 
-	logProgress("step 8/14: applying Dockerfile fixes")
-	dockerPatches, err := fixer.ApplyDockerfileFixesWithOptions(ctx, repo, before.Findings, dockerOptionsFromPolicy(cfg))
-	if err != nil {
-		if !options.EnableAgent {
-			return wrapWithExitCode(ExitCodePatchFailed, err)
-		}
-		issue := fmt.Sprintf("dockerfile fixes failed: %v", err)
-		deterministicIssues = append(deterministicIssues, issue)
-		logProgress("%s", issue)
-	} else {
-		logProgress("applied %d Docker patch(es)", len(dockerPatches))
-	}
-
-	logProgress("step 9/14: applying npm fixes")
-	npmPatches, err := fixer.ApplyNPMFixesWithOptions(ctx, repo, before.Findings, fileOptions)
-	if err != nil {
-		if !options.EnableAgent {
-			return wrapWithExitCode(ExitCodePatchFailed, err)
-		}
-		issue := fmt.Sprintf("npm fixes failed: %v", err)
-		deterministicIssues = append(deterministicIssues, issue)
-		logProgress("%s", issue)
-	} else {
-		logProgress("applied %d npm patch(es)", len(npmPatches))
-	}
-
-	logProgress("step 10/14: applying pip fixes")
-	pipPatches, err := fixer.ApplyPIPFixesWithOptions(ctx, repo, before.Findings, fileOptions)
-	if err != nil {
-		if !options.EnableAgent {
-			return wrapWithExitCode(ExitCodePatchFailed, err)
-		}
-		issue := fmt.Sprintf("pip fixes failed: %v", err)
-		deterministicIssues = append(deterministicIssues, issue)
-		logProgress("%s", issue)
-	} else {
-		logProgress("applied %d pip patch(es)", len(pipPatches))
-	}
-
-	logProgress("step 11/14: applying maven fixes")
-	mavenPatches, err := fixer.ApplyMavenFixesWithOptions(ctx, repo, before.Findings, fileOptions)
-	if err != nil {
-		if !options.EnableAgent {
-			return wrapWithExitCode(ExitCodePatchFailed, err)
-		}
-		issue := fmt.Sprintf("maven fixes failed: %v", err)
-		deterministicIssues = append(deterministicIssues, issue)
-		logProgress("%s", issue)
-	} else {
-		logProgress("applied %d maven patch(es)", len(mavenPatches))
-	}
-
-	logProgress("step 12/14: validating post-fix state")
+	logProgress("validating post-fix state")
+	stage = tracker.beginStage("validate_post_fix")
 	finalValidation, validationErr := runValidationCycle(ctx, repo, cfg, verificationBaseline, verificationDirs)
 	if validationErr != nil {
 		if !options.EnableAgent {
+			tracker.endStageFailure(stage, validationErr, nil)
 			return validationErr
 		}
 		issue := fmt.Sprintf("deterministic validation failed: %v", validationErr)
 		deterministicIssues = append(deterministicIssues, issue)
 		logProgress("%s", issue)
+		tracker.endStageSuccess(stage, map[string]any{
+			"status": "deferred_to_agent",
+			"error":  validationErr.Error(),
+		})
 	} else if finalValidation.After != nil {
 		logProgress("remaining findings with fix versions: %d", len(finalValidation.After.Findings))
+		tracker.endStageSuccess(stage, map[string]any{
+			"remaining_findings":  len(finalValidation.After.Findings),
+			"verification_errors": len(finalValidation.Verification.Regressions),
+		})
+	} else {
+		tracker.endStageSuccess(stage, map[string]any{"remaining_findings": 0})
 	}
-
-	allPatches := make([]fixer.Patch, 0, len(runtimePatches)+len(goPatches)+len(dockerPatches)+len(npmPatches)+len(pipPatches)+len(mavenPatches))
-	allPatches = append(allPatches, runtimePatches...)
-	allPatches = append(allPatches, goPatches...)
-	allPatches = append(allPatches, dockerPatches...)
-	allPatches = append(allPatches, npmPatches...)
-	allPatches = append(allPatches, pipPatches...)
-	allPatches = append(allPatches, mavenPatches...)
-
-	agentSucceeded := false
 	shouldRunAgent := options.EnableAgent && (len(deterministicIssues) > 0 ||
 		validationErr != nil ||
 		(finalValidation.After != nil && len(finalValidation.After.Findings) > 0) ||
 		len(finalValidation.Verification.Regressions) > 0)
 
 	if shouldRunAgent {
+		stage = tracker.beginStage("agent_repair_loop")
 		logProgress("deterministic phase incomplete, starting agent repair loop")
 
 		initialVulnCount := len(before.Findings)
@@ -274,18 +272,30 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 			},
 		})
 		if loopErr != nil {
+			tracker.endStageFailure(stage, loopErr, nil)
 			return wrapWithExitCode(ExitCodePatchFailed, fmt.Errorf("run agent repair loop: %w", loopErr))
 		}
 
 		agentSucceeded = loopResult.Success
 		if agentSucceeded {
 			logProgress("agent repair loop succeeded after %d attempt(s)", loopResult.Attempts)
+			tracker.endStageSuccess(stage, map[string]any{
+				"attempts": loopResult.Attempts,
+				"success":  true,
+			})
 		} else {
 			logProgress("agent repair loop exhausted %d attempt(s) without success", loopResult.Attempts)
+			tracker.endStageSuccess(stage, map[string]any{
+				"attempts": loopResult.Attempts,
+				"success":  false,
+			})
 			if finalValidation.After == nil && lastValidationErr != nil {
 				return lastValidationErr
 			}
 		}
+	} else {
+		stage = tracker.beginStage("agent_repair_loop")
+		tracker.endStageSuccess(stage, map[string]any{"status": "skipped"})
 	}
 
 	if finalValidation.After == nil {
@@ -295,19 +305,39 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		return wrapWithExitCode(ExitCodePatchFailed, errors.New("unable to produce post-fix vulnerability report"))
 	}
 
+	stage = tracker.beginStage("build_summary")
 	summary := report.BuildSummary(before, finalValidation.After, allPatches)
 	if len(finalValidation.Verification.Modules) > 0 {
 		summary.Verification = report.SummarizeVerification(finalValidation.Verification)
 	}
+	summary.Explanations = report.BuildFixExplanations(before, finalValidation.After, allPatches, summary.Verification)
+	tracker.endStageSuccess(stage, map[string]any{
+		"before":          summary.Before,
+		"fixed":           summary.Fixed,
+		"after":           summary.After,
+		"patches":         len(summary.Patches),
+		"explanations":    len(summary.Explanations),
+		"unsupported":     len(summary.Unsupported),
+		"verification_ok": len(finalValidation.Verification.Regressions) == 0,
+	})
+	tracker.addCounter("findings_after", summary.After)
+	tracker.addCounter("findings_fixed", summary.Fixed)
+	summaryForFailure = &summary
 
 	logProgress("writing summary report")
+	stage = tracker.beginStage("write_summary")
 	if err := report.WriteSummary(repo, summary); err != nil {
+		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
+	tracker.endStageSuccess(stage, nil)
+
+	stage = tracker.beginStage("print_summary")
 	report.PrintSummary(os.Stdout, summary)
 	if len(finalValidation.Verification.Modules) > 0 {
 		verifycheck.PrintSummary(os.Stdout, finalValidation.Verification)
 	}
+	tracker.endStageSuccess(stage, nil)
 	logProgress("fix workflow completed")
 
 	if summary.Fixed == 0 && len(summary.Patches) == 0 {

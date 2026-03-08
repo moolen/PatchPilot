@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/moolen/patchpilot/internal/execsafe"
 	"github.com/moolen/patchpilot/internal/goenv"
 	"github.com/moolen/patchpilot/policy"
 )
@@ -334,18 +334,22 @@ func runCheck(ctx context.Context, dir string, check checkDefinition) CheckResul
 }
 
 func runGoCheck(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
 	env, err := goenv.CommandEnv(dir)
 	if err != nil {
 		return err
 	}
-	cmd.Env = env
-	output, err := cmd.CombinedOutput()
+	result, err := execsafe.Run(ctx, execsafe.Spec{
+		Name:       "go-check",
+		Dir:        dir,
+		Binary:     "go",
+		Args:       args,
+		ReplaceEnv: true,
+		Env:        env,
+	})
 	if err == nil {
 		return nil
 	}
-	trimmed := strings.TrimSpace(string(output))
+	trimmed := strings.TrimSpace(result.Combined)
 	if trimmed == "" {
 		return err
 	}
@@ -353,18 +357,21 @@ func runGoCheck(ctx context.Context, dir string, args ...string) error {
 }
 
 func runShellCheck(ctx context.Context, dir, command string) error {
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = dir
 	env, err := goenv.CommandEnv(dir)
 	if err != nil {
 		return err
 	}
-	cmd.Env = env
-	output, err := cmd.CombinedOutput()
+	result, err := execsafe.Run(ctx, execsafe.Spec{
+		Name:         "shell-check",
+		Dir:          dir,
+		ShellCommand: command,
+		ReplaceEnv:   true,
+		Env:          env,
+	})
 	if err == nil {
 		return nil
 	}
-	trimmed := strings.TrimSpace(string(output))
+	trimmed := strings.TrimSpace(result.Combined)
 	if trimmed == "" {
 		return err
 	}

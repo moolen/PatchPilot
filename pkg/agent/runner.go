@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/moolen/patchpilot/internal/execsafe"
 )
 
 // Runner executes an external agent harness command.
@@ -43,31 +44,34 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 		workingDir = "."
 	}
 
-	var logs bytes.Buffer
-	stdout := io.Writer(&logs)
-	stderr := io.Writer(&logs)
+	stdout := io.Writer(nil)
+	stderr := io.Writer(nil)
 	if runner.Stdout != nil {
-		stdout = io.MultiWriter(stdout, runner.Stdout)
+		stdout = runner.Stdout
 	}
 	if runner.Stderr != nil {
-		stderr = io.MultiWriter(stderr, runner.Stderr)
+		stderr = runner.Stderr
 	} else if runner.Stdout != nil {
-		stderr = io.MultiWriter(stderr, runner.Stdout)
+		stderr = runner.Stdout
 	}
 
-	command := exec.CommandContext(ctx, "sh", "-c", runner.Command)
-	command.Dir = workingDir
-	command.Stdout = stdout
-	command.Stderr = stderr
-	command.Env = append(os.Environ(),
-		"CVEFIX_REPO_PATH="+req.RepoPath,
-		fmt.Sprintf("CVEFIX_ATTEMPT_NUMBER=%d", req.AttemptNumber),
-		"CVEFIX_PROMPT_FILE="+req.PromptFilePath,
-		"CVEFIX_AGENT_ARTIFACT_DIR="+filepath.Dir(req.PromptFilePath),
-	)
-
-	err := command.Run()
-	result := AttemptResult{Logs: strings.TrimSpace(logs.String())}
+	runResult, err := execsafe.Run(ctx, execsafe.Spec{
+		Name:           "agent",
+		Dir:            workingDir,
+		ShellCommand:   runner.Command,
+		Stdout:         stdout,
+		Stderr:         stderr,
+		ArtifactDir:    filepath.Dir(req.PromptFilePath),
+		ArtifactPrefix: "agent-command",
+		Env: []string{
+			"CVEFIX_REPO_PATH=" + req.RepoPath,
+			fmt.Sprintf("CVEFIX_ATTEMPT_NUMBER=%d", req.AttemptNumber),
+			"CVEFIX_PROMPT_FILE=" + req.PromptFilePath,
+			"CVEFIX_AGENT_ARTIFACT_DIR=" + filepath.Dir(req.PromptFilePath),
+		},
+		EnvAllowlist: execsafe.DefaultEnvAllowlist(),
+	})
+	result := AttemptResult{Logs: strings.TrimSpace(runResult.Combined)}
 	if err == nil {
 		result.Success = true
 		result.Summary = "agent command completed successfully"
@@ -79,7 +83,7 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		result.Success = false
-		result.Summary = fmt.Sprintf("agent command exited with code %d", exitErr.ExitCode())
+		result.Summary = fmt.Sprintf("agent command exited with code %d", runResult.ExitCode)
 		if result.Logs == "" {
 			result.Logs = err.Error()
 		}

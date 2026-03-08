@@ -90,6 +90,39 @@ func TestFixScenarios(t *testing.T) {
 			},
 		},
 		{
+			name: "npm dependency patch",
+			files: map[string]string{
+				"package.json": "{\n  \"name\": \"svc\",\n  \"dependencies\": {\n    \"left-pad\": \"1.1.0\"\n  }\n}\n",
+			},
+			expectedExitCode: 0,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
+			expectContains: map[string]string{
+				"package.json": "\"left-pad\": \"1.3.0\"",
+			},
+		},
+		{
+			name: "pip dependency patch",
+			files: map[string]string{
+				"requirements.txt": "requests==2.31.0\n",
+			},
+			expectedExitCode: 0,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
+			expectContains: map[string]string{
+				"requirements.txt": "requests>=2.32.4",
+			},
+		},
+		{
+			name: "maven dependency patch",
+			files: map[string]string{
+				"pom.xml": "<project><dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-io</artifactId><version>2.14.0</version></dependency></dependencies></project>\n",
+			},
+			expectedExitCode: 0,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
+			expectContains: map[string]string{
+				"pom.xml": "<version>2.15.1</version>",
+			},
+		},
+		{
 			name: "already fixed no changes",
 			files: map[string]string{
 				"go.mod": "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.2.3\n",
@@ -544,7 +577,8 @@ if [ -z "$repo" ]; then
 fi
 
 normalize_version() {
-  version="${1#v}"
+  version=$(printf '%s' "$1" | sed -E 's/^[^0-9]*//')
+  version="${version#v}"
   version="${version%%-*}"
   printf '%s' "$version"
 }
@@ -600,6 +634,82 @@ EOF
 if [ -f "$repo/.scenario/nofix-go" ]; then
   append_match "{\"artifact\":{\"name\":\"github.com/example/nofix\",\"version\":\"v0.1.0\",\"type\":\"go-module\",\"language\":\"go\",\"purl\":\"pkg:golang/github.com/example/nofix@v0.1.0\",\"locations\":[{\"path\":\"/go.mod\"}]},\"vulnerability\":{\"id\":\"GHSA-no-fix\",\"namespace\":\"github:language:go\",\"fix\":{\"versions\":[],\"state\":\"not-fixed\"}}}"
 fi
+
+npm_version_from_manifest() {
+  manifest="$1"
+  package="$2"
+  awk -v pkg="$package" '
+    {
+      if ($0 ~ "\"" pkg "\"[[:space:]]*:") {
+        line=$0
+        sub(/.*:[[:space:]]*"/, "", line)
+        sub(/".*/, "", line)
+        print line
+        exit
+      }
+    }
+  ' "$manifest"
+}
+
+while IFS= read -r manifest; do
+  [ -n "$manifest" ] || continue
+  rel="${manifest#$repo/}"
+  version=$(npm_version_from_manifest "$manifest" "left-pad")
+  if version_lt "$version" "1.3.0"; then
+    [ -n "$version" ] || version="0.0.0"
+    append_match "{\"artifact\":{\"name\":\"left-pad\",\"version\":\"$version\",\"type\":\"npm\",\"language\":\"javascript\",\"purl\":\"pkg:npm/left-pad@$version\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"GHSA-npm-left-pad\",\"namespace\":\"github:language:javascript\",\"fix\":{\"versions\":[\"1.3.0\"],\"state\":\"fixed\"}}}"
+  fi
+done <<EOF
+$(find "$repo" -type f -name package.json | sort)
+EOF
+
+while IFS= read -r reqfile; do
+  [ -n "$reqfile" ] || continue
+  rel="${reqfile#$repo/}"
+  version=$(awk '
+    tolower($1) ~ /^requests/ {
+      line=$0
+      sub(/.*==/, "", line)
+      sub(/[[:space:]#].*/, "", line)
+      print line
+      exit
+    }
+  ' "$reqfile")
+  if version_lt "$version" "2.32.4"; then
+    [ -n "$version" ] || version="0.0.0"
+    append_match "{\"artifact\":{\"name\":\"requests\",\"version\":\"$version\",\"type\":\"python\",\"language\":\"python\",\"purl\":\"pkg:pypi/requests@$version\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"GHSA-pip-requests\",\"namespace\":\"github:language:python\",\"fix\":{\"versions\":[\"2.32.4\"],\"state\":\"fixed\"}}}"
+  fi
+done <<EOF
+$(find "$repo" -type f \( -name requirements.txt -o -name 'requirements*.txt' \) | sort)
+EOF
+
+while IFS= read -r pom; do
+  [ -n "$pom" ] || continue
+  rel="${pom#$repo/}"
+  version=$(awk '
+    /<dependency>/ { in_dep = 1; artifact = ""; version = "" }
+    in_dep && /<artifactId>[[:space:]]*commons-io[[:space:]]*<\/artifactId>/ { artifact = "commons-io" }
+    in_dep && /<version>/ {
+      line=$0
+      sub(/.*<version>[[:space:]]*/, "", line)
+      sub(/[[:space:]]*<\/version>.*/, "", line)
+      version = line
+    }
+    /<\/dependency>/ {
+      if (in_dep && artifact == "commons-io" && version != "") {
+        print version
+        exit
+      }
+      in_dep = 0
+    }
+  ' "$pom")
+  if version_lt "$version" "2.15.1"; then
+    [ -n "$version" ] || version="0.0.0"
+    append_match "{\"artifact\":{\"name\":\"commons-io\",\"version\":\"$version\",\"type\":\"maven\",\"language\":\"java\",\"purl\":\"pkg:maven/org.apache.commons/commons-io@$version\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"GHSA-maven-commons-io\",\"namespace\":\"github:language:java\",\"fix\":{\"versions\":[\"2.15.1\"],\"state\":\"fixed\"}}}"
+  fi
+done <<EOF
+$(find "$repo" -type f -name pom.xml | sort)
+EOF
 
 while IFS= read -r dockerfile; do
   [ -n "$dockerfile" ] || continue

@@ -149,6 +149,12 @@ func Load(repo, overridePath string) (*Config, error) {
 		return nil, fmt.Errorf("read policy file %s: %w", path, err)
 	}
 
+	migrated, migrateErr := migrateLegacyPolicyYAML(data)
+	if migrateErr != nil {
+		return nil, fmt.Errorf("migrate policy file %s: %w", path, migrateErr)
+	}
+	data = migrated
+
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(cfg); err != nil {
@@ -158,6 +164,114 @@ func Load(repo, overridePath string) (*Config, error) {
 		return nil, fmt.Errorf("validate policy file %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+func migrateLegacyPolicyYAML(data []byte) ([]byte, error) {
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	if root == nil {
+		return data, nil
+	}
+
+	changed := false
+
+	if _, ok := root["postExecution"]; ok {
+		if _, exists := root["post_execution"]; !exists {
+			root["post_execution"] = root["postExecution"]
+		}
+		delete(root, "postExecution")
+		changed = true
+	}
+
+	if verificationMode, ok := root["verificationMode"]; ok {
+		verification, _ := mapValue(root["verification"])
+		if verification == nil {
+			verification = map[string]any{}
+		}
+		if _, exists := verification["mode"]; !exists {
+			verification["mode"] = verificationMode
+		}
+		root["verification"] = verification
+		delete(root, "verificationMode")
+		changed = true
+	}
+
+	if topLevelSkip, ok := root["skip_paths"]; ok {
+		scan, _ := mapValue(root["scan"])
+		if scan == nil {
+			scan = map[string]any{}
+		}
+		if _, exists := scan["skip_paths"]; !exists {
+			scan["skip_paths"] = topLevelSkip
+		}
+		root["scan"] = scan
+		delete(root, "skip_paths")
+		changed = true
+	}
+
+	if excludes, ok := root["excludes"]; ok {
+		if _, exists := root["exclude"]; !exists {
+			root["exclude"] = excludes
+		}
+		delete(root, "excludes")
+		changed = true
+	}
+
+	if rawVerification, ok := root["verification"]; ok {
+		verification, _ := mapValue(rawVerification)
+		if verification != nil {
+			if rawCommands, ok := verification["commands"]; ok {
+				commands, ok := rawCommands.([]any)
+				if ok {
+					for _, item := range commands {
+						commandMap, ok := item.(map[string]any)
+						if !ok {
+							continue
+						}
+						if run, exists := commandMap["command"]; exists {
+							if _, hasRun := commandMap["run"]; !hasRun {
+								commandMap["run"] = run
+							}
+							delete(commandMap, "command")
+							changed = true
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if version, ok := root["version"]; ok {
+		switch typed := version.(type) {
+		case int:
+			if typed == 0 {
+				root["version"] = 1
+				changed = true
+			}
+		case int64:
+			if typed == 0 {
+				root["version"] = 1
+				changed = true
+			}
+		case float64:
+			if typed == 0 {
+				root["version"] = 1
+				changed = true
+			}
+		}
+	}
+
+	if !changed {
+		return data, nil
+	}
+	return yaml.Marshal(root)
+}
+
+func mapValue(value any) (map[string]any, bool) {
+	result, ok := value.(map[string]any)
+	return result, ok
 }
 
 func normalizeAndValidate(cfg *Config) error {

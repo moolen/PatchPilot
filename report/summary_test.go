@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moolen/patchpilot/fixer"
 	"github.com/moolen/patchpilot/verifycheck"
 	"github.com/moolen/patchpilot/vuln"
 )
@@ -163,6 +164,39 @@ func TestWriteSummaryCreatesStateDir(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".cvefix", summaryFile)); err != nil {
 		t.Fatalf("expected summary file to exist: %v", err)
+	}
+}
+
+func TestBuildFixExplanationsIncludesPatchAndVerificationImpact(t *testing.T) {
+	before := &vuln.Report{Findings: []vuln.Finding{{
+		VulnerabilityID: "CVE-1",
+		Package:         "github.com/example/lib",
+		FixedVersion:    "v1.2.3",
+		Ecosystem:       "golang",
+		Locations:       []string{"/repo/go.mod"},
+	}}}
+	after := &vuln.Report{}
+	verification := &VerificationSummary{Regressions: 0}
+	patches := []fixer.Patch{{
+		Manager: "gomod",
+		Target:  "/repo/go.mod",
+		Package: "github.com/example/lib",
+		From:    "v1.0.0",
+		To:      "v1.2.3",
+	}}
+
+	explanations := BuildFixExplanations(before, after, patches, verification)
+	if len(explanations) != 1 {
+		t.Fatalf("expected 1 explanation, got %#v", explanations)
+	}
+	if explanations[0].Decision != "fixed" {
+		t.Fatalf("expected fixed decision, got %#v", explanations[0])
+	}
+	if !strings.Contains(explanations[0].Patch, "gomod") {
+		t.Fatalf("expected patch detail, got %#v", explanations[0])
+	}
+	if !strings.Contains(explanations[0].VerificationImpact, "no verification regressions") {
+		t.Fatalf("unexpected verification impact: %#v", explanations[0])
 	}
 }
 
