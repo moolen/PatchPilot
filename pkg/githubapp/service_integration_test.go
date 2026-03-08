@@ -172,6 +172,178 @@ func TestHandleWebhookPushE2E_RunIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestHandleWebhookIssueCommentE2E_RetriesTransientGitHubFailures(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+
+	fakeAPI := newFakeGitHubAPI(owner, repo)
+	fakeAPI.setFailures("token",
+		fakeHTTPFailure{
+			StatusCode: http.StatusTooManyRequests,
+			Headers:    map[string]string{"Retry-After": "1"},
+			Body:       `{"message":"rate limit exceeded"}`,
+		},
+	)
+	fakeAPI.setFailures("issue_comment",
+		fakeHTTPFailure{
+			StatusCode: http.StatusForbidden,
+			Body:       `{"message":"You have exceeded a secondary rate limit. Please wait."}`,
+		},
+	)
+	fakeAPI.setFailures("create_pr",
+		fakeHTTPFailure{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       `{"message":"backend unavailable"}`,
+		},
+	)
+	fakeAPI.setFailures("graphql",
+		fakeHTTPFailure{
+			StatusCode: http.StatusBadGateway,
+			Body:       `{"message":"temporary gateway error"}`,
+		},
+	)
+
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	cfg := Config{
+		AppID:               1,
+		WebhookSecret:       "secret",
+		PrivateKeyPEM:       generateTestPrivateKeyPEM(t),
+		ListenAddr:          ":0",
+		WorkDir:             filepath.Join(temp, "work"),
+		CVEFixBinary:        cvefixPath,
+		GitHubBaseWebURL:    "file://" + remoteRoot,
+		GitHubAPIBaseURL:    server.URL + "/api/v3/",
+		GitHubUploadAPIURL:  server.URL + "/api/uploads/",
+		EnableAutoMerge:     true,
+		DeliveryDedupTTL:    24 * time.Hour,
+		MaxRiskScore:        30,
+		RetryMaxAttempts:    5,
+		RetryInitialBackoff: time.Millisecond,
+		RetryMaxBackoff:     10 * time.Millisecond,
+	}
+
+	service, err := NewService(cfg, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	service.async = false
+
+	payload := []byte(`{
+		"action":"created",
+		"comment":{"id":201,"body":"/cvefix fix --auto-merge"},
+		"issue":{"number":1},
+		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
+		"sender":{"login":"alice"},
+		"installation":{"id":99}
+	}`)
+
+	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "retry-1"); code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
+	}
+
+	created, edited, autoMergeCalls := fakeAPI.counts()
+	if created != 1 || edited != 0 || autoMergeCalls != 1 {
+		t.Fatalf("unexpected final state: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
+	}
+
+	if attempts := fakeAPI.endpointAttempts("token"); attempts != 2 {
+		t.Fatalf("token attempts = %d, want 2", attempts)
+	}
+	if attempts := fakeAPI.endpointAttempts("create_pr"); attempts != 2 {
+		t.Fatalf("create_pr attempts = %d, want 2", attempts)
+	}
+	if attempts := fakeAPI.endpointAttempts("graphql"); attempts != 2 {
+		t.Fatalf("graphql attempts = %d, want 2", attempts)
+	}
+	if retries := retryMetricCount(service.metrics); retries < 4 {
+		t.Fatalf("expected retry metric >= 4, got %d", retries)
+	}
+}
+
+func TestHandleWebhookIssueCommentE2E_RetryExhaustionFailsCleanly(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+
+	fakeAPI := newFakeGitHubAPI(owner, repo)
+	fakeAPI.setFailures("create_pr",
+		fakeHTTPFailure{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       `{"message":"backend unavailable"}`,
+		},
+		fakeHTTPFailure{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       `{"message":"backend unavailable"}`,
+		},
+	)
+
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	cfg := Config{
+		AppID:               1,
+		WebhookSecret:       "secret",
+		PrivateKeyPEM:       generateTestPrivateKeyPEM(t),
+		ListenAddr:          ":0",
+		WorkDir:             filepath.Join(temp, "work"),
+		CVEFixBinary:        cvefixPath,
+		GitHubBaseWebURL:    "file://" + remoteRoot,
+		GitHubAPIBaseURL:    server.URL + "/api/v3/",
+		GitHubUploadAPIURL:  server.URL + "/api/uploads/",
+		EnableAutoMerge:     true,
+		DeliveryDedupTTL:    24 * time.Hour,
+		MaxRiskScore:        30,
+		RetryMaxAttempts:    2,
+		RetryInitialBackoff: time.Millisecond,
+		RetryMaxBackoff:     5 * time.Millisecond,
+	}
+
+	service, err := NewService(cfg, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	service.async = false
+
+	payload := []byte(`{
+		"action":"created",
+		"comment":{"id":301,"body":"/cvefix fix"},
+		"issue":{"number":1},
+		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
+		"sender":{"login":"alice"},
+		"installation":{"id":99}
+	}`)
+
+	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "retry-fail-1"); code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
+	}
+
+	created, edited, autoMergeCalls := fakeAPI.counts()
+	if created != 0 || edited != 0 || autoMergeCalls != 0 {
+		t.Fatalf("expected no PR/merge on retry exhaustion: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
+	}
+	if attempts := fakeAPI.endpointAttempts("create_pr"); attempts != 2 {
+		t.Fatalf("create_pr attempts = %d, want 2", attempts)
+	}
+	if retries := retryMetricCount(service.metrics); retries < 1 {
+		t.Fatalf("expected retry metric to increment, got %d", retries)
+	}
+
+	comments := fakeAPI.commentBodies()
+	foundFailureComment := false
+	for _, comment := range comments {
+		if strings.Contains(comment, "failed to create PR") {
+			foundFailureComment = true
+			break
+		}
+	}
+	if !foundFailureComment {
+		t.Fatalf("expected failure comment in issue comments, got %#v", comments)
+	}
+}
+
 func TestHandleWebhookPushE2EBlockedBySafety(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
@@ -340,6 +512,14 @@ type fakeGitHubAPI struct {
 	comments       []string
 	prs            map[int]fakePR
 	nextPRNumber   int
+	requestCounts  map[string]int
+	failures       map[string][]fakeHTTPFailure
+}
+
+type fakeHTTPFailure struct {
+	StatusCode int
+	Headers    map[string]string
+	Body       string
 }
 
 type fakePR struct {
@@ -355,10 +535,12 @@ type fakePR struct {
 
 func newFakeGitHubAPI(owner, repo string) *fakeGitHubAPI {
 	return &fakeGitHubAPI{
-		owner:        owner,
-		repo:         repo,
-		prs:          map[int]fakePR{},
-		nextPRNumber: 1,
+		owner:         owner,
+		repo:          repo,
+		prs:           map[int]fakePR{},
+		nextPRNumber:  1,
+		requestCounts: map[string]int{},
+		failures:      map[string][]fakeHTTPFailure{},
 	}
 }
 
@@ -368,16 +550,44 @@ func (api *fakeGitHubAPI) counts() (int, int, int) {
 	return api.createdPRs, api.editedPRs, api.autoMergeCalls
 }
 
+func (api *fakeGitHubAPI) endpointAttempts(endpoint string) int {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	return api.requestCounts[endpoint]
+}
+
+func (api *fakeGitHubAPI) setFailures(endpoint string, failures ...fakeHTTPFailure) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	copyFailures := make([]fakeHTTPFailure, 0, len(failures))
+	copyFailures = append(copyFailures, failures...)
+	api.failures[endpoint] = copyFailures
+}
+
+func (api *fakeGitHubAPI) commentBodies() []string {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	result := make([]string, 0, len(api.comments))
+	result = append(result, api.comments...)
+	return result
+}
+
 func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	path := request.URL.Path
 
 	if request.Method == http.MethodPost && strings.HasPrefix(path, "/api/v3/app/installations/") && strings.HasSuffix(path, "/access_tokens") {
+		if api.respondFailure("token", writer) {
+			return
+		}
 		writeJSON(writer, map[string]interface{}{"token": "fake-installation-token"})
 		return
 	}
 
 	basePullsPath := "/api/v3/repos/" + api.owner + "/" + api.repo + "/pulls"
 	if path == basePullsPath && request.Method == http.MethodGet {
+		if api.respondFailure("list_prs", writer) {
+			return
+		}
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		response := make([]map[string]interface{}, 0, len(api.prs))
@@ -404,6 +614,9 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	}
 
 	if path == basePullsPath && request.Method == http.MethodPost {
+		if api.respondFailure("create_pr", writer) {
+			return
+		}
 		var payload struct {
 			Title string `json:"title"`
 			Head  string `json:"head"`
@@ -448,6 +661,9 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	}
 
 	if strings.HasPrefix(path, basePullsPath+"/") && request.Method == http.MethodPatch {
+		if api.respondFailure("edit_pr", writer) {
+			return
+		}
 		numberText := strings.TrimPrefix(path, basePullsPath+"/")
 		number, err := strconv.Atoi(numberText)
 		if err != nil {
@@ -492,6 +708,9 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 
 	issueCommentPath := "/api/v3/repos/" + api.owner + "/" + api.repo + "/issues/1/comments"
 	if path == issueCommentPath && request.Method == http.MethodPost {
+		if api.respondFailure("issue_comment", writer) {
+			return
+		}
 		var payload struct {
 			Body string `json:"body"`
 		}
@@ -507,6 +726,9 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	}
 
 	if path == "/api/graphql" && request.Method == http.MethodPost {
+		if api.respondFailure("graphql", writer) {
+			return
+		}
 		api.mu.Lock()
 		api.autoMergeCalls++
 		api.mu.Unlock()
@@ -525,7 +747,42 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 	http.Error(writer, "not found", http.StatusNotFound)
 }
 
+func (api *fakeGitHubAPI) respondFailure(endpoint string, writer http.ResponseWriter) bool {
+	api.mu.Lock()
+	api.requestCounts[endpoint]++
+	failures := api.failures[endpoint]
+	if len(failures) == 0 {
+		api.mu.Unlock()
+		return false
+	}
+	failure := failures[0]
+	api.failures[endpoint] = failures[1:]
+	api.mu.Unlock()
+
+	for key, value := range failure.Headers {
+		writer.Header().Set(key, value)
+	}
+	if strings.HasPrefix(strings.TrimSpace(failure.Body), "{") {
+		writer.Header().Set("Content-Type", "application/json")
+	}
+	status := failure.StatusCode
+	if status == 0 {
+		status = http.StatusServiceUnavailable
+	}
+	writer.WriteHeader(status)
+	if strings.TrimSpace(failure.Body) != "" {
+		_, _ = writer.Write([]byte(failure.Body))
+	}
+	return true
+}
+
 func writeJSON(writer http.ResponseWriter, payload interface{}) {
 	writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(writer).Encode(payload)
+}
+
+func retryMetricCount(metrics *Metrics) int64 {
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	return metrics.runsTotal[labelKey("github_api", "retry")]
 }
