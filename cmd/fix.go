@@ -428,7 +428,7 @@ func validationCommandsForPrompt(cfg *policy.Config) []string {
 	}
 
 	mode := strings.ToLower(strings.TrimSpace(cfg.Verification.Mode))
-	commands := make([]string, 0, len(standard)+len(cfg.Verification.Commands))
+	commands := make([]string, 0)
 	if mode != policy.VerificationModeReplace {
 		commands = append(commands, standard...)
 	}

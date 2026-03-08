@@ -28,7 +28,7 @@ func vulnOptionsFromPolicy(cfg *policy.Config) vuln.ScanOptions {
 		return vuln.ScanOptions{}
 	}
 
-	rules := make([]vuln.IgnoreRule, 0, len(cfg.Exclude.CVEs)+len(cfg.Exclude.Vulnerabilities))
+	rules := make([]vuln.IgnoreRule, 0)
 	for _, id := range cfg.Exclude.CVEs {
 		id = strings.TrimSpace(id)
 		if id == "" {
