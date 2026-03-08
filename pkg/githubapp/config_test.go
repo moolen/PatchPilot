@@ -25,6 +25,18 @@ func TestLoadConfigFromEnvSuccess(t *testing.T) {
 	if cfg.MaxRiskScore != 25 {
 		t.Fatalf("MaxRiskScore = %d, want 25", cfg.MaxRiskScore)
 	}
+	if cfg.RunDedupTTL.String() != "15m0s" {
+		t.Fatalf("RunDedupTTL = %s, want 15m", cfg.RunDedupTTL)
+	}
+	if cfg.RetryMaxAttempts != 5 {
+		t.Fatalf("RetryMaxAttempts = %d, want 5", cfg.RetryMaxAttempts)
+	}
+	if cfg.RetryInitialBackoff.String() != "2s" {
+		t.Fatalf("RetryInitialBackoff = %s, want 2s", cfg.RetryInitialBackoff)
+	}
+	if cfg.RetryMaxBackoff.String() != "30s" {
+		t.Fatalf("RetryMaxBackoff = %s, want 30s", cfg.RetryMaxBackoff)
+	}
 	if _, ok := cfg.AllowedRepos["org/repo"]; !ok {
 		t.Fatalf("expected org/repo in allowed repos")
 	}
@@ -61,8 +73,12 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
 	t.Setenv("PP_DISALLOWED_PATHS", ".github/**, secrets/*.txt")
 	t.Setenv("PP_DELIVERY_DEDUP_TTL", "2h")
+	t.Setenv("PP_RUN_DEDUP_TTL", "45m")
 	t.Setenv("PP_MAX_RISK_SCORE", "7")
 	t.Setenv("PP_ENABLE_AUTO_MERGE", "false")
+	t.Setenv("PP_GITHUB_RETRY_MAX_ATTEMPTS", "7")
+	t.Setenv("PP_GITHUB_RETRY_INITIAL_BACKOFF", "3s")
+	t.Setenv("PP_GITHUB_RETRY_MAX_BACKOFF", "20s")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -74,10 +90,34 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	if cfg.MaxRiskScore != 7 {
 		t.Fatalf("MaxRiskScore = %d, want 7", cfg.MaxRiskScore)
 	}
+	if cfg.RunDedupTTL.String() != "45m0s" {
+		t.Fatalf("RunDedupTTL = %s, want 45m", cfg.RunDedupTTL)
+	}
+	if cfg.RetryMaxAttempts != 7 {
+		t.Fatalf("RetryMaxAttempts = %d, want 7", cfg.RetryMaxAttempts)
+	}
+	if cfg.RetryInitialBackoff.String() != "3s" {
+		t.Fatalf("RetryInitialBackoff = %s, want 3s", cfg.RetryInitialBackoff)
+	}
+	if cfg.RetryMaxBackoff.String() != "20s" {
+		t.Fatalf("RetryMaxBackoff = %s, want 20s", cfg.RetryMaxBackoff)
+	}
 	if cfg.EnableAutoMerge {
 		t.Fatalf("EnableAutoMerge = true, want false")
 	}
 	if len(cfg.DisallowedPaths) != 2 {
 		t.Fatalf("DisallowedPaths len = %d, want 2", len(cfg.DisallowedPaths))
+	}
+}
+
+func TestLoadConfigFromEnvRejectsInvalidRetryWindow(t *testing.T) {
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_WEBHOOK_SECRET", "secret")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+	t.Setenv("PP_GITHUB_RETRY_INITIAL_BACKOFF", "10s")
+	t.Setenv("PP_GITHUB_RETRY_MAX_BACKOFF", "2s")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatalf("expected retry window validation error")
 	}
 }

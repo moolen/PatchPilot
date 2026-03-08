@@ -1,0 +1,62 @@
+{
+  "run_id": "run-1234-abcd",
+  "command": "fix",
+  "repository": "/tmp/repo",
+  "status": "failed",
+  "started_at": "2026-03-08T10:00:00Z",
+  "completed_at": "2026-03-08T10:00:12Z",
+  "duration_millis": 12000,
+  "stages": [
+    {
+      "name": "scan_baseline",
+      "status": "success",
+      "started_at": "2026-03-08T10:00:00Z",
+      "completed_at": "2026-03-08T10:00:03Z",
+      "duration_millis": 3000,
+      "details": {
+        "findings": 4
+      }
+    },
+    {
+      "name": "apply_deterministic_fixes",
+      "status": "success",
+      "started_at": "2026-03-08T10:00:03Z",
+      "completed_at": "2026-03-08T10:00:09Z",
+      "duration_millis": 6000,
+      "details": {
+        "issues": 0,
+        "patches_total": 2
+      }
+    },
+    {
+      "name": "validate_post_fix",
+      "status": "failed",
+      "started_at": "2026-03-08T10:00:09Z",
+      "completed_at": "2026-03-08T10:00:12Z",
+      "duration_millis": 3000,
+      "error": "verification regressed: 1 check(s) changed from passing to failing/timeout"
+    }
+  ],
+  "failure": {
+    "category": "verification_regression",
+    "code": "verification_regressed",
+    "exit_code": 22,
+    "message": "verification regressed: 1 check(s) changed from passing to failing/timeout"
+  },
+  "labels": [
+    {
+      "key": "trigger",
+      "value": "issue_comment"
+    }
+  ],
+  "counters": [
+    {
+      "name": "findings_before",
+      "value": 4
+    },
+    {
+      "name": "findings_after",
+      "value": 1
+    }
+  ]
+}

@@ -2,6 +2,8 @@ package githubapp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -22,6 +24,7 @@ type Service struct {
 	webhookSecret []byte
 	appClient     *github.Client
 	deliveryStore DeliveryStore
+	runStore      DeliveryStore
 	metrics       *Metrics
 	async         bool
 }
@@ -55,6 +58,7 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 	}
 
 	deliveryStore := NewFileDeliveryStore(filepath.Join(cfg.WorkDir, "deliveries.json"), cfg.DeliveryDedupTTL)
+	runStore := NewFileDeliveryStore(filepath.Join(cfg.WorkDir, "run-keys.json"), cfg.RunDedupTTL)
 	metrics := NewMetrics()
 
 	return &Service{
@@ -64,6 +68,7 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 		webhookSecret: []byte(cfg.WebhookSecret),
 		appClient:     appClient,
 		deliveryStore: deliveryStore,
+		runStore:      runStore,
 		metrics:       metrics,
 		async:         true,
 	}, nil
@@ -134,7 +139,7 @@ func (service *Service) handleIssueCommentEvent(deliveryID string, event *github
 				event.GetRepo().GetOwner().GetLogin(),
 				event.GetRepo().GetName(),
 				event.GetIssue().GetNumber(),
-				fmt.Sprintf("Invalid PatchPilot command: %v", err),
+				invalidCommandComment(err),
 			)
 		}
 		service.log("warn", "invalid slash command", map[string]interface{}{"delivery_id": deliveryID, "error": err.Error()})
@@ -160,7 +165,22 @@ func (service *Service) handleIssueCommentEvent(deliveryID string, event *github
 	}
 
 	run := func() {
-		service.runAsync(deliveryID, "issue_comment", func() {
+		runKey := issueCommentRunKey(event, command, deliveryID)
+		started, err := service.tryStartRun(runKey)
+		if err != nil {
+			service.log("error", "run idempotency check failed", map[string]interface{}{"delivery_id": deliveryID, "run_key": runKey, "error": err.Error()})
+			_ = service.markDeliveryDone(deliveryID)
+			return
+		}
+		if !started {
+			service.log("info", "skipping duplicate issue_comment run", map[string]interface{}{"delivery_id": deliveryID, "run_key": runKey})
+			if service.metrics != nil {
+				service.metrics.IncRun("issue_comment", "duplicate_run")
+			}
+			_ = service.markDeliveryDone(deliveryID)
+			return
+		}
+		service.runAsync(deliveryID, "issue_comment", runKey, func() {
 			service.processIssueComment(event, installationID, command)
 		})
 	}
@@ -208,7 +228,22 @@ func (service *Service) handlePushEvent(deliveryID string, event *github.PushEve
 	}
 
 	run := func() {
-		service.runAsync(deliveryID, "push", func() {
+		runKey := pushRunKey(event, deliveryID)
+		started, err := service.tryStartRun(runKey)
+		if err != nil {
+			service.log("error", "run idempotency check failed", map[string]interface{}{"delivery_id": deliveryID, "run_key": runKey, "error": err.Error()})
+			_ = service.markDeliveryDone(deliveryID)
+			return
+		}
+		if !started {
+			service.log("info", "skipping duplicate push run", map[string]interface{}{"delivery_id": deliveryID, "run_key": runKey})
+			if service.metrics != nil {
+				service.metrics.IncRun("push", "duplicate_run")
+			}
+			_ = service.markDeliveryDone(deliveryID)
+			return
+		}
+		service.runAsync(deliveryID, "push", runKey, func() {
 			service.processPushEvent(event, installationID)
 		})
 	}
@@ -219,13 +254,14 @@ func (service *Service) handlePushEvent(deliveryID string, event *github.PushEve
 	}
 }
 
-func (service *Service) runAsync(deliveryID, label string, fn func()) {
+func (service *Service) runAsync(deliveryID, label, runKey string, fn func()) {
 	started := time.Now()
 	defer func() {
 		if service.metrics != nil {
 			service.metrics.ObserveRunDuration(time.Since(started))
 		}
 		_ = service.markDeliveryDone(deliveryID)
+		_ = service.markRunDone(runKey)
 	}()
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -243,7 +279,15 @@ func (service *Service) runAsync(deliveryID, label string, fn func()) {
 }
 
 func (service *Service) installationClient(ctx context.Context, installationID int64) (*github.Client, string, error) {
-	tokenResp, _, err := service.appClient.Apps.CreateInstallationToken(ctx, installationID, &github.InstallationTokenOptions{})
+	var tokenResp *github.InstallationToken
+	err := service.withGitHubRetry(ctx, "create_installation_token", func(callCtx context.Context) error {
+		response, _, tokenErr := service.appClient.Apps.CreateInstallationToken(callCtx, installationID, &github.InstallationTokenOptions{})
+		if tokenErr != nil {
+			return tokenErr
+		}
+		tokenResp = response
+		return nil
+	})
 	if err != nil {
 		return nil, "", fmt.Errorf("create installation token: %w", err)
 	}
@@ -285,6 +329,51 @@ func (service *Service) markDeliveryDone(deliveryID string) error {
 		return nil
 	}
 	return service.deliveryStore.MarkDone(deliveryID)
+}
+
+func (service *Service) tryStartRun(runKey string) (bool, error) {
+	if strings.TrimSpace(runKey) == "" || service.runStore == nil {
+		return true, nil
+	}
+	return service.runStore.TryStart(runKey)
+}
+
+func (service *Service) markRunDone(runKey string) error {
+	if strings.TrimSpace(runKey) == "" || service.runStore == nil {
+		return nil
+	}
+	return service.runStore.MarkDone(runKey)
+}
+
+func issueCommentRunKey(event *github.IssueCommentEvent, command FixCommand, deliveryID string) string {
+	repo := normalizeRepoName(event.GetRepo().GetFullName())
+	issue := event.GetIssue().GetNumber()
+	commentID := event.GetComment().GetID()
+	if commentID > 0 {
+		return fmt.Sprintf("issue_comment:%s:%d:%d", repo, issue, commentID)
+	}
+
+	hashInput := strings.Join([]string{
+		repo,
+		fmt.Sprintf("%d", issue),
+		strings.TrimSpace(event.GetSender().GetLogin()),
+		strings.TrimSpace(event.GetComment().GetBody()),
+		strings.TrimSpace(command.PolicyPath),
+		fmt.Sprintf("%t", command.AutoMerge),
+		strings.TrimSpace(deliveryID),
+	}, "|")
+	sum := sha256.Sum256([]byte(hashInput))
+	return "issue_comment_fallback:" + hex.EncodeToString(sum[:])
+}
+
+func pushRunKey(event *github.PushEvent, deliveryID string) string {
+	repo := normalizeRepoName(event.GetRepo().GetFullName())
+	ref := strings.TrimSpace(event.GetRef())
+	after := strings.TrimSpace(event.GetAfter())
+	if after == "" {
+		after = strings.TrimSpace(deliveryID)
+	}
+	return fmt.Sprintf("push:%s:%s:%s", repo, ref, after)
 }
 
 func (service *Service) MetricsHandler(writer http.ResponseWriter, request *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,7 +48,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 		return
 	}
 
-	service.postIssueComment(ctx, client, owner, repo, issueNumber, "PatchPilot started remediation with `cvefix fix`.")
+	service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationStartedComment())
 
 	existingPR, _, err := service.findOpenRemediationPR(ctx, client, owner, repo, defaultBranch)
 	if err != nil {
@@ -62,7 +63,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	if err != nil {
 		service.metrics.IncFix("failed")
 		service.metrics.IncFailure("fix_workflow")
-		service.postIssueComment(ctx, client, owner, repo, issueNumber, fmt.Sprintf("PatchPilot remediation failed: %v", err))
+		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationFailedComment(err))
 		return
 	}
 	if result.BlockedReason != "" {
@@ -73,15 +74,14 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 			owner,
 			repo,
 			issueNumber,
-			fmt.Sprintf("PatchPilot blocked PR creation due to safety policy: %s (risk score: %d).", result.BlockedReason, result.RiskScore),
+			remediationBlockedComment(result.BlockedReason, result.RiskScore),
 		)
 		return
 	}
 
 	if !result.Changed {
 		service.metrics.IncFix("nochange")
-		message := fmt.Sprintf("PatchPilot finished. No file changes were needed (cvefix exit code `%d`).", result.ExitCode)
-		service.postIssueComment(ctx, client, owner, repo, issueNumber, message)
+		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationNoChangesComment(result.ExitCode))
 		return
 	}
 
@@ -94,7 +94,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	if err != nil {
 		service.metrics.IncFix("failed")
 		service.metrics.IncFailure("pr_upsert")
-		service.postIssueComment(ctx, client, owner, repo, issueNumber, fmt.Sprintf("PatchPilot applied changes but failed to create PR: %v", err))
+		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationPRUpsertFailedComment(err))
 		return
 	}
 	service.metrics.IncFix("changed")
@@ -103,16 +103,11 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	if created {
 		action = "opened"
 	}
-	message := fmt.Sprintf("PatchPilot %s remediation PR: %s", action, pr.GetHTMLURL())
+	autoMergeErr := error(nil)
 	if command.AutoMerge && service.cfg.EnableAutoMerge {
-		if err := service.enablePRAutoMerge(ctx, token, pr.GetNodeID()); err != nil {
-			message += fmt.Sprintf("\n\n`--auto-merge` requested, but enabling auto-merge failed: %v", err)
-		} else {
-			message += "\n\n`--auto-merge` requested and enabled."
-		}
-	} else if command.AutoMerge {
-		message += "\n\n`--auto-merge` was requested, but PP_ENABLE_AUTO_MERGE is disabled."
+		autoMergeErr = service.enablePRAutoMerge(ctx, token, pr.GetNodeID())
 	}
+	message := remediationPRReadyComment(action, pr.GetHTMLURL(), command.AutoMerge, service.cfg.EnableAutoMerge, autoMergeErr)
 	service.postIssueComment(ctx, client, owner, repo, issueNumber, message)
 }
 
@@ -308,7 +303,11 @@ func (service *Service) postIssueComment(ctx context.Context, client *github.Cli
 	if strings.TrimSpace(body) == "" {
 		return
 	}
-	if _, _, err := client.Issues.CreateComment(ctx, owner, repo, issueNumber, &github.IssueComment{Body: github.String(body)}); err != nil {
+	err := service.withGitHubRetry(ctx, "create_issue_comment", func(callCtx context.Context) error {
+		_, _, commentErr := client.Issues.CreateComment(callCtx, owner, repo, issueNumber, &github.IssueComment{Body: github.String(body)})
+		return commentErr
+	})
+	if err != nil {
 		service.log("error", "post issue comment failed", map[string]interface{}{"owner": owner, "repo": repo, "issue_number": issueNumber, "error": err.Error()})
 	}
 }
@@ -418,7 +417,15 @@ func (service *Service) findOpenRemediationPR(ctx context.Context, client *githu
 			PerPage: 100,
 		},
 	}
-	prs, _, err := client.PullRequests.List(ctx, owner, repo, options)
+	var prs []*github.PullRequest
+	err := service.withGitHubRetry(ctx, "list_pull_requests", func(callCtx context.Context) error {
+		response, _, listErr := client.PullRequests.List(callCtx, owner, repo, options)
+		if listErr != nil {
+			return listErr
+		}
+		prs = response
+		return nil
+	})
 	if err != nil {
 		return nil, false, err
 	}
@@ -436,20 +443,36 @@ func (service *Service) findOpenRemediationPR(ctx context.Context, client *githu
 
 func (service *Service) upsertRemediationPR(ctx context.Context, client *github.Client, owner, repo, baseBranch, headBranch, body string, existing *github.PullRequest) (*github.PullRequest, bool, error) {
 	if existing != nil {
-		updated, _, err := client.PullRequests.Edit(ctx, owner, repo, existing.GetNumber(), &github.PullRequest{
-			Title: github.String(remediationPRTitle),
-			Body:  github.String(body),
+		var updated *github.PullRequest
+		err := service.withGitHubRetry(ctx, "edit_pull_request", func(callCtx context.Context) error {
+			response, _, editErr := client.PullRequests.Edit(callCtx, owner, repo, existing.GetNumber(), &github.PullRequest{
+				Title: github.String(remediationPRTitle),
+				Body:  github.String(body),
+			})
+			if editErr != nil {
+				return editErr
+			}
+			updated = response
+			return nil
 		})
 		if err != nil {
 			return nil, false, err
 		}
 		return updated, false, nil
 	}
-	created, _, err := client.PullRequests.Create(ctx, owner, repo, &github.NewPullRequest{
-		Title: github.String(remediationPRTitle),
-		Head:  github.String(headBranch),
-		Base:  github.String(baseBranch),
-		Body:  github.String(body),
+	var created *github.PullRequest
+	err := service.withGitHubRetry(ctx, "create_pull_request", func(callCtx context.Context) error {
+		response, _, createErr := client.PullRequests.Create(callCtx, owner, repo, &github.NewPullRequest{
+			Title: github.String(remediationPRTitle),
+			Head:  github.String(headBranch),
+			Base:  github.String(baseBranch),
+			Body:  github.String(body),
+		})
+		if createErr != nil {
+			return createErr
+		}
+		created = response
+		return nil
 	})
 	if err != nil {
 		return nil, false, err
@@ -488,15 +511,25 @@ func (service *Service) enablePRAutoMerge(ctx context.Context, installationToken
 	request.Header.Set("Authorization", "Bearer "+installationToken)
 	request.Header.Set("Content-Type", "application/json")
 
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return fmt.Errorf("execute graphql request: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode >= 300 {
-		return fmt.Errorf("graphql auto-merge request failed with status %d", response.StatusCode)
-	}
-	return nil
+	return service.withGitHubRetry(ctx, "enable_pr_auto_merge", func(callCtx context.Context) error {
+		retryRequest := request.Clone(callCtx)
+		retryRequest.Body = io.NopCloser(bytes.NewReader(data))
+		response, reqErr := http.DefaultClient.Do(retryRequest)
+		if reqErr != nil {
+			return reqErr
+		}
+		defer response.Body.Close()
+
+		if response.StatusCode < 300 {
+			return nil
+		}
+		bodyBytes, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return &httpStatusError{
+			StatusCode: response.StatusCode,
+			Header:     response.Header.Clone(),
+			Body:       string(bodyBytes),
+		}
+	})
 }
 
 func (service *Service) graphqlURL() (string, error) {

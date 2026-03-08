@@ -42,9 +42,13 @@ Use these minimum GitHub App permissions:
 - `PP_GITHUB_API_BASE_URL` and `PP_GITHUB_UPLOAD_API_URL` (optional, set both for GitHub Enterprise).
 - `PP_ENABLE_AUTO_MERGE` (optional, default `true`): allow app-side auto-merge enablement when requested.
 - `PP_DELIVERY_DEDUP_TTL` (optional, default `24h`): retention window for webhook delivery dedupe state.
+- `PP_RUN_DEDUP_TTL` (optional, default `15m`): retention window for remediation run idempotency keys (prevents duplicate runs for redelivered events).
 - `PP_MAX_RISK_SCORE` (optional, default `25`): maximum allowed remediation risk score before PR creation is blocked.
 - `PP_DISALLOWED_PATHS` (optional): comma-separated blocked path patterns (supports `*` and `/**`).
 - `PP_METRICS_PATH` (optional, default `/metrics`): metrics endpoint path.
+- `PP_GITHUB_RETRY_MAX_ATTEMPTS` (optional, default `5`): max retries for GitHub API operations.
+- `PP_GITHUB_RETRY_INITIAL_BACKOFF` (optional, default `2s`): initial backoff between GitHub API retries.
+- `PP_GITHUB_RETRY_MAX_BACKOFF` (optional, default `30s`): max backoff between GitHub API retries.
 
 ## Run locally
 
@@ -95,3 +99,13 @@ Webhook idempotency:
 
 - The app stores `X-GitHub-Delivery` IDs in `<PP_WORKDIR>/deliveries.json`.
 - Duplicate or retried deliveries are ignored within `PP_DELIVERY_DEDUP_TTL`.
+
+Run idempotency:
+
+- The app stores run keys in `<PP_WORKDIR>/run-keys.json`.
+- Re-delivered events that map to the same logical run key (for example same comment id or same push SHA/ref) are skipped within `PP_RUN_DEDUP_TTL`.
+
+GitHub API resilience:
+
+- Installation token creation, issue comments, PR list/create/edit, and auto-merge GraphQL calls are retried with exponential backoff.
+- Secondary rate limits (`403`), explicit `Retry-After`, `429`, and transient `5xx` errors trigger retries.

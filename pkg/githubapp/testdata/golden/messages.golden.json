@@ -1,0 +1,12 @@
+{
+  "blocked": "PatchPilot blocked PR creation due to safety policy: risk score too high (risk score: 42).",
+  "failed": "PatchPilot remediation failed: cvefix failed",
+  "invalid_command": "Invalid PatchPilot command: unknown option",
+  "no_changes": "PatchPilot finished. No file changes were needed (cvefix exit code `0`).",
+  "pr_ready_opened": "PatchPilot opened remediation PR: https://example.com/pr/1",
+  "pr_ready_updated_disabled": "PatchPilot updated remediation PR: https://example.com/pr/1\n\n`--auto-merge` was requested, but PP_ENABLE_AUTO_MERGE is disabled.",
+  "pr_ready_updated_enabled": "PatchPilot updated remediation PR: https://example.com/pr/1\n\n`--auto-merge` requested and enabled.",
+  "pr_ready_updated_error": "PatchPilot updated remediation PR: https://example.com/pr/1\n\n`--auto-merge` requested, but enabling auto-merge failed: merge policy blocked",
+  "pr_upsert_failed": "PatchPilot applied changes but failed to create PR: api unavailable",
+  "started": "PatchPilot started remediation with `cvefix fix`."
+}

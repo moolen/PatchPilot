@@ -1,0 +1,47 @@
+[
+  {
+    "name": "no_fix_available",
+    "failure": {
+      "category": "no_fix_available",
+      "code": "no_automated_fix_available",
+      "exit_code": 23,
+      "message": "vulnerabilities remain: 3"
+    }
+  },
+  {
+    "name": "partial_fix_applied",
+    "failure": {
+      "category": "partial_fix",
+      "code": "partial_fix_applied",
+      "exit_code": 23,
+      "message": "vulnerabilities remain: 1"
+    }
+  },
+  {
+    "name": "verification_regressed",
+    "failure": {
+      "category": "verification_regression",
+      "code": "verification_regressed",
+      "exit_code": 22,
+      "message": "verification regressed: 2 check(s) changed from passing to failing/timeout"
+    }
+  },
+  {
+    "name": "policy_violation",
+    "failure": {
+      "category": "policy_blocked",
+      "code": "policy_violation",
+      "exit_code": 21,
+      "message": "docker policy violation in Dockerfile"
+    }
+  },
+  {
+    "name": "agent_failure",
+    "failure": {
+      "category": "agent_failure",
+      "code": "agent_remediation_failed",
+      "exit_code": 21,
+      "message": "deterministic patching failed and agent loop did not resolve all issues"
+    }
+  }
+]
