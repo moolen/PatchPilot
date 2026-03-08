@@ -1,0 +1,54 @@
+name: PatchPilot CVE Fix
+
+description: Run cvefix scan/fix/verify in a GitHub Actions job.
+author: moolen
+
+inputs:
+  command:
+    description: Command to run (scan|fix|verify)
+    required: false
+    default: fix
+  dir:
+    description: Local repository directory
+    required: false
+    default: .
+  repo_url:
+    description: Optional Git repository URL to clone and scan
+    required: false
+    default: ''
+  policy:
+    description: Optional policy file path
+    required: false
+    default: ''
+  enable_agent:
+    description: Enable external agent loop for fix command
+    required: false
+    default: 'false'
+  agent_command:
+    description: Agent command to run when enable-agent=true
+    required: false
+    default: codex
+  agent_max_attempts:
+    description: Max number of agent attempts
+    required: false
+    default: '5'
+  extra_args:
+    description: Additional CLI args (space-separated)
+    required: false
+    default: ''
+  acceptable_exit_codes:
+    description: Comma-separated list of acceptable cvefix exit codes
+    required: false
+    default: '0'
+
+outputs:
+  exit-code:
+    description: cvefix process exit code
+
+runs:
+  using: docker
+  image: Dockerfile
+
+branding:
+  icon: shield
+  color: blue
