@@ -1,0 +1,121 @@
+name: Daily Dogfood
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: daily-dogfood
+  cancel-in-progress: false
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install syft and grype
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b "$HOME/.local/bin"
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build cvefix
+        run: make build
+
+      - name: Run cvefix remediation
+        id: remediate
+        shell: bash
+        run: |
+          set +e
+          ./bin/cvefix fix --dir . --enable-agent=false
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          if [[ "$code" -ne 0 && "$code" -ne 23 ]]; then
+            exit "$code"
+          fi
+
+      - name: Run local CI checks
+        id: local_ci
+        continue-on-error: true
+        run: |
+          make test
+          make build
+
+      - name: Create pull request for remediation
+        id: cpr
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: automation/daily-cvefix
+          delete-branch: true
+          commit-message: 'chore: daily cvefix remediation'
+          title: 'chore: daily CVE remediation'
+          body: |
+            Automated daily remediation run.
+
+            - `cvefix fix` exit code: `${{ steps.remediate.outputs.exit_code }}`
+            - local CI outcome: `${{ steps.local_ci.outcome }}`
+
+            Auto-merge is attempted only when all vulnerabilities are fixed (`exit code 0`) and CI checks pass.
+          labels: |
+            dependencies
+            security
+            automation
+
+      - name: Wait for PR checks and auto-merge when safe
+        if: |
+          steps.cpr.outputs.pull-request-number != '' &&
+          steps.remediate.outputs.exit_code == '0' &&
+          steps.local_ci.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr_number='${{ steps.cpr.outputs.pull-request-number }}'
+          echo "Waiting for required checks on PR #$pr_number"
+
+          for attempt in $(seq 1 60); do
+            set +e
+            gh pr checks "$pr_number" --required
+            status=$?
+            set -e
+
+            if [[ "$status" -eq 0 ]]; then
+              echo "Checks passed, merging PR #$pr_number"
+              gh pr merge "$pr_number" --squash --delete-branch
+              exit 0
+            fi
+
+            if [[ "$status" -eq 1 ]]; then
+              echo "Required checks failed for PR #$pr_number"
+              exit 1
+            fi
+
+            echo "Checks still pending for PR #$pr_number (attempt $attempt/60)"
+            sleep 30
+          done
+
+          echo "Timed out waiting for required checks on PR #$pr_number"
+          exit 1
