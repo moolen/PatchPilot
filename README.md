@@ -80,12 +80,12 @@ GitHub App utility commands:
 ## Example
 
 ```bash
-go run . scan ~/dev/external-secrets/external-secrets
-go run . fix ~/dev/external-secrets/external-secrets
-go run . verify ~/dev/external-secrets/external-secrets
-go run . scan --dir ~/dev/external-secrets/external-secrets
-go run . fix --repo-url https://github.com/external-secrets/external-secrets.git
-go run . fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/external-secrets.yaml
+go run ./cmd/cvefix scan ~/dev/external-secrets/external-secrets
+go run ./cmd/cvefix fix ~/dev/external-secrets/external-secrets
+go run ./cmd/cvefix verify ~/dev/external-secrets/external-secrets
+go run ./cmd/cvefix scan --dir ~/dev/external-secrets/external-secrets
+go run ./cmd/cvefix fix --repo-url https://github.com/external-secrets/external-secrets.git
+go run ./cmd/cvefix fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/external-secrets.yaml
 ```
 
 ## Agent Artifacts

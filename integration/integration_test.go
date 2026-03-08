@@ -50,7 +50,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	integrationBinary = filepath.Join(buildDir, "cvefix")
-	buildCommand := exec.Command("go", "build", "-o", integrationBinary, ".")
+	buildCommand := exec.Command("go", "build", "-o", integrationBinary, "./cmd/cvefix")
 	buildCommand.Dir = integrationRoot
 	buildOutput, err := buildCommand.CombinedOutput()
 	if err != nil {

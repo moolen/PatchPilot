@@ -5,7 +5,7 @@ project_name: cvefix
 builds:
   - id: cvefix
     binary: cvefix
-    main: ./main.go
+    main: ./cmd/cvefix
     env:
       - CGO_ENABLED=0
     goos:

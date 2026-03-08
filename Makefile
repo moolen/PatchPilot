@@ -2,7 +2,7 @@
 
 build:
 	mkdir -p bin
-	go build -o bin/cvefix .
+	go build -o bin/cvefix ./cmd/cvefix
 	go build -o bin/patchpilot-app ./cmd/patchpilot-app
 
 build.app:
