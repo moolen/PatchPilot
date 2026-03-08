@@ -283,10 +283,37 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 
 	pushArgs := []string{"push", "origin", branch}
 	if strings.TrimSpace(preferredBranch) != "" {
-		pushArgs = []string{"push", "--force-with-lease", "origin", branch}
+		remoteRef := fmt.Sprintf("refs/heads/%s", branch)
+		lsRemoteOutput, lsRemoteStderr, lsRemoteErr := runCommand(ctx, repoPath, nil, "git", "ls-remote", "--heads", "origin", remoteRef)
+		if lsRemoteErr != nil {
+			return fixRunResult{}, fmt.Errorf(
+				"git ls-remote remediation branch: %w\nstdout:\n%s\nstderr:\n%s",
+				lsRemoteErr,
+				truncateForComment(lsRemoteOutput),
+				truncateForComment(lsRemoteStderr),
+			)
+		}
+
+		expectedHead := remoteBranchHeadFromLSRemote(lsRemoteOutput, remoteRef)
+		if expectedHead != "" {
+			pushArgs = []string{
+				"push",
+				fmt.Sprintf("--force-with-lease=%s:%s", remoteRef, expectedHead),
+				"origin",
+				branch,
+			}
+		} else {
+			pushArgs = []string{"push", "origin", branch}
+		}
 	}
-	if _, _, err := runCommand(ctx, repoPath, nil, "git", pushArgs...); err != nil {
-		return fixRunResult{}, fmt.Errorf("git push: %w", err)
+	pushStdout, pushStderr, pushErr := runCommand(ctx, repoPath, nil, "git", pushArgs...)
+	if pushErr != nil {
+		return fixRunResult{}, fmt.Errorf(
+			"git push: %w\nstdout:\n%s\nstderr:\n%s",
+			pushErr,
+			truncateForComment(pushStdout),
+			truncateForComment(pushStderr),
+		)
 	}
 
 	return fixRunResult{
@@ -299,6 +326,16 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 		ChangedFiles:    changedFiles,
 		RegressionCount: safety.VerificationRegressions,
 	}, nil
+}
+
+func remoteBranchHeadFromLSRemote(lsRemoteOutput, remoteRef string) string {
+	for _, line := range strings.Split(lsRemoteOutput, "\n") {
+		parts := strings.Fields(strings.TrimSpace(line))
+		if len(parts) >= 2 && parts[1] == remoteRef {
+			return parts[0]
+		}
+	}
+	return ""
 }
 
 func (service *Service) postIssueComment(ctx context.Context, client *github.Client, owner, repo string, issueNumber int, body string) {

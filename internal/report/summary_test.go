@@ -120,6 +120,43 @@ func TestBuildSummaryMarksFixedFindings(t *testing.T) {
 	}
 }
 
+func TestBuildSummaryTreatsNpmAndPythonLockLocationsAsFixable(t *testing.T) {
+	cases := []struct {
+		name      string
+		ecosystem string
+		location  string
+	}{
+		{name: "npm package-lock", ecosystem: "npm", location: "/repo/package-lock.json"},
+		{name: "npm pnpm lock", ecosystem: "npm", location: "/repo/pnpm-lock.yaml"},
+		{name: "npm yarn lock", ecosystem: "npm", location: "/repo/yarn.lock"},
+		{name: "python pyproject", ecosystem: "pypi", location: "/repo/pyproject.toml"},
+		{name: "python poetry lock", ecosystem: "pypi", location: "/repo/poetry.lock"},
+		{name: "python uv lock", ecosystem: "pypi", location: "/repo/uv.lock"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := &vuln.Report{Findings: []vuln.Finding{{
+				VulnerabilityID: "CVE-1",
+				Package:         "demo",
+				Installed:       "1.0.0",
+				FixedVersion:    "1.2.3",
+				Ecosystem:       tc.ecosystem,
+				Locations:       []string{tc.location},
+			}}}
+			after := &vuln.Report{Findings: before.Findings}
+
+			summary := BuildSummary(before, after, nil)
+			if len(summary.Findings) != 1 {
+				t.Fatalf("expected one finding row, got %#v", summary.Findings)
+			}
+			if summary.Findings[0].Reason != "no automated patch was applied" {
+				t.Fatalf("expected fixable reason for %s, got %#v", tc.location, summary.Findings[0])
+			}
+		})
+	}
+}
+
 func TestPrintSummaryShowsUnsupportedSectionManualSummary(t *testing.T) {
 	summary := Summary{
 		Before: 1,
