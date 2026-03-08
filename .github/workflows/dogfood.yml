@@ -83,10 +83,7 @@ jobs:
             automation
 
       - name: Wait for PR checks and auto-merge when safe
-        if: |
-          steps.cpr.outputs.pull-request-number != '' &&
-          steps.remediate.outputs.exit_code == '0' &&
-          steps.local_ci.outcome == 'success'
+        if: ${{ steps.cpr.outputs.pull-request-number != '' && steps.remediate.outputs.exit_code == '0' && steps.local_ci.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
