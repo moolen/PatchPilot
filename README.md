@@ -52,6 +52,20 @@ When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific pol
 - `grype`
 - Go toolchain
 
+## GitHub Integrations
+
+- GitHub App service docs: `docs/github-app.md`
+- Reusable GitHub Action docs: `docs/github-action.md`
+
+Build both binaries locally:
+
+```bash
+make build
+```
+
+- `bin/cvefix`: CLI tool
+- `bin/patchpilot-app`: webhook service for GitHub App automation
+
 ## Example
 
 ```bash

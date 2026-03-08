@@ -36,6 +36,13 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Smoke test packaged GitHub Action
+        uses: ./
+        with:
+          command: scan
+          dir: .
+          acceptable_exit_codes: "0,23"
+
       - name: Notify Slack on failure
         if: ${{ failure() }}
         env:
