@@ -21,16 +21,16 @@ func PrintCurrent(w io.Writer, repo string, report *vuln.Report) {
 		}
 	}
 
-	fmt.Fprintf(w, "Repository: %s\n", repo)
-	fmt.Fprintf(w, "Findings with fix version: %d\n", len(report.Findings))
-	fmt.Fprintf(w, "Unsupported by cvefix: %d\n", unsupported)
-	fmt.Fprintf(w, "Ignored without fix version: %d\n", report.IgnoredWithoutFix)
-	fmt.Fprintf(w, "Ignored by policy: %d\n", report.IgnoredByPolicy)
+	_, _ = fmt.Fprintf(w, "Repository: %s\n", repo)
+	_, _ = fmt.Fprintf(w, "Findings with fix version: %d\n", len(report.Findings))
+	_, _ = fmt.Fprintf(w, "Unsupported by cvefix: %d\n", unsupported)
+	_, _ = fmt.Fprintf(w, "Ignored without fix version: %d\n", report.IgnoredWithoutFix)
+	_, _ = fmt.Fprintf(w, "Ignored by policy: %d\n", report.IgnoredByPolicy)
 	if len(rows) == 0 {
 		return
 	}
 
-	fmt.Fprintln(w, "Findings:")
+	_, _ = fmt.Fprintln(w, "Findings:")
 	limit := len(rows)
 	if limit > maxPrintedIssues {
 		limit = maxPrintedIssues
@@ -46,16 +46,16 @@ func PrintCurrent(w io.Writer, repo string, report *vuln.Report) {
 	}
 	printTable(w, []string{"CVE", "Package", "File Location", "Fixable"}, table)
 	if len(rows) > limit {
-		fmt.Fprintf(w, "... %d more findings written to .cvefix/findings.json\n", len(rows)-limit)
+		_, _ = fmt.Fprintf(w, "... %d more findings written to .cvefix/findings.json\n", len(rows)-limit)
 	}
 }
 
 func PrintSummary(w io.Writer, summary Summary) {
-	fmt.Fprintf(w, "Vulnerabilities before: %d\n", summary.Before)
-	fmt.Fprintf(w, "Vulnerabilities fixed: %d\n", summary.Fixed)
-	fmt.Fprintf(w, "Remaining: %d\n", summary.After)
+	_, _ = fmt.Fprintf(w, "Vulnerabilities before: %d\n", summary.Before)
+	_, _ = fmt.Fprintf(w, "Vulnerabilities fixed: %d\n", summary.Fixed)
+	_, _ = fmt.Fprintf(w, "Remaining: %d\n", summary.After)
 	if len(summary.Findings) > 0 {
-		fmt.Fprintln(w, "Fix results:")
+		_, _ = fmt.Fprintln(w, "Fix results:")
 		table := make([][]string, 0, len(summary.Findings))
 		for _, finding := range summary.Findings {
 			status := "fixed"
@@ -72,29 +72,29 @@ func PrintSummary(w io.Writer, summary Summary) {
 		printTable(w, []string{"CVE", "Package", "File Location", "Status", "Reason"}, table)
 	}
 	if len(summary.Patches) > 0 {
-		fmt.Fprintln(w, "Patched dependencies:")
+		_, _ = fmt.Fprintln(w, "Patched dependencies:")
 		for _, patch := range summary.Patches {
-			fmt.Fprintf(w, "- [%s] %s: %s -> %s (%s)\n", patch.Manager, patch.Package, patch.From, patch.To, patch.Target)
+			_, _ = fmt.Fprintf(w, "- [%s] %s: %s -> %s (%s)\n", patch.Manager, patch.Package, patch.From, patch.To, patch.Target)
 		}
 	}
 	if len(summary.Unsupported) > 0 {
-		fmt.Fprintln(w, "Unsupported by cvefix (still actionable):")
+		_, _ = fmt.Fprintln(w, "Unsupported by cvefix (still actionable):")
 		for _, finding := range summary.Unsupported {
 			target := finding.Target
 			if target == "" {
 				target = "unknown target"
 			}
-			fmt.Fprintf(w, "- [%s] %s %s -> %s (%s; %s)\n", finding.VulnerabilityID, finding.Package, finding.Installed, finding.FixedVersion, target, finding.Reason)
+			_, _ = fmt.Fprintf(w, "- [%s] %s %s -> %s (%s; %s)\n", finding.VulnerabilityID, finding.Package, finding.Installed, finding.FixedVersion, target, finding.Reason)
 		}
 	}
 	if len(summary.Explanations) > 0 {
-		fmt.Fprintln(w, "Fix explanations:")
+		_, _ = fmt.Fprintln(w, "Fix explanations:")
 		for _, explanation := range summary.Explanations {
 			patch := explanation.Patch
 			if patch == "" {
 				patch = "no patch applied"
 			}
-			fmt.Fprintf(w, "- %s %s (%s): %s; %s; verification=%s\n",
+			_, _ = fmt.Fprintf(w, "- %s %s (%s): %s; %s; verification=%s\n",
 				explanation.VulnerabilityID,
 				explanation.Package,
 				explanation.FileLocation,
@@ -224,9 +224,9 @@ func buildPatchAttemptSet(patches []fixer.Patch) map[string]bool {
 
 func printTable(w io.Writer, headers []string, rows [][]string) {
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(table, strings.Join(headers, "\t"))
+	_, _ = fmt.Fprintln(table, strings.Join(headers, "\t"))
 	for _, row := range rows {
-		fmt.Fprintln(table, strings.Join(row, "\t"))
+		_, _ = fmt.Fprintln(table, strings.Join(row, "\t"))
 	}
 	_ = table.Flush()
 }

@@ -251,7 +251,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	logProgress("fix workflow completed")
 
 	if summary.Fixed == 0 && len(summary.Patches) == 0 {
-		fmt.Fprintln(os.Stdout, "No applicable fixes were applied.")
+		_, _ = fmt.Fprintln(os.Stdout, "No applicable fixes were applied.")
 	}
 
 	if len(finalValidation.Verification.Regressions) > 0 {

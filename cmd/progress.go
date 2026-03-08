@@ -37,7 +37,7 @@ func logProgress(format string, args ...any) {
 	progressState.mu.RUnlock()
 
 	if !jsonOutput {
-		fmt.Fprintf(os.Stderr, "[cvefix] %s\n", message)
+		_, _ = fmt.Fprintf(os.Stderr, "[cvefix] %s\n", message)
 		return
 	}
 
@@ -51,8 +51,8 @@ func logProgress(format string, args ...any) {
 	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[cvefix] %s\n", message)
+		_, _ = fmt.Fprintf(os.Stderr, "[cvefix] %s\n", message)
 		return
 	}
-	fmt.Fprintln(os.Stderr, string(encoded))
+	_, _ = fmt.Fprintln(os.Stderr, string(encoded))
 }

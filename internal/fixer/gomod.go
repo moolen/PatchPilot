@@ -435,7 +435,7 @@ func runGoCommand(ctx context.Context, dir string, args ...string) error {
 	output, err := cmd.CombinedOutput()
 	trimmed := strings.TrimSpace(string(output))
 	if trimmed != "" {
-		fmt.Fprintln(os.Stderr, trimmed)
+		_, _ = fmt.Fprintln(os.Stderr, trimmed)
 	}
 	if err != nil {
 		if trimmed == "" {
@@ -455,10 +455,6 @@ func hasVendorDir(dir string) bool {
 	return err == nil && info.IsDir()
 }
 
-func goStateDir(dir string) (string, error) {
-	return goenv.StateDir(dir)
-}
-
 func isNonFatalGoModuleStateError(err error) bool {
 	if err == nil {
 		return false
@@ -474,7 +470,7 @@ func isNonFatalGoModuleStateError(err error) bool {
 }
 
 func warnGoFix(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "cvefix: warn: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(os.Stderr, "cvefix: warn: "+format+"\n", args...)
 }
 
 func maxSemver(left, right string) string {
@@ -522,10 +518,6 @@ func canonicalSemver(version string) string {
 		return canonical + "+incompatible"
 	}
 	return canonical
-}
-
-func findFiles(root string, match func(path string, entry fs.DirEntry) bool) ([]string, error) {
-	return findFilesWithOptions(root, match, FileOptions{})
 }
 
 func findFilesWithOptions(root string, match func(path string, entry fs.DirEntry) bool, options FileOptions) ([]string, error) {

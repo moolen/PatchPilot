@@ -19,7 +19,7 @@ import (
 
 func main() {
 	if err := execute(os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -123,7 +123,7 @@ func serve() error {
 func runDoctor(stdout, stderr io.Writer) int {
 	cfg, err := githubapp.LoadConfigFromEnv()
 	if err != nil {
-		fmt.Fprintf(stderr, "doctor: config invalid: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "doctor: config invalid: %v\n", err)
 		return 1
 	}
 
@@ -131,10 +131,10 @@ func runDoctor(stdout, stderr io.Writer) int {
 	check := func(name string, err error) {
 		if err != nil {
 			errorsFound = true
-			fmt.Fprintf(stderr, "doctor: %s: FAIL (%v)\n", name, err)
+			_, _ = fmt.Fprintf(stderr, "doctor: %s: FAIL (%v)\n", name, err)
 			return
 		}
-		fmt.Fprintf(stdout, "doctor: %s: OK\n", name)
+		_, _ = fmt.Fprintf(stdout, "doctor: %s: OK\n", name)
 	}
 
 	check("workdir writable", ensureWritableDir(cfg.WorkDir))
@@ -146,13 +146,13 @@ func runDoctor(stdout, stderr io.Writer) int {
 		_, err := os.ReadFile(cfg.PrivateKeyPath)
 		check("private key file", err)
 	} else {
-		fmt.Fprintln(stdout, "doctor: private key file: OK (using PP_PRIVATE_KEY_PEM)")
+		_, _ = fmt.Fprintln(stdout, "doctor: private key file: OK (using PP_PRIVATE_KEY_PEM)")
 	}
 
 	if errorsFound {
 		return 1
 	}
-	fmt.Fprintln(stdout, "doctor: all checks passed")
+	_, _ = fmt.Fprintln(stdout, "doctor: all checks passed")
 	return 0
 }
 
@@ -187,7 +187,7 @@ func runManifest(stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
-		fmt.Fprintf(stderr, "manifest: encode failed: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "manifest: encode failed: %v\n", err)
 		return 1
 	}
 	return 0

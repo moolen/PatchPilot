@@ -28,14 +28,7 @@ jobs:
           cache: true
 
       - name: Lint
-        env:
-          GOPATH: ${{ github.workspace }}/.cache/gopath
-          GOMODCACHE: ${{ github.workspace }}/.cache/gomod
-          GOCACHE: ${{ github.workspace }}/.cache/gobuild
-        run: |
-          mkdir -p "$GOPATH" "$GOMODCACHE" "$GOCACHE"
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.4.0
-          "$GOPATH/bin/golangci-lint" run ./...
+        run: make lint
 
       - name: Unit tests
         run: make test

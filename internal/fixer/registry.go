@@ -256,11 +256,11 @@ func fetchRegistryTags(ctx context.Context, ref imageReference) ([]string, error
 		}
 		if response.StatusCode == http.StatusUnauthorized {
 			if registryAuthMode != "auto" {
-				response.Body.Close()
+				_ = response.Body.Close()
 				return nil, fmt.Errorf("registry tags request unauthorized (auth mode %q)", registryAuthMode)
 			}
 			authHeader := response.Header.Get("Www-Authenticate")
-			response.Body.Close()
+			_ = response.Body.Close()
 			token, err = fetchRegistryToken(ctx, authHeader)
 			if err != nil {
 				return nil, err
@@ -268,7 +268,7 @@ func fetchRegistryTags(ctx context.Context, ref imageReference) ([]string, error
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
-			response.Body.Close()
+			_ = response.Body.Close()
 			return nil, fmt.Errorf("registry tags request failed: %s", response.Status)
 		}
 
@@ -276,11 +276,11 @@ func fetchRegistryTags(ctx context.Context, ref imageReference) ([]string, error
 			Tags []string `json:"tags"`
 		}
 		if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-			response.Body.Close()
+			_ = response.Body.Close()
 			return nil, fmt.Errorf("decode registry tags: %w", err)
 		}
 		linkHeader := response.Header.Get("Link")
-		response.Body.Close()
+		_ = response.Body.Close()
 
 		for _, tag := range payload.Tags {
 			if _, ok := seen[tag]; ok {
@@ -319,7 +319,9 @@ func fetchRegistryToken(ctx context.Context, header string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("registry token request failed: %s", response.Status)
 	}
@@ -397,7 +399,7 @@ func fetchRegistryManifestDigest(ctx context.Context, ref imageReference, tag st
 	}
 	statusCode := response.StatusCode
 	digest := strings.TrimSpace(response.Header.Get("Docker-Content-Digest"))
-	response.Body.Close()
+	_ = response.Body.Close()
 	if statusCode == http.StatusOK && digest != "" {
 		return digest, nil
 	}
@@ -409,7 +411,9 @@ func fetchRegistryManifestDigest(ctx context.Context, ref imageReference, tag st
 	if err != nil {
 		return "", err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("registry manifest request failed: %s", response.Status)
 	}
@@ -456,7 +460,7 @@ func doRegistryRequestWithAuth(ctx context.Context, method, requestURL string, h
 		}
 
 		authHeader := response.Header.Get("Www-Authenticate")
-		response.Body.Close()
+		_ = response.Body.Close()
 		token, err = fetchRegistryToken(ctx, authHeader)
 		if err != nil {
 			return nil, err

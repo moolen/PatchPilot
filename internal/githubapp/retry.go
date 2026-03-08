@@ -142,7 +142,7 @@ func explicitRetryDelay(err error) (time.Duration, bool) {
 		if delay, ok := retryAfterFromResponse(rateLimit.Response); ok {
 			return delay, true
 		}
-		if rateLimit.Rate.Reset.Time.After(time.Now().UTC()) {
+		if rateLimit.Rate.Reset.After(time.Now().UTC()) {
 			return time.Until(rateLimit.Rate.Reset.Time) + time.Second, true
 		}
 		return 0, false
@@ -181,7 +181,7 @@ func containsSecondaryRateLimit(message string) bool {
 func retriableNetworkError(err error) bool {
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return netErr.Timeout() || netErr.Temporary()
+		return netErr.Timeout()
 	}
 	return false
 }

@@ -157,7 +157,7 @@ func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config,
 		})
 		trimmed := strings.TrimSpace(result.Combined)
 		if trimmed != "" {
-			fmt.Fprintf(os.Stderr, "[cvefix] post-exec %q output:\n%s\n", hook.Name, trimmed)
+			_, _ = fmt.Fprintf(os.Stderr, "[cvefix] post-exec %q output:\n%s\n", hook.Name, trimmed)
 		}
 		if err != nil {
 			if hook.FailOnError {

@@ -109,11 +109,11 @@ func TestWithGitHubRetryRetriesHttpStatusError(t *testing.T) {
 func TestIssueCommentRunKeyUsesCommentID(t *testing.T) {
 	event := &github.IssueCommentEvent{
 		Comment: &github.IssueComment{
-			ID:   github.Int64(77),
-			Body: github.String("/cvefix fix"),
+			ID:   github.Ptr(int64(77)),
+			Body: github.Ptr("/cvefix fix"),
 		},
-		Issue: &github.Issue{Number: github.Int(9)},
-		Repo:  &github.Repository{FullName: github.String("Acme/Demo")},
+		Issue: &github.Issue{Number: github.Ptr(9)},
+		Repo:  &github.Repository{FullName: github.Ptr("Acme/Demo")},
 	}
 	command := FixCommand{}
 	key := issueCommentRunKey(event, command, "delivery-1")
@@ -124,10 +124,10 @@ func TestIssueCommentRunKeyUsesCommentID(t *testing.T) {
 
 func TestIssueCommentRunKeyFallbackDiffersByDelivery(t *testing.T) {
 	event := &github.IssueCommentEvent{
-		Comment: &github.IssueComment{Body: github.String("/cvefix fix")},
-		Issue:   &github.Issue{Number: github.Int(9)},
-		Repo:    &github.Repository{FullName: github.String("acme/demo")},
-		Sender:  &github.User{Login: github.String("alice")},
+		Comment: &github.IssueComment{Body: github.Ptr("/cvefix fix")},
+		Issue:   &github.Issue{Number: github.Ptr(9)},
+		Repo:    &github.Repository{FullName: github.Ptr("acme/demo")},
+		Sender:  &github.User{Login: github.Ptr("alice")},
 	}
 	command := FixCommand{PolicyPath: ".patchpilot.yaml", AutoMerge: true}
 	left := issueCommentRunKey(event, command, "delivery-1")

@@ -260,10 +260,7 @@ func TestRunGoCommandPreservesParseErrors(t *testing.T) {
 	}
 
 	oldPath := os.Getenv("PATH")
-	if err := os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath); err != nil {
-		t.Fatalf("set PATH: %v", err)
-	}
-	defer os.Setenv("PATH", oldPath)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	dir := t.TempDir()
 	err := runGoCommand(context.Background(), dir, "mod", "tidy")
@@ -457,10 +454,7 @@ func TestRunGoListModulesUsesModuleMode(t *testing.T) {
 	}
 
 	oldPath := os.Getenv("PATH")
-	if err := os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath); err != nil {
-		t.Fatalf("set PATH: %v", err)
-	}
-	defer os.Setenv("PATH", oldPath)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	dir := t.TempDir()
 	output, err := runGoListModules(context.Background(), dir)
@@ -489,10 +483,7 @@ func TestRunGoModTidyUsesErrorTolerantMode(t *testing.T) {
 	}
 
 	oldPath := os.Getenv("PATH")
-	if err := os.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath); err != nil {
-		t.Fatalf("set PATH: %v", err)
-	}
-	defer os.Setenv("PATH", oldPath)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+oldPath)
 
 	if err := runGoModTidy(context.Background(), t.TempDir()); err != nil {
 		t.Fatalf("runGoModTidy returned error: %v", err)

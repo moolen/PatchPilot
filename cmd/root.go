@@ -168,7 +168,7 @@ func cloneRepoToTemp(ctx context.Context, writer io.Writer, repoURL string) (str
 	if err != nil {
 		return "", fmt.Errorf("resolve cloned repo path: %w", err)
 	}
-	fmt.Fprintf(writer, "Cloned %s to %s\n", repoURL, absTarget)
+	_, _ = fmt.Fprintf(writer, "Cloned %s to %s\n", repoURL, absTarget)
 	return absTarget, nil
 }
 

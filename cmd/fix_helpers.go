@@ -171,7 +171,7 @@ func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, ve
 		return result, err
 	}
 	result.After = after
-	fmt.Fprintf(&logs, "remaining findings with fix versions: %d\n", len(after.Findings))
+	_, _ = fmt.Fprintf(&logs, "remaining findings with fix versions: %d\n", len(after.Findings))
 
 	if len(verificationBaseline.Modules) == 0 {
 		result.ValidationPassed = true

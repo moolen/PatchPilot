@@ -60,7 +60,7 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			tracker.endStageSuccess(stage, map[string]any{"verification_baseline": "missing"})
-			fmt.Fprintln(os.Stdout, "Verification mode: standard (skipped: no baseline available)")
+			_, _ = fmt.Fprintln(os.Stdout, "Verification mode: standard (skipped: no baseline available)")
 			if summary.After > 0 {
 				return vulnsRemainError(summary.After)
 			}

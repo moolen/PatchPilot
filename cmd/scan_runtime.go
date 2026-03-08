@@ -22,10 +22,3 @@ func scanVulnerabilities(ctx context.Context, repo string, cfg *policy.Config) (
 	}
 	return report, nil
 }
-
-func generateSBOMAndScan(ctx context.Context, repo string, cfg *policy.Config) (*vuln.Report, error) {
-	if err := generateSBOM(ctx, repo, cfg); err != nil {
-		return nil, err
-	}
-	return scanVulnerabilities(ctx, repo, cfg)
-}

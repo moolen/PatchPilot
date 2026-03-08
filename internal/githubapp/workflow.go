@@ -200,7 +200,9 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 	if err != nil {
 		return fixRunResult{}, fmt.Errorf("create temp dir: %w", err)
 	}
-	defer os.RemoveAll(tempRoot)
+	defer func() {
+		_ = os.RemoveAll(tempRoot)
+	}()
 
 	repoPath := filepath.Join(tempRoot, "repo")
 	cloneURL, err := repositoryCloneURL(service.cfg.GitHubBaseWebURL, owner, repo, token)
@@ -304,7 +306,7 @@ func (service *Service) postIssueComment(ctx context.Context, client *github.Cli
 		return
 	}
 	err := service.withGitHubRetry(ctx, "create_issue_comment", func(callCtx context.Context) error {
-		_, _, commentErr := client.Issues.CreateComment(callCtx, owner, repo, issueNumber, &github.IssueComment{Body: github.String(body)})
+		_, _, commentErr := client.Issues.CreateComment(callCtx, owner, repo, issueNumber, &github.IssueComment{Body: github.Ptr(body)})
 		return commentErr
 	})
 	if err != nil {
@@ -446,8 +448,8 @@ func (service *Service) upsertRemediationPR(ctx context.Context, client *github.
 		var updated *github.PullRequest
 		err := service.withGitHubRetry(ctx, "edit_pull_request", func(callCtx context.Context) error {
 			response, _, editErr := client.PullRequests.Edit(callCtx, owner, repo, existing.GetNumber(), &github.PullRequest{
-				Title: github.String(remediationPRTitle),
-				Body:  github.String(body),
+				Title: github.Ptr(remediationPRTitle),
+				Body:  github.Ptr(body),
 			})
 			if editErr != nil {
 				return editErr
@@ -463,10 +465,10 @@ func (service *Service) upsertRemediationPR(ctx context.Context, client *github.
 	var created *github.PullRequest
 	err := service.withGitHubRetry(ctx, "create_pull_request", func(callCtx context.Context) error {
 		response, _, createErr := client.PullRequests.Create(callCtx, owner, repo, &github.NewPullRequest{
-			Title: github.String(remediationPRTitle),
-			Head:  github.String(headBranch),
-			Base:  github.String(baseBranch),
-			Body:  github.String(body),
+			Title: github.Ptr(remediationPRTitle),
+			Head:  github.Ptr(headBranch),
+			Base:  github.Ptr(baseBranch),
+			Body:  github.Ptr(body),
 		})
 		if createErr != nil {
 			return createErr
@@ -518,7 +520,9 @@ func (service *Service) enablePRAutoMerge(ctx context.Context, installationToken
 		if reqErr != nil {
 			return reqErr
 		}
-		defer response.Body.Close()
+		defer func() {
+			_ = response.Body.Close()
+		}()
 
 		if response.StatusCode < 300 {
 			return nil

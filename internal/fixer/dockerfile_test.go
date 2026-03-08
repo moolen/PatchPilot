@@ -55,11 +55,11 @@ func TestMaybePatchFromUpdatesDigestPinnedBaseImage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v2/library/golang/tags/list"):
-			fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
+			_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
 		case r.URL.Path == "/v2/library/golang/manifests/1.21.1-alpine":
 			w.Header().Set("Docker-Content-Digest", "sha256:newdigest")
 			if r.Method != http.MethodHead {
-				fmt.Fprint(w, `{"schemaVersion":2}`)
+				_, _ = fmt.Fprint(w, `{"schemaVersion":2}`)
 			}
 		default:
 			http.NotFound(w, r)
@@ -207,7 +207,7 @@ func TestPatchDockerfileUpdatesFromUsingRegistryCache(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
+		_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
 	}))
 	defer server.Close()
 	registryBaseURL = func(host string) string { return server.URL }
@@ -273,7 +273,7 @@ func TestPatchDockerfileUsesStaleRegistryCacheOnFetchFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if calls == 1 {
-			fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine"]}`)
+			_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine"]}`)
 			return
 		}
 		http.Error(w, "boom", http.StatusInternalServerError)

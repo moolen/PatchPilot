@@ -56,7 +56,7 @@ func TestListRegistryTagsUsesDiskCache(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.2-alpine"]}`)
+		_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.2-alpine"]}`)
 	}))
 	defer server.Close()
 	registryBaseURL = func(host string) string { return server.URL }
@@ -99,7 +99,7 @@ func TestRegistryCacheExpiresAfterTTL(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		fmt.Fprint(w, `{"tags":["1.21.1-alpine"]}`)
+		_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine"]}`)
 	}))
 	defer server.Close()
 	registryBaseURL = func(host string) string { return server.URL }
@@ -128,7 +128,7 @@ func TestMaybePatchFromUsesRegistryTagResolution(t *testing.T) {
 	registryCacheDir = func() (string, error) { return cacheDir, nil }
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
+		_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
 	}))
 	defer server.Close()
 	registryBaseURL = func(host string) string { return server.URL }
@@ -147,11 +147,7 @@ func TestMaybePatchFromUsesRegistryTagResolution(t *testing.T) {
 
 func TestDefaultRegistryCacheDirUsesEnvOverride(t *testing.T) {
 	want := filepath.Join(t.TempDir(), "registry-cache")
-	old := os.Getenv("CVEFIX_REGISTRY_CACHE_DIR")
-	if err := os.Setenv("CVEFIX_REGISTRY_CACHE_DIR", want); err != nil {
-		t.Fatalf("set env: %v", err)
-	}
-	defer os.Setenv("CVEFIX_REGISTRY_CACHE_DIR", old)
+	t.Setenv("CVEFIX_REGISTRY_CACHE_DIR", want)
 
 	got, err := defaultRegistryCacheDir()
 	if err != nil {

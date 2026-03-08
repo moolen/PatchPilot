@@ -137,9 +137,12 @@ func patchDockerfileWithOptions(ctx context.Context, path string, need dockerNee
 		return nil, false, fmt.Errorf("open %s: %w", path, err)
 	}
 	result, err := parser.Parse(file)
-	file.Close()
+	closeErr := file.Close()
 	if err != nil {
 		return nil, false, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if closeErr != nil {
+		return nil, false, fmt.Errorf("close %s: %w", path, closeErr)
 	}
 
 	data, err := os.ReadFile(path)

@@ -240,17 +240,17 @@ func Summarize(report Report) Summary {
 
 func PrintSummary(w io.Writer, report Report) {
 	summary := Summarize(report)
-	fmt.Fprintf(w, "Verification mode: %s\n", report.Mode)
-	fmt.Fprintf(w, "Modules checked: %d\n", summary.Modules)
-	fmt.Fprintf(w, "Checks run: %d\n", summary.Checks)
-	fmt.Fprintf(w, "Checks OK: %d\n", summary.OK)
-	fmt.Fprintf(w, "Checks failed: %d\n", summary.Failed)
-	fmt.Fprintf(w, "Checks timed out: %d\n", summary.Timeouts)
-	fmt.Fprintf(w, "Verification regressions: %d\n", summary.Regressions)
+	_, _ = fmt.Fprintf(w, "Verification mode: %s\n", report.Mode)
+	_, _ = fmt.Fprintf(w, "Modules checked: %d\n", summary.Modules)
+	_, _ = fmt.Fprintf(w, "Checks run: %d\n", summary.Checks)
+	_, _ = fmt.Fprintf(w, "Checks OK: %d\n", summary.OK)
+	_, _ = fmt.Fprintf(w, "Checks failed: %d\n", summary.Failed)
+	_, _ = fmt.Fprintf(w, "Checks timed out: %d\n", summary.Timeouts)
+	_, _ = fmt.Fprintf(w, "Verification regressions: %d\n", summary.Regressions)
 	if len(report.Regressions) > 0 {
-		fmt.Fprintln(w, "Verification regressions detail:")
+		_, _ = fmt.Fprintln(w, "Verification regressions detail:")
 		for _, regression := range report.Regressions {
-			fmt.Fprintf(w, "- %s [%s]: %s -> %s\n", regression.Dir, regression.Check, regression.BaselineStatus, regression.AfterStatus)
+			_, _ = fmt.Fprintf(w, "- %s [%s]: %s -> %s\n", regression.Dir, regression.Check, regression.BaselineStatus, regression.AfterStatus)
 		}
 	}
 	printFailures(w, report)
@@ -427,16 +427,16 @@ func printFailures(w io.Writer, report Report) {
 			if printed >= maxPrintedFailures {
 				continue
 			}
-			fmt.Fprintf(w, "- %s [%s] %s: %s\n", module.Dir, check.Name, check.Status, check.Error)
+			_, _ = fmt.Fprintf(w, "- %s [%s] %s: %s\n", module.Dir, check.Name, check.Status, check.Error)
 			printed++
 		}
 	}
 	if total == 0 {
 		return
 	}
-	fmt.Fprintf(w, "Verification detail entries: %d\n", total)
+	_, _ = fmt.Fprintf(w, "Verification detail entries: %d\n", total)
 	if total > printed {
-		fmt.Fprintf(w, "... %d more verification failures written to .cvefix/verification.json\n", total-printed)
+		_, _ = fmt.Fprintf(w, "... %d more verification failures written to .cvefix/verification.json\n", total-printed)
 	}
 }
 

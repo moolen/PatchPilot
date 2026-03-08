@@ -87,10 +87,6 @@ func (tracker *runTracker) addCounter(name string, value int) {
 	tracker.record.Counters = append(tracker.record.Counters, report.RunCounter{Name: name, Value: value})
 }
 
-func (tracker *runTracker) addLabel(key, value string) {
-	tracker.record.Labels = append(tracker.record.Labels, report.RunLabel{Key: key, Value: value})
-}
-
 func (tracker *runTracker) complete(err error, failure *report.RunFailure) error {
 	finished := time.Now().UTC()
 	tracker.record.CompletedAt = finished.Format(time.RFC3339Nano)

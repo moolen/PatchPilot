@@ -201,7 +201,9 @@ func fetchSupportedGoPatchVersions(ctx context.Context) (map[string]goPatchVersi
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("query Go releases: %s", response.Status)
 	}

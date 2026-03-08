@@ -47,7 +47,7 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 	httpClient := &http.Client{Transport: transport}
 	appClient := github.NewClient(httpClient)
 	if cfg.GitHubAPIBaseURL != "" {
-		appClient, err = github.NewEnterpriseClient(cfg.GitHubAPIBaseURL, cfg.GitHubUploadAPIURL, httpClient)
+		appClient, err = appClient.WithEnterpriseURLs(cfg.GitHubAPIBaseURL, cfg.GitHubUploadAPIURL)
 		if err != nil {
 			return nil, fmt.Errorf("create app enterprise client: %w", err)
 		}
@@ -297,15 +297,14 @@ func (service *Service) installationClient(ctx context.Context, installationID i
 	}
 
 	httpClient := oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
+	client := github.NewClient(httpClient)
 	if service.cfg.GitHubAPIBaseURL != "" {
-		client, err := github.NewEnterpriseClient(service.cfg.GitHubAPIBaseURL, service.cfg.GitHubUploadAPIURL, httpClient)
+		client, err = client.WithEnterpriseURLs(service.cfg.GitHubAPIBaseURL, service.cfg.GitHubUploadAPIURL)
 		if err != nil {
 			return nil, "", fmt.Errorf("create enterprise github client: %w", err)
 		}
-		return client, token, nil
 	}
-
-	return github.NewClient(httpClient), token, nil
+	return client, token, nil
 }
 
 func (service *Service) repoAllowed(repo string) bool {
