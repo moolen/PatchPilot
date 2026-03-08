@@ -86,6 +86,21 @@ go run . fix --repo-url https://github.com/external-secrets/external-secrets.git
 go run . fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/external-secrets.yaml
 ```
 
+## Agent Artifacts
+
+When agent mode is enabled, cvefix stores per-attempt artifacts that include:
+
+- `prompt.txt` (input prompt sent to the external agent)
+- `agent.log` (captured stdout/stderr from the agent command)
+- `validation.log` (post-attempt validation output)
+- `summary.json` (attempt success and vulnerability delta)
+
+Defaults and controls:
+
+- default artifact path: `<repo>/.cvefix/agent`
+- override path: `--agent-artifact-dir <path>`
+- default non-interactive command: `codex exec ... < "$CVEFIX_PROMPT_FILE"`
+
 ## Policy File
 
 Create `<repo>/.patchpilot.yaml` (or pass `--policy`) to control behavior per repository.

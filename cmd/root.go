@@ -21,6 +21,7 @@ type cliOptions struct {
 	enableAgent      bool
 	agentCommand     string
 	agentMaxAttempts int
+	agentArtifactDir string
 }
 
 var (
@@ -93,13 +94,15 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 				EnableAgent:      options.enableAgent,
 				AgentCommand:     options.agentCommand,
 				AgentMaxAttempts: options.agentMaxAttempts,
+				AgentArtifactDir: options.agentArtifactDir,
 			})
 		},
 	}
 
 	command.Flags().BoolVar(&options.enableAgent, "enable-agent", true, "Enable external agent repair loop when deterministic fixes fail")
-	command.Flags().StringVar(&options.agentCommand, "agent-command", "codex", "External agent harness command (for example: \"codex\")")
+	command.Flags().StringVar(&options.agentCommand, "agent-command", "codex exec --skip-git-repo-check --sandbox workspace-write -o \"$CVEFIX_AGENT_ARTIFACT_DIR/last-message.txt\" - < \"$CVEFIX_PROMPT_FILE\"", "External agent harness command (must run non-interactively)")
 	command.Flags().IntVar(&options.agentMaxAttempts, "agent-max-attempts", 5, "Maximum number of external agent repair attempts")
+	command.Flags().StringVar(&options.agentArtifactDir, "agent-artifact-dir", "", "Directory for agent attempt artifacts (default: <repo>/.cvefix/agent)")
 
 	return command
 }
