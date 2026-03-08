@@ -24,6 +24,7 @@ type fixRunResult struct {
 	Stderr          string
 	Changed         bool
 	Branch          string
+	HeadSHA         string
 	BlockedReason   string
 	RiskScore       int
 	ChangedFiles    []string
@@ -68,6 +69,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	}
 	if result.BlockedReason != "" {
 		service.metrics.IncFix("blocked")
+		service.postCheckRun(ctx, client, owner, repo, result.HeadSHA, "neutral", "Remediation blocked", fmt.Sprintf("PatchPilot blocked remediation: %s (risk score=%d).", result.BlockedReason, result.RiskScore))
 		service.postIssueComment(
 			ctx,
 			client,
@@ -81,6 +83,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 
 	if !result.Changed {
 		service.metrics.IncFix("nochange")
+		service.postCheckRun(ctx, client, owner, repo, result.HeadSHA, "neutral", "No remediation changes", fmt.Sprintf("cvefix exited with code %d and produced no repository changes.", result.ExitCode))
 		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationNoChangesComment(result.ExitCode))
 		return
 	}
@@ -109,6 +112,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	}
 	message := remediationPRReadyComment(action, pr.GetHTMLURL(), command.AutoMerge, service.cfg.EnableAutoMerge, autoMergeErr)
 	service.postIssueComment(ctx, client, owner, repo, issueNumber, message)
+	service.postCheckRun(ctx, client, owner, repo, result.HeadSHA, "success", "Remediation PR ready", fmt.Sprintf("PatchPilot %s a remediation PR. Changed files: %d. Risk score: %d.", action, len(result.ChangedFiles), result.RiskScore))
 }
 
 func (service *Service) processPushEvent(event *github.PushEvent, installationID int64) {
@@ -140,16 +144,19 @@ func (service *Service) processPushEvent(event *github.PushEvent, installationID
 		service.metrics.IncFix("failed")
 		service.metrics.IncFailure("fix_workflow")
 		service.log("error", "push remediation failed", map[string]interface{}{"owner": owner, "repo": repo, "error": err.Error()})
+		service.postCheckRun(ctx, client, owner, repo, strings.TrimSpace(event.GetAfter()), "failure", "Remediation failed", truncateForComment(err.Error()))
 		return
 	}
 	if result.BlockedReason != "" {
 		service.metrics.IncFix("blocked")
 		service.log("warn", "push remediation blocked by safety policy", map[string]interface{}{"owner": owner, "repo": repo, "reason": result.BlockedReason, "risk_score": result.RiskScore})
+		service.postCheckRun(ctx, client, owner, repo, result.HeadSHA, "neutral", "Remediation blocked", fmt.Sprintf("PatchPilot blocked remediation: %s (risk score=%d).", result.BlockedReason, result.RiskScore))
 		return
 	}
 	if !result.Changed {
 		service.metrics.IncFix("nochange")
 		service.log("info", "push remediation found no changes", map[string]interface{}{"owner": owner, "repo": repo, "exit_code": result.ExitCode})
+		service.postCheckRun(ctx, client, owner, repo, result.HeadSHA, "neutral", "No remediation changes", fmt.Sprintf("cvefix exited with code %d and produced no repository changes.", result.ExitCode))
 		return
 	}
 
@@ -164,6 +171,7 @@ func (service *Service) processPushEvent(event *github.PushEvent, installationID
 	service.metrics.IncFix("changed")
 
 	service.log("info", "push remediation PR ready", map[string]interface{}{"owner": owner, "repo": repo, "pr_url": pr.GetHTMLURL()})
+	service.postCheckRun(ctx, client, owner, repo, result.HeadSHA, "success", "Remediation PR ready", fmt.Sprintf("PatchPilot prepared remediation changes on %d file(s) with risk score %d.", len(result.ChangedFiles), result.RiskScore))
 }
 
 func ownerFromRepository(repo *github.Repository) string {
@@ -213,6 +221,10 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 	if _, _, err := runCommand(ctx, tempRoot, nil, "git", "clone", "--depth", "1", "--branch", defaultBranch, cloneURL, repoPath); err != nil {
 		return fixRunResult{}, fmt.Errorf("clone repository: %w", err)
 	}
+	headSHA, err := currentHeadSHA(ctx, repoPath)
+	if err != nil {
+		return fixRunResult{}, err
+	}
 
 	args := []string{"fix", "--dir", repoPath, "--enable-agent=false"}
 	if strings.TrimSpace(command.PolicyPath) != "" {
@@ -221,6 +233,9 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 			policyPath = filepath.Join(repoPath, filepath.FromSlash(policyPath))
 		}
 		args = append(args, "--policy", policyPath)
+		if strings.TrimSpace(command.PolicyMode) != "" {
+			args = append(args, "--policy-mode", strings.TrimSpace(command.PolicyMode))
+		}
 	}
 
 	stdout, stderr, runErr := runCommand(ctx, repoPath, nil, service.cfg.CVEFixBinary, args...)
@@ -234,7 +249,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 		return fixRunResult{}, err
 	}
 	if !changed {
-		return fixRunResult{ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Changed: false}, nil
+		return fixRunResult{ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Changed: false, HeadSHA: headSHA}, nil
 	}
 
 	branch := strings.TrimSpace(preferredBranch)
@@ -262,6 +277,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 			Stderr:          stderr,
 			Changed:         false,
 			Branch:          "",
+			HeadSHA:         headSHA,
 			BlockedReason:   safety.Reason,
 			RiskScore:       safety.RiskScore,
 			ChangedFiles:    changedFiles,
@@ -315,6 +331,10 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 			truncateForComment(pushStderr),
 		)
 	}
+	headSHA, err = currentHeadSHA(ctx, repoPath)
+	if err != nil {
+		return fixRunResult{}, err
+	}
 
 	return fixRunResult{
 		ExitCode:        exitCode,
@@ -322,6 +342,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 		Stderr:          stderr,
 		Changed:         true,
 		Branch:          branch,
+		HeadSHA:         headSHA,
 		RiskScore:       safety.RiskScore,
 		ChangedFiles:    changedFiles,
 		RegressionCount: safety.VerificationRegressions,
@@ -348,6 +369,41 @@ func (service *Service) postIssueComment(ctx context.Context, client *github.Cli
 	})
 	if err != nil {
 		service.log("error", "post issue comment failed", map[string]interface{}{"owner": owner, "repo": repo, "issue_number": issueNumber, "error": err.Error()})
+	}
+}
+
+func (service *Service) postCheckRun(ctx context.Context, client *github.Client, owner, repo, sha, conclusion, title, summary string) {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return
+	}
+	conclusion = strings.TrimSpace(strings.ToLower(conclusion))
+	if conclusion == "" {
+		conclusion = "neutral"
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "PatchPilot remediation"
+	}
+	if strings.TrimSpace(summary) == "" {
+		summary = "PatchPilot remediation status update."
+	}
+
+	payload := &github.CreateCheckRunOptions{
+		Name:       "PatchPilot Remediation",
+		HeadSHA:    sha,
+		Status:     github.Ptr("completed"),
+		Conclusion: github.Ptr(conclusion),
+		Output: &github.CheckRunOutput{
+			Title:   github.Ptr(title),
+			Summary: github.Ptr(summary),
+		},
+	}
+	err := service.withGitHubRetry(ctx, "create_check_run", func(callCtx context.Context) error {
+		_, _, checkErr := client.Checks.CreateCheckRun(callCtx, owner, repo, *payload)
+		return checkErr
+	})
+	if err != nil {
+		service.log("warn", "create check run failed", map[string]interface{}{"owner": owner, "repo": repo, "sha": sha, "error": err.Error()})
 	}
 }
 
@@ -410,6 +466,18 @@ func stagedChangedFiles(ctx context.Context, repoPath string) ([]string, error) 
 		result = append(result, value)
 	}
 	return result, nil
+}
+
+func currentHeadSHA(ctx context.Context, repoPath string) (string, error) {
+	stdout, _, err := runCommand(ctx, repoPath, nil, "git", "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolve head commit: %w", err)
+	}
+	sha := strings.TrimSpace(stdout)
+	if sha == "" {
+		return "", fmt.Errorf("resolve head commit: empty sha")
+	}
+	return sha, nil
 }
 
 func commandExitCode(err error) int {

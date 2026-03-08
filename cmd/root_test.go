@@ -32,6 +32,9 @@ func TestRootHelpShowsFlags(t *testing.T) {
 	if !strings.Contains(text, "--policy") {
 		t.Fatalf("expected --policy in help output, got:\n%s", text)
 	}
+	if !strings.Contains(text, "--policy-mode") {
+		t.Fatalf("expected --policy-mode in help output, got:\n%s", text)
+	}
 	if !strings.Contains(text, "--json") {
 		t.Fatalf("expected --json in help output, got:\n%s", text)
 	}

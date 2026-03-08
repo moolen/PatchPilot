@@ -270,6 +270,27 @@ func TestDetectEcosystemAdditionalLanguages(t *testing.T) {
 			},
 			want: "maven",
 		},
+		{
+			name: "cargo via purl",
+			artifact: rawArtifact{
+				PURL: "pkg:cargo/serde@1.0.0",
+			},
+			want: "cargo",
+		},
+		{
+			name: "nuget via purl",
+			artifact: rawArtifact{
+				PURL: "pkg:nuget/Newtonsoft.Json@13.0.1",
+			},
+			want: "nuget",
+		},
+		{
+			name: "composer via purl",
+			artifact: rawArtifact{
+				PURL: "pkg:composer/symfony/http-foundation@6.3.0",
+			},
+			want: "composer",
+		},
 	}
 
 	for _, test := range tests {

@@ -10,7 +10,7 @@
 Slash command format:
 
 ```text
-/cvefix fix [--policy <path>] [--auto-merge]
+/cvefix fix [--policy <path>] [--policy-mode <merge|override>] [--auto-merge]
 ```
 
 `/patchpilot fix` is accepted as an alias.
@@ -23,6 +23,7 @@ Use these minimum GitHub App permissions:
   - `Contents`: Read & write
   - `Pull requests`: Read & write
   - `Issues`: Read & write
+  - `Checks`: Read & write (recommended for remediation check-runs)
   - `Metadata`: Read-only
 - Subscribe to events:
   - `Issue comment`

@@ -234,6 +234,13 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	tracker.addCounter("findings_fixed", summary.Fixed)
 	summaryForFailure = &summary
 
+	stage = tracker.beginStage("write_sarif")
+	if err := report.WriteSARIF(repo, finalValidation.After.Findings); err != nil {
+		tracker.endStageFailure(stage, err, nil)
+		return err
+	}
+	tracker.endStageSuccess(stage, map[string]any{"path": ".cvefix/findings.sarif"})
+
 	logProgress("writing summary report")
 	stage = tracker.beginStage("write_summary")
 	if err := report.WriteSummary(repo, summary); err != nil {

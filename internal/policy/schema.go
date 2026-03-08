@@ -54,6 +54,23 @@ func SchemaJSON() []byte {
       "additionalProperties": false,
       "properties": {
         "cves": { "type": "array", "items": { "type": "string" } },
+        "cve_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "package": { "type": "string" },
+              "ecosystem": { "type": "string" },
+              "path": { "type": "string" },
+              "reason": { "type": "string" },
+              "owner": { "type": "string" },
+              "expires_at": { "type": "string" }
+            }
+          }
+        },
         "vulnerabilities": {
           "type": "array",
           "items": {
@@ -64,7 +81,10 @@ func SchemaJSON() []byte {
               "id": { "type": "string", "minLength": 1 },
               "package": { "type": "string" },
               "ecosystem": { "type": "string" },
-              "path": { "type": "string" }
+              "path": { "type": "string" },
+              "reason": { "type": "string" },
+              "owner": { "type": "string" },
+              "expires_at": { "type": "string" }
             }
           }
         }

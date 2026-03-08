@@ -47,6 +47,30 @@ set -e
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
 	echo "exit-code=${exit_code}" >> "${GITHUB_OUTPUT}"
+	if [[ -n "${repo_url}" ]]; then
+		echo "sarif-path=" >> "${GITHUB_OUTPUT}"
+		echo "summary-path=" >> "${GITHUB_OUTPUT}"
+	else
+		repo_dir="${dir:-.}"
+		if [[ -d "${repo_dir}" ]]; then
+			repo_abs="$(cd "${repo_dir}" && pwd)"
+			sarif_path="${repo_abs}/.cvefix/findings.sarif"
+			summary_path="${repo_abs}/.cvefix/summary.json"
+			if [[ -f "${sarif_path}" ]]; then
+				echo "sarif-path=${sarif_path}" >> "${GITHUB_OUTPUT}"
+			else
+				echo "sarif-path=" >> "${GITHUB_OUTPUT}"
+			fi
+			if [[ -f "${summary_path}" ]]; then
+				echo "summary-path=${summary_path}" >> "${GITHUB_OUTPUT}"
+			else
+				echo "summary-path=" >> "${GITHUB_OUTPUT}"
+			fi
+		else
+			echo "sarif-path=" >> "${GITHUB_OUTPUT}"
+			echo "summary-path=" >> "${GITHUB_OUTPUT}"
+		fi
+	fi
 fi
 
 IFS=',' read -r -a acceptable_codes <<< "${acceptable_exit_codes}"

@@ -1,4 +1,5 @@
 .cvefix/
+.cache/
 .cvefix-integration-build-*/
 .validation-*/
 bin/

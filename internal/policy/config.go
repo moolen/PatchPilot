@@ -29,6 +29,9 @@ const (
 
 	DockerPatchAuto     = "auto"
 	DockerPatchDisabled = "disabled"
+
+	LoadModeMerge    = "merge"
+	LoadModeOverride = "override"
 )
 
 type Config struct {
@@ -65,6 +68,7 @@ type HookPolicy struct {
 
 type ExcludePolicy struct {
 	CVEs            []string                `yaml:"cves"`
+	CVERules        []VulnerabilitySelector `yaml:"cve_rules"`
 	Vulnerabilities []VulnerabilitySelector `yaml:"vulnerabilities"`
 }
 
@@ -73,7 +77,12 @@ type VulnerabilitySelector struct {
 	Package   string `yaml:"package"`
 	Ecosystem string `yaml:"ecosystem"`
 	Path      string `yaml:"path"`
+	Reason    string `yaml:"reason"`
+	Owner     string `yaml:"owner"`
+	ExpiresAt string `yaml:"expires_at"`
 }
+
+var policyNowFunc = time.Now
 
 type ScanPolicy struct {
 	SkipPaths []string `yaml:"skip_paths"`
@@ -105,6 +114,11 @@ type DockerPatchingPolicy struct {
 	OSPackages string `yaml:"os_packages"`
 }
 
+type LoadOptions struct {
+	CentralPath string
+	Mode        string
+}
+
 func Default() *Config {
 	return &Config{
 		Version: 1,
@@ -126,36 +140,123 @@ func Default() *Config {
 }
 
 func Load(repo, overridePath string) (*Config, error) {
-	cfg := Default()
-	path := strings.TrimSpace(overridePath)
-	required := path != ""
-	if path == "" {
-		path = filepath.Join(repo, FileName)
+	return LoadWithOptions(repo, LoadOptions{
+		CentralPath: overridePath,
+		Mode:        LoadModeMerge,
+	})
+}
+
+func LoadWithOptions(repo string, options LoadOptions) (*Config, error) {
+	repoPath, err := filepath.Abs(repo)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repo path: %w", err)
 	}
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		absPath, err := filepath.Abs(path)
-		if err != nil {
-			return nil, fmt.Errorf("resolve policy path: %w", err)
-		}
-		path = absPath
+	repoPolicyPath := filepath.Join(repoPath, FileName)
+
+	mode := normalizeLower(options.Mode)
+	if mode == "" {
+		mode = LoadModeMerge
+	}
+	if mode != LoadModeMerge && mode != LoadModeOverride {
+		return nil, fmt.Errorf("invalid policy load mode %q (expected %q or %q)", mode, LoadModeMerge, LoadModeOverride)
 	}
 
+	centralPath := strings.TrimSpace(options.CentralPath)
+	if centralPath == "" {
+		return loadSingle(repoPolicyPath, false)
+	}
+	centralPath, err = normalizePolicyPath(centralPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Avoid double-loading when the supplied central file points to the same in-repo policy path.
+	if cleanComparablePath(centralPath) == cleanComparablePath(repoPolicyPath) {
+		return loadSingle(repoPolicyPath, true)
+	}
+
+	centralData, err := readPolicyBytes(centralPath, true)
+	if err != nil {
+		return nil, err
+	}
+	repoData, repoExists, err := readOptionalPolicyBytes(repoPolicyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if mode == LoadModeOverride {
+		if repoExists {
+			return decodePolicyBytes(repoPolicyPath, repoData)
+		}
+		return decodePolicyBytes(centralPath, centralData)
+	}
+	if !repoExists {
+		return decodePolicyBytes(centralPath, centralData)
+	}
+
+	mergedBytes, err := mergePolicyBytes(centralPath, centralData, repoPolicyPath, repoData)
+	if err != nil {
+		return nil, err
+	}
+	return decodePolicyBytes(centralPath+" + "+repoPolicyPath, mergedBytes)
+}
+
+func loadSingle(path string, required bool) (*Config, error) {
+	data, err := readPolicyBytes(path, required)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return Default(), nil
+	}
+	return decodePolicyBytes(path, data)
+}
+
+func normalizePolicyPath(path string) (string, error) {
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve policy path: %w", err)
+	}
+	return absPath, nil
+}
+
+func cleanComparablePath(path string) string {
+	return filepath.Clean(path)
+}
+
+func readPolicyBytes(path string, required bool) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !required {
-			return cfg, nil
+			return nil, nil
 		}
 		return nil, fmt.Errorf("read policy file %s: %w", path, err)
 	}
+	return data, nil
+}
 
+func readOptionalPolicyBytes(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("read policy file %s: %w", path, err)
+	}
+	return data, true, nil
+}
+
+func decodePolicyBytes(path string, data []byte) (*Config, error) {
+	cfg := Default()
 	migrated, migrateErr := migrateLegacyPolicyYAML(data)
 	if migrateErr != nil {
 		return nil, fmt.Errorf("migrate policy file %s: %w", path, migrateErr)
 	}
-	data = migrated
-
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(bytes.NewReader(migrated))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(cfg); err != nil {
 		return nil, fmt.Errorf("decode policy file %s: %w", path, err)
@@ -164,6 +265,97 @@ func Load(repo, overridePath string) (*Config, error) {
 		return nil, fmt.Errorf("validate policy file %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+func mergePolicyBytes(centralPath string, centralData []byte, repoPath string, repoData []byte) ([]byte, error) {
+	centralMap, err := decodePolicyMap(centralPath, centralData)
+	if err != nil {
+		return nil, err
+	}
+	repoMap, err := decodePolicyMap(repoPath, repoData)
+	if err != nil {
+		return nil, err
+	}
+	merged := mergePolicyMap(centralMap, repoMap)
+	data, err := yaml.Marshal(merged)
+	if err != nil {
+		return nil, fmt.Errorf("merge policy files %s and %s: %w", centralPath, repoPath, err)
+	}
+	return data, nil
+}
+
+func decodePolicyMap(path string, data []byte) (map[string]any, error) {
+	migrated, err := migrateLegacyPolicyYAML(data)
+	if err != nil {
+		return nil, fmt.Errorf("migrate policy file %s: %w", path, err)
+	}
+	var root map[string]any
+	if err := yaml.Unmarshal(migrated, &root); err != nil {
+		return nil, fmt.Errorf("decode policy file %s: %w", path, err)
+	}
+	if root == nil {
+		return map[string]any{}, nil
+	}
+	return root, nil
+}
+
+func mergePolicyMap(base, overlay map[string]any) map[string]any {
+	if base == nil {
+		base = map[string]any{}
+	}
+	result := make(map[string]any, len(base))
+	for key, value := range base {
+		result[key] = clonePolicyValue(value)
+	}
+	for key, value := range overlay {
+		existing, found := result[key]
+		if !found {
+			result[key] = clonePolicyValue(value)
+			continue
+		}
+		result[key] = mergePolicyValue(existing, value)
+	}
+	return result
+}
+
+func mergePolicyValue(base, overlay any) any {
+	baseMap, baseIsMap := base.(map[string]any)
+	overlayMap, overlayIsMap := overlay.(map[string]any)
+	if baseIsMap && overlayIsMap {
+		return mergePolicyMap(baseMap, overlayMap)
+	}
+	baseList, baseIsList := base.([]any)
+	overlayList, overlayIsList := overlay.([]any)
+	if baseIsList && overlayIsList {
+		merged := make([]any, 0, len(baseList)+len(overlayList))
+		for _, item := range baseList {
+			merged = append(merged, clonePolicyValue(item))
+		}
+		for _, item := range overlayList {
+			merged = append(merged, clonePolicyValue(item))
+		}
+		return merged
+	}
+	return clonePolicyValue(overlay)
+}
+
+func clonePolicyValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		copied := make(map[string]any, len(typed))
+		for key, item := range typed {
+			copied[key] = clonePolicyValue(item)
+		}
+		return copied
+	case []any:
+		copied := make([]any, 0, len(typed))
+		for _, item := range typed {
+			copied = append(copied, clonePolicyValue(item))
+		}
+		return copied
+	default:
+		return typed
+	}
 }
 
 func migrateLegacyPolicyYAML(data []byte) ([]byte, error) {
@@ -334,16 +526,14 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 
 	cfg.Exclude.CVEs = dedupeNonEmpty(cfg.Exclude.CVEs)
-	for index := range cfg.Exclude.Vulnerabilities {
-		selector := &cfg.Exclude.Vulnerabilities[index]
-		selector.ID = strings.TrimSpace(selector.ID)
-		selector.Package = strings.TrimSpace(selector.Package)
-		selector.Ecosystem = strings.TrimSpace(selector.Ecosystem)
-		selector.Path = cleanRelativePath(selector.Path)
-		if selector.ID == "" {
-			return fmt.Errorf("exclude.vulnerabilities[%d].id must not be empty", index)
-		}
+	if err := normalizeSelectors(cfg.Exclude.CVERules, "exclude.cve_rules"); err != nil {
+		return err
 	}
+	cfg.Exclude.CVERules = dedupeSelectors(cfg.Exclude.CVERules)
+	if err := normalizeSelectors(cfg.Exclude.Vulnerabilities, "exclude.vulnerabilities"); err != nil {
+		return err
+	}
+	cfg.Exclude.Vulnerabilities = dedupeSelectors(cfg.Exclude.Vulnerabilities)
 
 	cfg.Scan.SkipPaths = dedupeNonEmptyPaths(cfg.Scan.SkipPaths)
 
@@ -388,6 +578,79 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func normalizeSelectors(selectors []VulnerabilitySelector, field string) error {
+	now := policyNowFunc().UTC()
+	for index := range selectors {
+		selector := &selectors[index]
+		selector.ID = strings.TrimSpace(selector.ID)
+		selector.Package = strings.TrimSpace(selector.Package)
+		selector.Ecosystem = strings.TrimSpace(selector.Ecosystem)
+		selector.Path = cleanRelativePath(selector.Path)
+		selector.Reason = strings.TrimSpace(selector.Reason)
+		selector.Owner = strings.TrimSpace(selector.Owner)
+		selector.ExpiresAt = strings.TrimSpace(selector.ExpiresAt)
+		if selector.ID == "" {
+			return fmt.Errorf("%s[%d].id must not be empty", field, index)
+		}
+		if selector.ExpiresAt == "" {
+			continue
+		}
+		expiry, err := parseSelectorExpiry(selector.ExpiresAt)
+		if err != nil {
+			return fmt.Errorf("%s[%d].expires_at is invalid: %w", field, index, err)
+		}
+		if now.After(expiry) {
+			return fmt.Errorf("%s[%d] is expired (expires_at=%s)", field, index, selector.ExpiresAt)
+		}
+	}
+	return nil
+}
+
+func parseSelectorExpiry(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, errors.New("empty")
+	}
+	dateOnly, dateErr := time.Parse("2006-01-02", value)
+	if dateErr == nil {
+		return time.Date(dateOnly.Year(), dateOnly.Month(), dateOnly.Day(), 23, 59, 59, 0, time.UTC), nil
+	}
+	timestamp, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return timestamp.UTC(), nil
+}
+
+func dedupeSelectors(values []VulnerabilitySelector) []VulnerabilitySelector {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := map[string]VulnerabilitySelector{}
+	for _, selector := range values {
+		key := strings.Join([]string{
+			selector.ID,
+			selector.Package,
+			selector.Ecosystem,
+			selector.Path,
+			selector.Reason,
+			selector.Owner,
+			selector.ExpiresAt,
+		}, "|")
+		seen[key] = selector
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]VulnerabilitySelector, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, seen[key])
+	}
+	return result
 }
 
 func normalizeLower(value string) string {

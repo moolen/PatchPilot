@@ -11,7 +11,10 @@
       "ID": "GHSA-abc",
       "Package": "openssl",
       "Ecosystem": "deb",
-      "Path": "images/../images/Dockerfile"
+      "Path": "images/../images/Dockerfile",
+      "Reason": "",
+      "Owner": "",
+      "ExpiresAt": ""
     }
   ],
   "scan_skip_paths": [

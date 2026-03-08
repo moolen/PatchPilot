@@ -44,6 +44,10 @@ inputs:
 outputs:
   exit-code:
     description: cvefix process exit code
+  sarif-path:
+    description: Absolute path to generated SARIF report (.cvefix/findings.sarif) when available
+  summary-path:
+    description: Absolute path to generated summary JSON (.cvefix/summary.json) when available
 
 runs:
   using: docker

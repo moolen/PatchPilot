@@ -69,6 +69,14 @@ func TestActionMetadataContract(t *testing.T) {
 	if strings.TrimSpace(metadata.Outputs["exit-code"].Description) == "" {
 		t.Fatalf("output %q description must not be empty", "exit-code")
 	}
+	for _, key := range []string{"sarif-path", "summary-path"} {
+		if _, ok := metadata.Outputs[key]; !ok {
+			t.Fatalf("missing output %q in action.yml", key)
+		}
+		if strings.TrimSpace(metadata.Outputs[key].Description) == "" {
+			t.Fatalf("output %q description must not be empty", key)
+		}
+	}
 
 	if metadata.Runs.Using != "docker" {
 		t.Fatalf("action runtime changed: got %q want %q", metadata.Runs.Using, "docker")
@@ -95,6 +103,8 @@ func TestActionDocsCoverContractSurface(t *testing.T) {
 		"`extra_args`",
 		"`acceptable_exit_codes`",
 		"`exit-code`",
+		"`sarif-path`",
+		"`summary-path`",
 	} {
 		if !strings.Contains(content, key) {
 			t.Fatalf("expected docs/github-action.md to reference %s", key)

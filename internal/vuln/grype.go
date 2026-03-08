@@ -306,6 +306,15 @@ func detectEcosystem(artifact rawArtifact) string {
 	if strings.HasPrefix(purl, "pkg:maven/") {
 		return "maven"
 	}
+	if strings.HasPrefix(purl, "pkg:cargo/") {
+		return "cargo"
+	}
+	if strings.HasPrefix(purl, "pkg:nuget/") {
+		return "nuget"
+	}
+	if strings.HasPrefix(purl, "pkg:composer/") {
+		return "composer"
+	}
 	if artifact.Language == "go" || artifact.Type == "go-module" || strings.HasPrefix(artifact.PURL, "pkg:golang/") {
 		return "golang"
 	}
@@ -319,6 +328,12 @@ func detectEcosystem(artifact rawArtifact) string {
 		return "pypi"
 	case "maven":
 		return "maven"
+	case "cargo", "rust-crate":
+		return "cargo"
+	case "nuget", "dotnet":
+		return "nuget"
+	case "composer", "php-composer":
+		return "composer"
 	}
 	if strings.EqualFold(artifact.Language, "javascript") || strings.EqualFold(artifact.Language, "node") {
 		return "npm"
@@ -328,6 +343,15 @@ func detectEcosystem(artifact rawArtifact) string {
 	}
 	if strings.EqualFold(artifact.Language, "java") {
 		return "maven"
+	}
+	if strings.EqualFold(artifact.Language, "rust") {
+		return "cargo"
+	}
+	if strings.EqualFold(artifact.Language, "php") {
+		return "composer"
+	}
+	if strings.EqualFold(artifact.Language, "c#") || strings.EqualFold(artifact.Language, "dotnet") {
+		return "nuget"
 	}
 
 	if strings.HasPrefix(artifact.PURL, "pkg:deb/") {
