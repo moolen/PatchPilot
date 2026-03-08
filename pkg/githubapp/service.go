@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v75/github"
@@ -207,8 +206,4 @@ func loadPrivateKey(cfg Config) ([]byte, error) {
 		return nil, fmt.Errorf("read private key file: %w", err)
 	}
 	return data, nil
-}
-
-func timeoutContext(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, 20*time.Minute)
 }

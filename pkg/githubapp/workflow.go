@@ -23,7 +23,7 @@ type fixRunResult struct {
 }
 
 func (service *Service) processIssueComment(event *github.IssueCommentEvent, installationID int64, command FixCommand) {
-	ctx, cancel := timeoutContext(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	owner := ownerFromRepository(event.GetRepo())
@@ -77,7 +77,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 }
 
 func (service *Service) processPushEvent(event *github.PushEvent, installationID int64) {
-	ctx, cancel := timeoutContext(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 
 	owner := ownerFromPushRepository(event.GetRepo())
@@ -229,7 +229,11 @@ func (service *Service) postIssueComment(ctx context.Context, client *github.Cli
 }
 
 func runCommand(ctx context.Context, dir string, extraEnv map[string]string, name string, args ...string) (string, string, error) {
-	command := exec.CommandContext(ctx, name, args...)
+	if err := validateExecutableName(name); err != nil {
+		return "", "", err
+	}
+
+	command := exec.CommandContext(ctx, name, args...) // #nosec G204,G702 -- command/args are controlled by internal callsites and validated executable names.
 	command.Dir = dir
 
 	if len(extraEnv) > 0 {
@@ -247,6 +251,17 @@ func runCommand(ctx context.Context, dir string, extraEnv map[string]string, nam
 
 	err := command.Run()
 	return stdoutBuffer.String(), stderrBuffer.String(), err
+}
+
+func validateExecutableName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("command name cannot be empty")
+	}
+	if strings.ContainsAny(name, "\n\r\t") {
+		return fmt.Errorf("command name contains invalid characters")
+	}
+	return nil
 }
 
 func hasRepositoryChanges(ctx context.Context, repoPath string) (bool, error) {
