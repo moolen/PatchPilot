@@ -40,6 +40,13 @@ func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bo
 	tracker.addCounter("ignored_without_fix", vulnReport.IgnoredWithoutFix)
 	tracker.addCounter("ignored_by_policy", vulnReport.IgnoredByPolicy)
 
+	stage = tracker.beginStage("write_sarif")
+	if err := report.WriteSARIF(repo, vulnReport.Findings); err != nil {
+		tracker.endStageFailure(stage, err, nil)
+		return err
+	}
+	tracker.endStageSuccess(stage, map[string]any{"path": ".cvefix/findings.sarif"})
+
 	stage = tracker.beginStage("print_report")
 	report.PrintCurrent(os.Stdout, repo, vulnReport)
 	tracker.endStageSuccess(stage, nil)

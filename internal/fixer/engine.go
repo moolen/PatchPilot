@@ -63,5 +63,29 @@ func DefaultEngines(fileOptions FileOptions, dockerOptions DockerfileOptions) []
 				return ApplyMavenFixesWithOptions(ctx, repo, findings, fileOptions)
 			},
 		},
+		engineFunc{
+			name: "gradle",
+			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
+				return ApplyGradleFixesWithOptions(ctx, repo, findings, fileOptions)
+			},
+		},
+		engineFunc{
+			name: "cargo",
+			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
+				return ApplyCargoFixesWithOptions(ctx, repo, findings, fileOptions)
+			},
+		},
+		engineFunc{
+			name: "nuget",
+			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
+				return ApplyNuGetFixesWithOptions(ctx, repo, findings, fileOptions)
+			},
+		},
+		engineFunc{
+			name: "composer",
+			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
+				return ApplyComposerFixesWithOptions(ctx, repo, findings, fileOptions)
+			},
+		},
 	}
 }

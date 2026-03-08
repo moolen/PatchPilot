@@ -15,7 +15,10 @@ Global flags:
 
 - `--dir <path>`: use a specific local directory as the working repository.
 - `--repo-url <git-url>`: clone a repository into a temporary directory and use that clone as the working repository.
-- `--policy <path>`: load a policy file from a custom path. By default, `cvefix` reads `<repo>/.patchpilot.yaml` when present.
+- `--policy <path>`: load a central policy file and combine it with `<repo>/.patchpilot.yaml` when present.
+- `--policy-mode <merge|override>`: policy layering strategy when `--policy` is set.
+  `merge`: deep-merge central + in-repo policy (in-repo values take precedence for scalar fields; list fields are combined).
+  `override`: if `<repo>/.patchpilot.yaml` exists, use it instead of the central policy; otherwise use the central policy.
 - `--json`: emit structured JSON progress logs with `run_id`, `command`, and `repo`.
 
 Exit codes for CI:
@@ -36,13 +39,24 @@ When multiple failure conditions apply, precedence is: scan/patch failures first
 5. Apply transitive Go fixes with `go list -m all` plus `go get module@fixedVersion` when a vulnerable module is present in the module build list.
 6. Automatically bump each `go.mod` `go` directive to the latest supported patch release on the same Go major/minor line (or the oldest currently supported line if the current line is no longer supported).
 7. Parse Dockerfiles and add minimal package or base-image remediation only when OS-package findings exist.
-8. Patch `package.json` dependencies for npm findings.
+8. Patch `package.json` dependencies for npm findings and automatically sync `package-lock.json` / `npm-shrinkwrap.json` when present.
 9. Patch `requirements*.txt` entries for Python/PyPI findings.
-10. Patch `pom.xml` dependency versions for Maven findings.
-11. Run standard Go verification for each discovered module: `go build ./...`, `go test -run '^$' ./...`, and `go vet ./...`, using isolated caches under `.cvefix/`.
-12. Re-scan and report before/fixed/remaining counts plus any verification regressions.
+10. Patch `pom.xml` and `build.gradle*` dependency versions for Maven/Gradle findings.
+11. Patch `Cargo.toml` dependencies for Cargo findings.
+12. Patch `.csproj` package references for NuGet findings.
+13. Patch `composer.json` requirements for Composer findings.
+14. Run standard verification checks: Go build/test/vet for discovered Go modules plus manifest syntax/parse checks for npm, pip, Maven, Gradle, Cargo, NuGet, and Composer.
+15. Re-scan and report before/fixed/remaining counts plus any verification regressions.
 
-When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific policy:
+When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific policy.
+In enterprise setups, `--policy` can provide a central baseline policy that is layered with the in-repo file:
+
+- `--policy-mode merge` (default): central baseline plus repo-specific adjustments.
+- `--policy-mode override`: repo file fully replaces central baseline.
+
+Repo-local policy always has precedence over central policy when both are considered.
+
+Policy controls include:
 
 - custom verification commands (append or replace mode),
 - post-execution hooks after `fix`,
@@ -85,7 +99,8 @@ go run ./cmd/cvefix fix ~/dev/external-secrets/external-secrets
 go run ./cmd/cvefix verify ~/dev/external-secrets/external-secrets
 go run ./cmd/cvefix scan --dir ~/dev/external-secrets/external-secrets
 go run ./cmd/cvefix fix --repo-url https://github.com/external-secrets/external-secrets.git
-go run ./cmd/cvefix fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/external-secrets.yaml
+go run ./cmd/cvefix fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/org-baseline.yaml --policy-mode merge
+go run ./cmd/cvefix fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/org-baseline.yaml --policy-mode override
 ```
 
 ## Agent Artifacts
@@ -105,7 +120,8 @@ Defaults and controls:
 
 ## Policy File
 
-Create `<repo>/.patchpilot.yaml` (or pass `--policy`) to control behavior per repository.
+Create `<repo>/.patchpilot.yaml` to control behavior per repository.
+Use `--policy` to add a central baseline policy on top.
 
 ```yaml
 version: 1
@@ -127,11 +143,19 @@ post_execution:
 exclude:
   cves:
     - CVE-2025-12345
+  cve_rules:
+    - id: CVE-2025-22222
+      reason: pending upstream patch
+      owner: team-security
+      expires_at: 2026-12-31
   vulnerabilities:
     - id: GHSA-xxxx-yyyy-zzzz
       package: openssl
       ecosystem: deb
       path: images/Dockerfile
+      reason: accepted temporary risk
+      owner: team-platform
+      expires_at: 2026-06-30
 
 scan:
   skip_paths:
@@ -166,6 +190,7 @@ Each run writes state into `<repo>/.cvefix/`, including:
 - `sbom.json`
 - `vulns.json`
 - `findings.json`
+- `findings.sarif`
 - `baseline-findings.json`
 - `summary.json`
 - `run.json`

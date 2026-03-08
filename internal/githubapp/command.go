@@ -7,6 +7,7 @@ import (
 
 type FixCommand struct {
 	PolicyPath string
+	PolicyMode string
 	AutoMerge  bool
 }
 
@@ -39,6 +40,17 @@ func ParseFixCommand(body string) (FixCommand, bool, error) {
 				command.PolicyPath = strings.TrimSpace(tokens[index])
 				if command.PolicyPath == "" {
 					return FixCommand{}, true, fmt.Errorf("--policy requires a non-empty path value")
+				}
+			case "--policy-mode":
+				index++
+				if index >= len(tokens) {
+					return FixCommand{}, true, fmt.Errorf("--policy-mode requires a value")
+				}
+				command.PolicyMode = strings.ToLower(strings.TrimSpace(tokens[index]))
+				switch command.PolicyMode {
+				case "merge", "override":
+				default:
+					return FixCommand{}, true, fmt.Errorf("--policy-mode must be merge or override")
 				}
 			case "--auto-merge":
 				command.AutoMerge = true

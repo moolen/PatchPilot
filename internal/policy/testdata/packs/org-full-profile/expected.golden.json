@@ -24,7 +24,10 @@
       "ID": "GHSA-xxxx-yyyy-zzzz",
       "Package": "openssl",
       "Ecosystem": "deb",
-      "Path": "images/Dockerfile"
+      "Path": "images/Dockerfile",
+      "Reason": "",
+      "Owner": "",
+      "ExpiresAt": ""
     }
   ],
   "scan_skip_paths": [

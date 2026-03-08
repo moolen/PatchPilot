@@ -18,6 +18,7 @@ type cliOptions struct {
 	dir              string
 	repoURL          string
 	policyPath       string
+	policyMode       string
 	jsonOutput       bool
 	enableAgent      bool
 	agentCommand     string
@@ -47,7 +48,8 @@ func NewRootCommand() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&options.dir, "dir", "", "Directory to use as the working repository")
 	root.PersistentFlags().StringVar(&options.repoURL, "repo-url", "", "Git URL to clone into a temporary directory and use as the working repository")
-	root.PersistentFlags().StringVar(&options.policyPath, "policy", "", "Path to policy file (defaults to .patchpilot.yaml in the repository root)")
+	root.PersistentFlags().StringVar(&options.policyPath, "policy", "", "Path to central policy file merged with in-repo .patchpilot.yaml")
+	root.PersistentFlags().StringVar(&options.policyMode, "policy-mode", "merge", "Policy layering mode when --policy is set (merge|override)")
 	root.PersistentFlags().BoolVar(&options.jsonOutput, "json", false, "Emit structured JSON progress logs")
 
 	root.AddCommand(
@@ -70,7 +72,7 @@ func newScanCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := policy.Load(repo, options.policyPath)
+			cfg, err := loadPolicyConfig(repo, options)
 			if err != nil {
 				return err
 			}
@@ -89,7 +91,7 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := policy.Load(repo, options.policyPath)
+			cfg, err := loadPolicyConfig(repo, options)
 			if err != nil {
 				return err
 			}
@@ -121,7 +123,7 @@ func newVerifyCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, err := policy.Load(repo, options.policyPath)
+			cfg, err := loadPolicyConfig(repo, options)
 			if err != nil {
 				return err
 			}
@@ -187,4 +189,11 @@ func cloneRepo(ctx context.Context, writer io.Writer, repoURL, target string) er
 		return fmt.Errorf("clone repo %q: %w", repoURL, err)
 	}
 	return nil
+}
+
+func loadPolicyConfig(repo string, options *cliOptions) (*policy.Config, error) {
+	return policy.LoadWithOptions(repo, policy.LoadOptions{
+		CentralPath: options.policyPath,
+		Mode:        options.policyMode,
+	})
 }

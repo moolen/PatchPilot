@@ -256,3 +256,43 @@ func TestRunWithCommandsReplaceOnlyRunsCustomChecks(t *testing.T) {
 		t.Fatalf("unexpected check name: %#v", report.Modules[0].Checks[0])
 	}
 }
+
+func TestRunStandardDiscoversNonGoManifests(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "package.json"), []byte("{\n  \"name\": \"demo\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	report := RunStandard(context.Background(), repo, nil)
+	if len(report.Modules) != 1 {
+		t.Fatalf("expected one discovered target, got %#v", report)
+	}
+	if report.Modules[0].Dir != "." {
+		t.Fatalf("expected root dir target, got %#v", report.Modules[0])
+	}
+	if len(report.Modules[0].Checks) != 1 || report.Modules[0].Checks[0].Name != "npm-manifest-parse" {
+		t.Fatalf("unexpected non-go checks: %#v", report.Modules[0].Checks)
+	}
+	if report.Modules[0].Checks[0].Status != StatusOK {
+		t.Fatalf("expected manifest parse to pass: %#v", report.Modules[0].Checks[0])
+	}
+}
+
+func TestRunStandardReportsInvalidRequirementsFile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "requirements.txt"), []byte("not a requirement line\n"), 0o644); err != nil {
+		t.Fatalf("write requirements: %v", err)
+	}
+
+	report := RunStandard(context.Background(), repo, nil)
+	if len(report.Modules) != 1 || len(report.Modules[0].Checks) != 1 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	check := report.Modules[0].Checks[0]
+	if check.Name != "pip-requirements-parse" {
+		t.Fatalf("unexpected check: %#v", check)
+	}
+	if check.Status != StatusFailed {
+		t.Fatalf("expected requirements parse failure, got %#v", check)
+	}
+}

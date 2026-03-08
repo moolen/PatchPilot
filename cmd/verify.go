@@ -44,6 +44,13 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	tracker.endStageSuccess(stage, map[string]any{"findings_after": len(after.Findings)})
 	tracker.addCounter("findings_after", len(after.Findings))
 
+	stage = tracker.beginStage("write_sarif")
+	if err := report.WriteSARIF(repo, after.Findings); err != nil {
+		tracker.endStageFailure(stage, err, nil)
+		return err
+	}
+	tracker.endStageSuccess(stage, map[string]any{"path": ".cvefix/findings.sarif"})
+
 	stage = tracker.beginStage("build_summary")
 	summary := report.BuildSummary(baseline, after, nil)
 	report.PrintSummary(os.Stdout, summary)

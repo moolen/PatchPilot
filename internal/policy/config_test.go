@@ -172,9 +172,211 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"PatchPilot Policy"`,
 		`"post_execution"`,
 		`"skip_paths"`,
+		`"expires_at"`,
+		`"cve_rules"`,
 	} {
 		if !strings.Contains(schema, expected) {
 			t.Fatalf("expected schema to contain %q, got:\n%s", expected, schema)
 		}
+	}
+}
+
+func TestLoadRejectsExpiredExcludeWaiver(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+exclude:
+  vulnerabilities:
+    - id: GHSA-expired
+      package: demo
+      ecosystem: npm
+      expires_at: 2001-01-01
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected expired waiver validation error")
+	}
+	if !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadWithOptionsMergeModeMergesCentralAndRepoPolicy(t *testing.T) {
+	repo := t.TempDir()
+	repoPolicyPath := filepath.Join(repo, FileName)
+	repoPolicy := `version: 1
+verification:
+  commands:
+    - name: repo-check
+      run: make verify-repo
+exclude:
+  cves:
+    - CVE-REPO
+scan:
+  skip_paths:
+    - repo/**
+registry:
+  auth:
+    mode: none
+`
+	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
+		t.Fatalf("write repo policy: %v", err)
+	}
+
+	centralDir := t.TempDir()
+	centralPath := filepath.Join(centralDir, "central.yaml")
+	centralPolicy := `version: 1
+verification:
+  commands:
+    - name: central-check
+      run: make verify-central
+exclude:
+  cves:
+    - CVE-CENTRAL
+scan:
+  skip_paths:
+    - central/**
+registry:
+  auth:
+    mode: bearer
+    token_env: CENTRAL_TOKEN
+docker:
+  allowed_base_images:
+    - cgr.dev/chainguard/*
+`
+	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
+		t.Fatalf("write central policy: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(repo, LoadOptions{
+		CentralPath: centralPath,
+		Mode:        LoadModeMerge,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions returned error: %v", err)
+	}
+	if len(cfg.Verification.Commands) != 2 {
+		t.Fatalf("expected merged verification commands, got %#v", cfg.Verification.Commands)
+	}
+	if len(cfg.Exclude.CVEs) != 2 || cfg.Exclude.CVEs[0] != "CVE-CENTRAL" || cfg.Exclude.CVEs[1] != "CVE-REPO" {
+		t.Fatalf("unexpected merged cves: %#v", cfg.Exclude.CVEs)
+	}
+	if len(cfg.Scan.SkipPaths) != 2 || cfg.Scan.SkipPaths[0] != "central/**" || cfg.Scan.SkipPaths[1] != "repo/**" {
+		t.Fatalf("unexpected merged skip paths: %#v", cfg.Scan.SkipPaths)
+	}
+	if cfg.Registry.Auth.Mode != RegistryAuthNone {
+		t.Fatalf("expected repo auth mode to take precedence, got %q", cfg.Registry.Auth.Mode)
+	}
+	if len(cfg.Docker.AllowedBaseImages) != 1 || cfg.Docker.AllowedBaseImages[0] != "cgr.dev/chainguard/*" {
+		t.Fatalf("expected central docker policy to be preserved, got %#v", cfg.Docker.AllowedBaseImages)
+	}
+}
+
+func TestLoadWithOptionsOverrideModePrefersRepoPolicy(t *testing.T) {
+	repo := t.TempDir()
+	repoPolicyPath := filepath.Join(repo, FileName)
+	repoPolicy := `version: 1
+scan:
+  skip_paths:
+    - repo/**
+exclude:
+  cves:
+    - CVE-REPO
+`
+	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
+		t.Fatalf("write repo policy: %v", err)
+	}
+
+	centralPath := filepath.Join(t.TempDir(), "central.yaml")
+	centralPolicy := `version: 1
+scan:
+  skip_paths:
+    - central/**
+exclude:
+  cves:
+    - CVE-CENTRAL
+`
+	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
+		t.Fatalf("write central policy: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(repo, LoadOptions{
+		CentralPath: centralPath,
+		Mode:        LoadModeOverride,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions returned error: %v", err)
+	}
+	if len(cfg.Scan.SkipPaths) != 1 || cfg.Scan.SkipPaths[0] != "repo/**" {
+		t.Fatalf("expected repo-only skip paths, got %#v", cfg.Scan.SkipPaths)
+	}
+	if len(cfg.Exclude.CVEs) != 1 || cfg.Exclude.CVEs[0] != "CVE-REPO" {
+		t.Fatalf("expected repo-only cves, got %#v", cfg.Exclude.CVEs)
+	}
+}
+
+func TestLoadWithOptionsOverrideModeFallsBackToCentralWhenRepoPolicyMissing(t *testing.T) {
+	repo := t.TempDir()
+	centralPath := filepath.Join(t.TempDir(), "central.yaml")
+	centralPolicy := `version: 1
+scan:
+  skip_paths:
+    - central/**
+exclude:
+  cves:
+    - CVE-CENTRAL
+`
+	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
+		t.Fatalf("write central policy: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(repo, LoadOptions{
+		CentralPath: centralPath,
+		Mode:        LoadModeOverride,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions returned error: %v", err)
+	}
+	if len(cfg.Scan.SkipPaths) != 1 || cfg.Scan.SkipPaths[0] != "central/**" {
+		t.Fatalf("expected central skip paths, got %#v", cfg.Scan.SkipPaths)
+	}
+}
+
+func TestLoadWithOptionsDoesNotDoubleApplyWhenCentralPathEqualsRepoPolicyPath(t *testing.T) {
+	repo := t.TempDir()
+	repoPolicyPath := filepath.Join(repo, FileName)
+	repoPolicy := `version: 1
+verification:
+  commands:
+    - run: make verify
+`
+	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
+		t.Fatalf("write repo policy: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(repo, LoadOptions{
+		CentralPath: repoPolicyPath,
+		Mode:        LoadModeMerge,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions returned error: %v", err)
+	}
+	if len(cfg.Verification.Commands) != 1 {
+		t.Fatalf("expected policy to be loaded once, got %#v", cfg.Verification.Commands)
+	}
+}
+
+func TestLoadWithOptionsRejectsInvalidMode(t *testing.T) {
+	repo := t.TempDir()
+	_, err := LoadWithOptions(repo, LoadOptions{Mode: "invalid"})
+	if err == nil {
+		t.Fatal("expected invalid mode error")
+	}
+	if !strings.Contains(err.Error(), "invalid policy load mode") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

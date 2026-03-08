@@ -17,12 +17,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run PatchPilot fix
+        id: patchpilot
         uses: moolen/PatchPilot@v1
         with:
           command: fix
           dir: .
           enable_agent: "false"
           acceptable_exit_codes: "0,23"
+      - name: Upload SARIF to GitHub code scanning
+        if: always() && steps.patchpilot.outputs.sarif-path != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.patchpilot.outputs.sarif-path }}
 ```
 
 ## Inputs
@@ -40,6 +46,8 @@ jobs:
 ## Outputs
 
 - `exit-code`: raw `cvefix` process exit code.
+- `sarif-path`: absolute path to `.cvefix/findings.sarif` when generated locally (`repo_url` runs are excluded).
+- `summary-path`: absolute path to `.cvefix/summary.json` when generated.
 
 ## Notes
 

@@ -36,6 +36,14 @@ func vulnOptionsFromPolicy(cfg *policy.Config) vuln.ScanOptions {
 		}
 		rules = append(rules, vuln.IgnoreRule{ID: id})
 	}
+	for _, selector := range cfg.Exclude.CVERules {
+		rules = append(rules, vuln.IgnoreRule{
+			ID:        selector.ID,
+			Package:   selector.Package,
+			Ecosystem: selector.Ecosystem,
+			Path:      selector.Path,
+		})
+	}
 	for _, selector := range cfg.Exclude.Vulnerabilities {
 		rules = append(rules, vuln.IgnoreRule{
 			ID:        selector.ID,
