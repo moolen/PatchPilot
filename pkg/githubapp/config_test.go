@@ -19,6 +19,12 @@ func TestLoadConfigFromEnvSuccess(t *testing.T) {
 	if !cfg.EnablePushAutofix {
 		t.Fatalf("EnablePushAutofix = false, want true")
 	}
+	if !cfg.EnableAutoMerge {
+		t.Fatalf("EnableAutoMerge = false, want true")
+	}
+	if cfg.MaxRiskScore != 25 {
+		t.Fatalf("MaxRiskScore = %d, want 25", cfg.MaxRiskScore)
+	}
 	if _, ok := cfg.AllowedRepos["org/repo"]; !ok {
 		t.Fatalf("expected org/repo in allowed repos")
 	}
@@ -46,5 +52,32 @@ func TestLoadConfigFromEnvRequiresGitHubEnterprisePair(t *testing.T) {
 
 	if _, err := LoadConfigFromEnv(); err == nil {
 		t.Fatalf("expected error when only one enterprise URL is configured")
+	}
+}
+
+func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_WEBHOOK_SECRET", "secret")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+	t.Setenv("PP_DISALLOWED_PATHS", ".github/**, secrets/*.txt")
+	t.Setenv("PP_DELIVERY_DEDUP_TTL", "2h")
+	t.Setenv("PP_MAX_RISK_SCORE", "7")
+	t.Setenv("PP_ENABLE_AUTO_MERGE", "false")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DeliveryDedupTTL.String() != "2h0m0s" {
+		t.Fatalf("DeliveryDedupTTL = %s, want 2h", cfg.DeliveryDedupTTL)
+	}
+	if cfg.MaxRiskScore != 7 {
+		t.Fatalf("MaxRiskScore = %d, want 7", cfg.MaxRiskScore)
+	}
+	if cfg.EnableAutoMerge {
+		t.Fatalf("EnableAutoMerge = true, want false")
+	}
+	if len(cfg.DisallowedPaths) != 2 {
+		t.Fatalf("DisallowedPaths len = %d, want 2", len(cfg.DisallowedPaths))
 	}
 }

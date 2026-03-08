@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -21,15 +22,34 @@ type Config struct {
 	GitHubBaseWebURL   string
 	GitHubAPIBaseURL   string
 	GitHubUploadAPIURL string
+	EnableAutoMerge    bool
+	DeliveryDedupTTL   time.Duration
+	MaxRiskScore       int
+	DisallowedPaths    []string
+	MetricsPath        string
 }
 
 func LoadConfigFromEnv() (Config, error) {
+	deliveryTTL, err := parseDurationWithDefault("PP_DELIVERY_DEDUP_TTL", 24*time.Hour)
+	if err != nil {
+		return Config{}, err
+	}
+	maxRiskScore, err := parseIntWithDefault("PP_MAX_RISK_SCORE", 25)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		ListenAddr:        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
 		WorkDir:           firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
 		CVEFixBinary:      firstNonEmpty(strings.TrimSpace(os.Getenv("PP_CVEFIX_BINARY")), "cvefix"),
 		EnablePushAutofix: parseBoolEnv("PP_ENABLE_PUSH_AUTOFIX"),
 		GitHubBaseWebURL:  firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
+		EnableAutoMerge:   parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", true),
+		DeliveryDedupTTL:  deliveryTTL,
+		MaxRiskScore:      maxRiskScore,
+		DisallowedPaths:   parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
+		MetricsPath:       firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
 	}
 
 	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
@@ -65,6 +85,22 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func parseCSVList(input string) []string {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return nil
+	}
+	items := make([]string, 0)
+	for _, item := range strings.Split(input, ",") {
+		value := strings.TrimSpace(item)
+		if value == "" {
+			continue
+		}
+		items = append(items, value)
+	}
+	return items
 }
 
 func parseAllowedRepos(input string) map[string]struct{} {
@@ -106,6 +142,44 @@ func parseBoolEnv(key string) bool {
 	default:
 		return false
 	}
+}
+
+func parseBoolWithDefault(key string, defaultValue bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return defaultValue
+	}
+	return parseBoolEnv(key)
+}
+
+func parseIntWithDefault(key string, defaultValue int) (int, error) {
+	text := strings.TrimSpace(os.Getenv(key))
+	if text == "" {
+		return defaultValue, nil
+	}
+	value, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be an integer: %w", key, err)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s must be >= 0", key)
+	}
+	return value, nil
+}
+
+func parseDurationWithDefault(key string, defaultValue time.Duration) (time.Duration, error) {
+	text := strings.TrimSpace(os.Getenv(key))
+	if text == "" {
+		return defaultValue, nil
+	}
+	value, err := time.ParseDuration(text)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid duration: %w", key, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be > 0", key)
+	}
+	return value, nil
 }
 
 func firstNonEmpty(values ...string) string {

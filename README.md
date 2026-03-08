@@ -56,6 +56,7 @@ When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific pol
 
 - GitHub App service docs: `docs/github-app.md`
 - Reusable GitHub Action docs: `docs/github-action.md`
+- Action tag sync workflow: `.github/workflows/action-tags.yml`
 
 Build both binaries locally:
 
@@ -65,6 +66,11 @@ make build
 
 - `bin/cvefix`: CLI tool
 - `bin/patchpilot-app`: webhook service for GitHub App automation
+
+GitHub App utility commands:
+
+- `./bin/patchpilot-app doctor`: validate environment and dependencies.
+- `./bin/patchpilot-app manifest`: emit a starter GitHub App manifest JSON.
 
 ## Example
 
