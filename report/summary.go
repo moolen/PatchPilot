@@ -21,6 +21,9 @@ const (
 	maxPrintedIssues = 50
 	locationGoMod    = "go.mod"
 	locationDocker   = "dockerfile"
+	locationNPM      = "package.json"
+	locationPIP      = "requirements.txt"
+	locationMaven    = "pom.xml"
 )
 
 type Summary struct {
@@ -247,6 +250,15 @@ func classifyFileLocation(location string) string {
 	if strings.EqualFold(base, "Dockerfile") || strings.HasPrefix(base, "Dockerfile.") || strings.HasSuffix(base, ".Dockerfile") {
 		return locationDocker
 	}
+	if base == "package.json" {
+		return locationNPM
+	}
+	if strings.EqualFold(base, "pom.xml") {
+		return locationMaven
+	}
+	if strings.EqualFold(base, "requirements.txt") || (strings.HasPrefix(strings.ToLower(base), "requirements") && strings.HasSuffix(strings.ToLower(base), ".txt")) {
+		return locationPIP
+	}
 	return "unknown"
 }
 
@@ -259,6 +271,12 @@ func isFixable(finding vuln.Finding, fileLocation, reason string) bool {
 		return fileLocation == locationGoMod
 	case "deb", "apk", "rpm":
 		return fileLocation == locationDocker
+	case "npm":
+		return fileLocation == locationNPM
+	case "pypi", "pip", "python":
+		return fileLocation == locationPIP
+	case "maven", "java":
+		return fileLocation == locationMaven
 	default:
 		return false
 	}

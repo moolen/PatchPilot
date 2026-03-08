@@ -242,3 +242,42 @@ func TestNormalizeReportAppliesSkipPaths(t *testing.T) {
 		t.Fatalf("expected ignored-by-policy count 1, got %d", normalized.IgnoredByPolicy)
 	}
 }
+
+func TestDetectEcosystemAdditionalLanguages(t *testing.T) {
+	tests := []struct {
+		name     string
+		artifact rawArtifact
+		want     string
+	}{
+		{
+			name: "npm via purl",
+			artifact: rawArtifact{
+				PURL: "pkg:npm/lodash@4.17.20",
+			},
+			want: "npm",
+		},
+		{
+			name: "python via purl",
+			artifact: rawArtifact{
+				PURL: "pkg:pypi/flask@2.2.2",
+			},
+			want: "pypi",
+		},
+		{
+			name: "maven via purl",
+			artifact: rawArtifact{
+				PURL: "pkg:maven/org.apache.commons/commons-lang3@3.11.0",
+			},
+			want: "maven",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := detectEcosystem(test.artifact)
+			if got != test.want {
+				t.Fatalf("detectEcosystem = %q, want %q", got, test.want)
+			}
+		})
+	}
+}

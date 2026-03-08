@@ -15,7 +15,17 @@ func repositoryCloneURL(baseWebURL, owner, repo, token string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse github web base url: %w", err)
 	}
-	if strings.TrimSpace(base.Scheme) == "" || strings.TrimSpace(base.Host) == "" {
+	if strings.TrimSpace(base.Scheme) == "" {
+		return "", fmt.Errorf("invalid github web base url: %q", baseWebURL)
+	}
+	if base.Scheme == "file" {
+		base.Path = path.Join(base.Path, owner, repo) + ".git"
+		base.RawQuery = ""
+		base.Fragment = ""
+		base.User = nil
+		return base.String(), nil
+	}
+	if strings.TrimSpace(base.Host) == "" {
 		return "", fmt.Errorf("invalid github web base url: %q", baseWebURL)
 	}
 

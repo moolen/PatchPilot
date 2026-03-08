@@ -34,8 +34,11 @@ When multiple failure conditions apply, precedence is: scan/patch failures first
 5. Apply transitive Go fixes with `go list -m all` plus `go get module@fixedVersion` when a vulnerable module is present in the module build list.
 6. Automatically bump each `go.mod` `go` directive to the latest supported patch release on the same Go major/minor line (or the oldest currently supported line if the current line is no longer supported).
 7. Parse Dockerfiles and add minimal package or base-image remediation only when OS-package findings exist.
-8. Run standard Go verification for each discovered module: `go build ./...`, `go test -run '^$' ./...`, and `go vet ./...`, using isolated caches under `.cvefix/`.
-9. Re-scan and report before/fixed/remaining counts plus any verification regressions.
+8. Patch `package.json` dependencies for npm findings.
+9. Patch `requirements*.txt` entries for Python/PyPI findings.
+10. Patch `pom.xml` dependency versions for Maven findings.
+11. Run standard Go verification for each discovered module: `go build ./...`, `go test -run '^$' ./...`, and `go vet ./...`, using isolated caches under `.cvefix/`.
+12. Re-scan and report before/fixed/remaining counts plus any verification regressions.
 
 When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific policy:
 
@@ -56,6 +59,7 @@ When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific pol
 
 - GitHub App service docs: `docs/github-app.md`
 - Reusable GitHub Action docs: `docs/github-action.md`
+- Action tag sync workflow: `.github/workflows/action-tags.yml`
 
 Build both binaries locally:
 
@@ -65,6 +69,11 @@ make build
 
 - `bin/cvefix`: CLI tool
 - `bin/patchpilot-app`: webhook service for GitHub App automation
+
+GitHub App utility commands:
+
+- `./bin/patchpilot-app doctor`: validate environment and dependencies.
+- `./bin/patchpilot-app manifest`: emit a starter GitHub App manifest JSON.
 
 ## Example
 

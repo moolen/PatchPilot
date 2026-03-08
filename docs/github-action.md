@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run PatchPilot fix
-        uses: moolen/PatchPilot@master
+        uses: moolen/PatchPilot@v1
         with:
           command: fix
           dir: .
@@ -45,3 +45,15 @@ jobs:
 
 - Exit code `23` means vulnerabilities still remain; include it in `acceptable_exit_codes` if you want a non-failing informational run.
 - The action is Docker-based and currently supports Linux runners.
+
+## Versioning and Pinning
+
+- Immutable release tags: use `v1.0.0`, `v1.1.0`, etc. for fully reproducible runs.
+- Moving major tag: `v1` is maintained as a convenience alias to the latest `v1.x.x`.
+- Maximum supply-chain safety: pin to a commit SHA.
+
+Example SHA pin:
+
+```yaml
+- uses: moolen/PatchPilot@ad3563f90d69c26dd1a8e7821d98e105407925e7
+```
