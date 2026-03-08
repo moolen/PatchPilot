@@ -120,3 +120,61 @@ registry:
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadMigratesLegacyFields(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+postExecution:
+  commands:
+    - run: "echo done"
+verificationMode: replace
+verification:
+  commands:
+    - name: smoke
+      command: "make verify"
+skip_paths:
+  - examples/**
+excludes:
+  cves:
+    - CVE-123
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	cfg, err := Load(repo, "")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.Verification.Mode != VerificationModeReplace {
+		t.Fatalf("expected migrated verification mode replace, got %q", cfg.Verification.Mode)
+	}
+	if len(cfg.Verification.Commands) != 1 || cfg.Verification.Commands[0].Run != "make verify" {
+		t.Fatalf("expected migrated verification command run field, got %#v", cfg.Verification.Commands)
+	}
+	if len(cfg.PostExecution.Commands) != 1 {
+		t.Fatalf("expected migrated post execution commands, got %#v", cfg.PostExecution.Commands)
+	}
+	if len(cfg.Scan.SkipPaths) != 1 || cfg.Scan.SkipPaths[0] != "examples/**" {
+		t.Fatalf("expected migrated scan.skip_paths, got %#v", cfg.Scan.SkipPaths)
+	}
+	if len(cfg.Exclude.CVEs) != 1 || cfg.Exclude.CVEs[0] != "CVE-123" {
+		t.Fatalf("expected migrated exclude section, got %#v", cfg.Exclude.CVEs)
+	}
+}
+
+func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
+	schema := string(SchemaJSON())
+	for _, expected := range []string{
+		`"$schema"`,
+		`"PatchPilot Policy"`,
+		`"post_execution"`,
+		`"skip_paths"`,
+	} {
+		if !strings.Contains(schema, expected) {
+			t.Fatalf("expected schema to contain %q, got:\n%s", expected, schema)
+		}
+	}
+}

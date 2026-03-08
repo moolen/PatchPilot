@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/moolen/patchpilot/fixer"
+	"github.com/moolen/patchpilot/internal/execsafe"
 	"github.com/moolen/patchpilot/policy"
 	"github.com/moolen/patchpilot/sbom"
 	"github.com/moolen/patchpilot/verifycheck"
@@ -28,7 +28,7 @@ func vulnOptionsFromPolicy(cfg *policy.Config) vuln.ScanOptions {
 		return vuln.ScanOptions{}
 	}
 
-	rules := make([]vuln.IgnoreRule, 0, len(cfg.Exclude.CVEs)+len(cfg.Exclude.Vulnerabilities))
+	rules := make([]vuln.IgnoreRule, 0)
 	for _, id := range cfg.Exclude.CVEs {
 		id = strings.TrimSpace(id)
 		if id == "" {
@@ -148,10 +148,14 @@ func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config,
 			continue
 		}
 		logProgress("post-exec hook %q: starting", hook.Name)
-		command := exec.CommandContext(ctx, "sh", "-c", hook.Run)
-		command.Dir = repo
-		output, err := command.CombinedOutput()
-		trimmed := strings.TrimSpace(string(output))
+		result, err := execsafe.Run(ctx, execsafe.Spec{
+			Name:           "post-exec-hook",
+			Dir:            repo,
+			ShellCommand:   hook.Run,
+			ArtifactDir:    filepath.Join(repo, ".cvefix"),
+			ArtifactPrefix: fmt.Sprintf("post-hook-%s", sanitizeArtifactName(hook.Name)),
+		})
+		trimmed := strings.TrimSpace(result.Combined)
 		if trimmed != "" {
 			fmt.Fprintf(os.Stderr, "[cvefix] post-exec %q output:\n%s\n", hook.Name, trimmed)
 		}
@@ -166,6 +170,17 @@ func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config,
 	}
 
 	return nil
+}
+
+func sanitizeArtifactName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ":", "-", "..", "-")
+	name = replacer.Replace(name)
+	name = strings.Trim(name, "-")
+	if name == "" {
+		return "hook"
+	}
+	return name
 }
 
 func shouldRunHook(when string, success bool) bool {

@@ -18,6 +18,7 @@ type cliOptions struct {
 	dir              string
 	repoURL          string
 	policyPath       string
+	jsonOutput       bool
 	enableAgent      bool
 	agentCommand     string
 	agentMaxAttempts int
@@ -47,11 +48,13 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&options.dir, "dir", "", "Directory to use as the working repository")
 	root.PersistentFlags().StringVar(&options.repoURL, "repo-url", "", "Git URL to clone into a temporary directory and use as the working repository")
 	root.PersistentFlags().StringVar(&options.policyPath, "policy", "", "Path to policy file (defaults to .patchpilot.yaml in the repository root)")
+	root.PersistentFlags().BoolVar(&options.jsonOutput, "json", false, "Emit structured JSON progress logs")
 
 	root.AddCommand(
 		newScanCommand(options),
 		newFixCommand(options),
 		newVerifyCommand(options),
+		newSchemaCommand(),
 	)
 
 	return root
@@ -71,7 +74,7 @@ func newScanCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runScan(command.Context(), repo, cfg)
+			return runScan(command.Context(), repo, cfg, options.jsonOutput)
 		},
 	}
 }
@@ -95,6 +98,7 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 				AgentCommand:     options.agentCommand,
 				AgentMaxAttempts: options.agentMaxAttempts,
 				AgentArtifactDir: options.agentArtifactDir,
+				JSONOutput:       options.jsonOutput,
 			})
 		},
 	}
@@ -121,7 +125,7 @@ func newVerifyCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runVerify(command.Context(), repo, cfg)
+			return runVerify(command.Context(), repo, cfg, options.jsonOutput)
 		},
 	}
 }

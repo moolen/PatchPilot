@@ -9,12 +9,14 @@ It uses existing security tooling for discovery and keeps remediation narrow: no
 - `cvefix scan [repo]`: generate an SBOM with `syft`, scan it with `grype`, and write normalized findings to `<repo>/.cvefix/`.
 - `cvefix fix [repo]`: scan, apply minimal dependency fixes, run standard verification across discovered Go modules, re-scan, and write summaries into `<repo>/.cvefix/`.
 - `cvefix verify [repo]`: re-run the scan and standard verification checks, then compare against the saved baselines.
+- `cvefix schema`: print the JSON schema for `.patchpilot.yaml` (useful for editor validation/CI checks).
 
 Global flags:
 
 - `--dir <path>`: use a specific local directory as the working repository.
 - `--repo-url <git-url>`: clone a repository into a temporary directory and use that clone as the working repository.
 - `--policy <path>`: load a policy file from a custom path. By default, `cvefix` reads `<repo>/.patchpilot.yaml` when present.
+- `--json`: emit structured JSON progress logs with `run_id`, `command`, and `repo`.
 
 Exit codes for CI:
 
@@ -155,7 +157,7 @@ docker:
     os_packages: auto # auto | disabled
 ```
 
-Policy parsing is strict: unknown keys fail fast to avoid silent misconfiguration.
+Policy parsing is strict after applying built-in legacy migrations (for example `postExecution` -> `post_execution`, `verification.commands[].command` -> `run`, and top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
 
 ## Output
 
@@ -166,8 +168,16 @@ Each run writes state into `<repo>/.cvefix/`, including:
 - `findings.json`
 - `baseline-findings.json`
 - `summary.json`
+- `run.json`
 - `verification-baseline.json`
 - `verification.json`
+
+`run.json` contains staged telemetry for scan/fix/verify:
+
+- run metadata (`run_id`, command, start/end timestamps, duration),
+- per-stage timings and errors,
+- machine-readable failure taxonomy (`policy_violation`, `scan_failed`, `no_automated_fix_available`, `partial_fix_applied`, `verification_regressed`, ...),
+- counters (before/fixed/after, regressions).
 
 ## Proof Of Work
 

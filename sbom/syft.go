@@ -74,7 +74,7 @@ func GenerateWithOptions(ctx context.Context, repo string, options Options) (str
 
 func buildExcludes(extra []string) []string {
 	seen := map[string]struct{}{}
-	result := make([]string, 0, len(defaultExcludes)+len(extra))
+	result := make([]string, 0)
 	for _, exclude := range defaultExcludes {
 		exclude = strings.TrimSpace(exclude)
 		if exclude == "" {
