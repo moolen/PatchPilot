@@ -16,12 +16,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version-file: go.mod
           cache: true
@@ -29,9 +29,10 @@ jobs:
       - name: Verify build and tests
         run: |
           make test
+          make test.integration
           make build
 
-      - name: Compute next semantic version tag
+      - name: Compute next semantic version tag (conventional commits)
         id: semver
         shell: bash
         run: |
@@ -50,7 +51,30 @@ jobs:
           else
             version="${latest#v}"
             IFS='.' read -r major minor patch <<< "$version"
-            patch=$((patch + 1))
+
+            range="${latest}..HEAD"
+            bump="patch"
+            if git log "$range" --format='%s%n%b' | grep -Eiq 'BREAKING CHANGE|^[a-zA-Z0-9_-]+(\([^)]+\))?!:'; then
+              bump="major"
+            elif git log "$range" --format='%s' | grep -Eq '^feat(\([^)]+\))?: '; then
+              bump="minor"
+            fi
+
+            case "$bump" in
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              *)
+                patch=$((patch + 1))
+                ;;
+            esac
+
             next="v${major}.${minor}.${patch}"
           fi
 
@@ -68,8 +92,36 @@ jobs:
           git tag -a "$tag" -m "Release $tag"
           git push origin "$tag"
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+      - name: Publish release artifacts
+        if: steps.semver.outputs.created == 'true'
+        uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.3.0
         with:
-          tag_name: ${{ steps.semver.outputs.tag }}
-          generate_release_notes: true
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Slack on failure
+        if: ${{ failure() }}
+        env:
+          WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "${WEBHOOK_URL}" ]; then
+            exit 0
+          fi
+          payload=$(printf '{"text":"PatchPilot release workflow failed on %s (%s)"}' "${GITHUB_REF_NAME}" "${RUN_URL}")
+          curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$WEBHOOK_URL"
+
+      - name: Notify Teams on failure
+        if: ${{ failure() }}
+        env:
+          WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "${WEBHOOK_URL}" ]; then
+            exit 0
+          fi
+          payload=$(printf '{"text":"PatchPilot release workflow failed on %s (%s)"}' "${GITHUB_REF_NAME}" "${RUN_URL}")
+          curl -sS -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK_URL"

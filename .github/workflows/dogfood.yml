@@ -8,6 +8,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 concurrency:
   group: daily-dogfood
@@ -20,12 +21,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version-file: go.mod
           cache: true
@@ -60,11 +61,12 @@ jobs:
         continue-on-error: true
         run: |
           make test
+          make test.integration
           make build
 
       - name: Create pull request for remediation
         id: cpr
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
           branch: automation/daily-cvefix
           delete-branch: true
@@ -116,3 +118,68 @@ jobs:
 
           echo "Timed out waiting for required checks on PR #$pr_number"
           exit 1
+
+      - name: Create or update failure issue
+        if: ${{ failure() }}
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            const title = "Daily dogfood remediation is failing";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "The scheduled dogfood workflow failed.",
+              "",
+              `- Run: ${runUrl}`,
+              `- Trigger: ${context.eventName}`,
+              `- SHA: ${context.sha}`,
+              "",
+              "Please inspect logs and fix before the next scheduled run."
+            ].join("\n");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
+
+      - name: Notify Slack on failure
+        if: ${{ failure() }}
+        env:
+          WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "${WEBHOOK_URL}" ]; then
+            exit 0
+          fi
+          payload=$(printf '{"text":"PatchPilot daily dogfood failed (%s)"}' "${RUN_URL}")
+          curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "$WEBHOOK_URL"
+
+      - name: Notify Teams on failure
+        if: ${{ failure() }}
+        env:
+          WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "${WEBHOOK_URL}" ]; then
+            exit 0
+          fi
+          payload=$(printf '{"text":"PatchPilot daily dogfood failed (%s)"}' "${RUN_URL}")
+          curl -sS -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK_URL"
