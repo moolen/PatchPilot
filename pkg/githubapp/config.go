@@ -10,23 +10,27 @@ import (
 )
 
 type Config struct {
-	AppID              int64
-	WebhookSecret      string
-	PrivateKeyPath     string
-	PrivateKeyPEM      string
-	ListenAddr         string
-	WorkDir            string
-	CVEFixBinary       string
-	EnablePushAutofix  bool
-	AllowedRepos       map[string]struct{}
-	GitHubBaseWebURL   string
-	GitHubAPIBaseURL   string
-	GitHubUploadAPIURL string
-	EnableAutoMerge    bool
-	DeliveryDedupTTL   time.Duration
-	MaxRiskScore       int
-	DisallowedPaths    []string
-	MetricsPath        string
+	AppID               int64
+	WebhookSecret       string
+	PrivateKeyPath      string
+	PrivateKeyPEM       string
+	ListenAddr          string
+	WorkDir             string
+	CVEFixBinary        string
+	EnablePushAutofix   bool
+	AllowedRepos        map[string]struct{}
+	GitHubBaseWebURL    string
+	GitHubAPIBaseURL    string
+	GitHubUploadAPIURL  string
+	EnableAutoMerge     bool
+	DeliveryDedupTTL    time.Duration
+	RunDedupTTL         time.Duration
+	MaxRiskScore        int
+	DisallowedPaths     []string
+	MetricsPath         string
+	RetryMaxAttempts    int
+	RetryInitialBackoff time.Duration
+	RetryMaxBackoff     time.Duration
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -34,22 +38,48 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	runDedupTTL, err := parseDurationWithDefault("PP_RUN_DEDUP_TTL", 15*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	maxRiskScore, err := parseIntWithDefault("PP_MAX_RISK_SCORE", 25)
 	if err != nil {
 		return Config{}, err
 	}
+	retryMaxAttempts, err := parseIntWithDefault("PP_GITHUB_RETRY_MAX_ATTEMPTS", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	if retryMaxAttempts <= 0 {
+		return Config{}, fmt.Errorf("PP_GITHUB_RETRY_MAX_ATTEMPTS must be >= 1")
+	}
+	retryInitialBackoff, err := parseDurationWithDefault("PP_GITHUB_RETRY_INITIAL_BACKOFF", 2*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	retryMaxBackoff, err := parseDurationWithDefault("PP_GITHUB_RETRY_MAX_BACKOFF", 30*time.Second)
+	if err != nil {
+		return Config{}, err
+	}
+	if retryMaxBackoff < retryInitialBackoff {
+		return Config{}, fmt.Errorf("PP_GITHUB_RETRY_MAX_BACKOFF must be >= PP_GITHUB_RETRY_INITIAL_BACKOFF")
+	}
 
 	cfg := Config{
-		ListenAddr:        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
-		WorkDir:           firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
-		CVEFixBinary:      firstNonEmpty(strings.TrimSpace(os.Getenv("PP_CVEFIX_BINARY")), "cvefix"),
-		EnablePushAutofix: parseBoolEnv("PP_ENABLE_PUSH_AUTOFIX"),
-		GitHubBaseWebURL:  firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
-		EnableAutoMerge:   parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", true),
-		DeliveryDedupTTL:  deliveryTTL,
-		MaxRiskScore:      maxRiskScore,
-		DisallowedPaths:   parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
-		MetricsPath:       firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
+		ListenAddr:          firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
+		WorkDir:             firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
+		CVEFixBinary:        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_CVEFIX_BINARY")), "cvefix"),
+		EnablePushAutofix:   parseBoolEnv("PP_ENABLE_PUSH_AUTOFIX"),
+		GitHubBaseWebURL:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
+		EnableAutoMerge:     parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", true),
+		DeliveryDedupTTL:    deliveryTTL,
+		RunDedupTTL:         runDedupTTL,
+		MaxRiskScore:        maxRiskScore,
+		DisallowedPaths:     parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
+		MetricsPath:         firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
+		RetryMaxAttempts:    retryMaxAttempts,
+		RetryInitialBackoff: retryInitialBackoff,
+		RetryMaxBackoff:     retryMaxBackoff,
 	}
 
 	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))

@@ -57,7 +57,16 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 
 	payload := []byte(`{
 		"action":"created",
-		"comment":{"body":"/cvefix fix --auto-merge"},
+		"comment":{"id":101,"body":"/cvefix fix --auto-merge"},
+		"issue":{"number":1},
+		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
+		"sender":{"login":"alice"},
+		"installation":{"id":99}
+	}`)
+
+	nextCommentPayload := []byte(`{
+		"action":"created",
+		"comment":{"id":102,"body":"/cvefix fix --auto-merge"},
 		"issue":{"number":1},
 		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
 		"sender":{"login":"alice"},
@@ -91,6 +100,14 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
 	}
 	created, edited, autoMergeCalls = fakeAPI.counts()
+	if created != 1 || edited != 0 || autoMergeCalls != 1 {
+		t.Fatalf("duplicate run key should not process again: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
+	}
+
+	if code := sendWebhook(t, service, "issue_comment", nextCommentPayload, cfg.WebhookSecret, "delivery-3"); code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
+	}
+	created, edited, autoMergeCalls = fakeAPI.counts()
 	if created != 1 {
 		t.Fatalf("expected PR upsert, created PRs = %d, want 1", created)
 	}
@@ -99,6 +116,59 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 	}
 	if autoMergeCalls != 2 {
 		t.Fatalf("auto-merge calls = %d, want 2", autoMergeCalls)
+	}
+}
+
+func TestHandleWebhookPushE2E_RunIdempotencyKey(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+
+	fakeAPI := newFakeGitHubAPI(owner, repo)
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	cfg := Config{
+		AppID:              1,
+		WebhookSecret:      "secret",
+		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
+		ListenAddr:         ":0",
+		WorkDir:            filepath.Join(temp, "work"),
+		CVEFixBinary:       cvefixPath,
+		EnablePushAutofix:  true,
+		GitHubBaseWebURL:   "file://" + remoteRoot,
+		GitHubAPIBaseURL:   server.URL + "/api/v3/",
+		GitHubUploadAPIURL: server.URL + "/api/uploads/",
+		RunDedupTTL:        time.Hour,
+		DeliveryDedupTTL:   24 * time.Hour,
+		MaxRiskScore:       30,
+	}
+
+	service, err := NewService(cfg, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	service.async = false
+
+	payload := []byte(`{
+		"deleted":false,
+		"ref":"refs/heads/master",
+		"after":"abc123",
+		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
+		"sender":{"login":"alice"},
+		"installation":{"id":99}
+	}`)
+
+	if code := sendWebhook(t, service, "push", payload, cfg.WebhookSecret, "push-1"); code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
+	}
+	if code := sendWebhook(t, service, "push", payload, cfg.WebhookSecret, "push-2"); code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
+	}
+
+	created, edited, _ := fakeAPI.counts()
+	if created != 1 || edited != 0 {
+		t.Fatalf("expected single PR creation due to run idempotency, created=%d edited=%d", created, edited)
 	}
 }
 
