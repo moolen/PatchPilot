@@ -1,3 +1,5 @@
 .cvefix/
+.cvefix-integration-build-*/
+.validation-*/
 bin/
 coverage*.out

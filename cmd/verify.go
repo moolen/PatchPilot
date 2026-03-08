@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/report"
-	"github.com/moolen/patchpilot/verifycheck"
+	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/report"
+	"github.com/moolen/patchpilot/internal/verifycheck"
 )
 
 func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool) (runErr error) {
@@ -60,7 +60,7 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			tracker.endStageSuccess(stage, map[string]any{"verification_baseline": "missing"})
-			fmt.Fprintln(os.Stdout, "Verification mode: standard (skipped: no baseline available)")
+			_, _ = fmt.Fprintln(os.Stdout, "Verification mode: standard (skipped: no baseline available)")
 			if summary.After > 0 {
 				return vulnsRemainError(summary.After)
 			}

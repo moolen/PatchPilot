@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moolen/patchpilot/fixer"
 	"github.com/moolen/patchpilot/internal/execsafe"
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/sbom"
-	"github.com/moolen/patchpilot/verifycheck"
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/fixer"
+	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/sbom"
+	"github.com/moolen/patchpilot/internal/verifycheck"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func sbomOptionsFromPolicy(cfg *policy.Config) sbom.Options {
@@ -157,7 +157,7 @@ func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config,
 		})
 		trimmed := strings.TrimSpace(result.Combined)
 		if trimmed != "" {
-			fmt.Fprintf(os.Stderr, "[cvefix] post-exec %q output:\n%s\n", hook.Name, trimmed)
+			_, _ = fmt.Fprintf(os.Stderr, "[cvefix] post-exec %q output:\n%s\n", hook.Name, trimmed)
 		}
 		if err != nil {
 			if hook.FailOnError {

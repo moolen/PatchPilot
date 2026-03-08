@@ -1,0 +1,11 @@
+version: 1
+post_execution:
+  commands:
+    - name: success-cleanup
+      run: make post-success
+      when: success
+      fail_on_error: true
+    - run: make always
+      when: always
+    - run: make on-failure
+      when: failure

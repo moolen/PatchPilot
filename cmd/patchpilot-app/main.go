@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,45 +13,87 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moolen/patchpilot/pkg/githubapp"
+	"github.com/moolen/patchpilot/internal/githubapp"
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	command := "serve"
-	if len(os.Args) > 1 {
-		command = os.Args[1]
-	}
-
-	switch command {
-	case "doctor":
-		os.Exit(runDoctor(os.Stdout, os.Stderr))
-	case "manifest":
-		os.Exit(runManifest(os.Stdout, os.Stderr))
-	case "serve":
-		serve()
-	default:
-		if len(os.Args) > 1 && os.Args[1] == "--help" {
-			printUsage(os.Stdout)
-			return
-		}
-		fmt.Fprintf(os.Stderr, "unknown command %q\n", command)
-		printUsage(os.Stderr)
-		os.Exit(2)
+	if err := execute(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
 
-func serve() {
+func execute(args []string, stdout, stderr io.Writer) error {
+	root := newRootCommand(stdout, stderr)
+	if len(args) == 0 {
+		args = []string{"serve"}
+	}
+	root.SetArgs(args)
+	return root.Execute()
+}
+
+func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
+	root := &cobra.Command{
+		Use:           "patchpilot-app",
+		Short:         "PatchPilot GitHub App service",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+	}
+	root.AddCommand(
+		newServeCommand(),
+		newDoctorCommand(stdout, stderr),
+		newManifestCommand(stdout, stderr),
+	)
+	return root
+}
+
+func newServeCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "serve",
+		Short: "Run the PatchPilot webhook service",
+		RunE: func(command *cobra.Command, args []string) error {
+			return serve()
+		},
+	}
+}
+
+func newDoctorCommand(stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Validate runtime dependencies and configuration",
+		RunE: func(command *cobra.Command, args []string) error {
+			if code := runDoctor(stdout, stderr); code != 0 {
+				return fmt.Errorf("doctor checks failed")
+			}
+			return nil
+		},
+	}
+}
+
+func newManifestCommand(stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "manifest",
+		Short: "Print a starter GitHub App manifest",
+		RunE: func(command *cobra.Command, args []string) error {
+			if code := runManifest(stdout, stderr); code != 0 {
+				return fmt.Errorf("manifest generation failed")
+			}
+			return nil
+		},
+	}
+}
+
+func serve() error {
 	cfg, err := githubapp.LoadConfigFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	logger := log.New(os.Stdout, "[patchpilot-app] ", log.LstdFlags)
 	service, err := githubapp.NewService(cfg, logger)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "initialize app service: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("initialize app service: %w", err)
 	}
 
 	mux := http.NewServeMux()
@@ -71,16 +114,16 @@ func serve() {
 	}
 
 	logger.Printf("listening on %s", cfg.ListenAddr)
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintf(os.Stderr, "listen: %v\n", err)
-		os.Exit(1)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("listen: %w", err)
 	}
+	return nil
 }
 
 func runDoctor(stdout, stderr io.Writer) int {
 	cfg, err := githubapp.LoadConfigFromEnv()
 	if err != nil {
-		fmt.Fprintf(stderr, "doctor: config invalid: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "doctor: config invalid: %v\n", err)
 		return 1
 	}
 
@@ -88,10 +131,10 @@ func runDoctor(stdout, stderr io.Writer) int {
 	check := func(name string, err error) {
 		if err != nil {
 			errorsFound = true
-			fmt.Fprintf(stderr, "doctor: %s: FAIL (%v)\n", name, err)
+			_, _ = fmt.Fprintf(stderr, "doctor: %s: FAIL (%v)\n", name, err)
 			return
 		}
-		fmt.Fprintf(stdout, "doctor: %s: OK\n", name)
+		_, _ = fmt.Fprintf(stdout, "doctor: %s: OK\n", name)
 	}
 
 	check("workdir writable", ensureWritableDir(cfg.WorkDir))
@@ -103,13 +146,13 @@ func runDoctor(stdout, stderr io.Writer) int {
 		_, err := os.ReadFile(cfg.PrivateKeyPath)
 		check("private key file", err)
 	} else {
-		fmt.Fprintln(stdout, "doctor: private key file: OK (using PP_PRIVATE_KEY_PEM)")
+		_, _ = fmt.Fprintln(stdout, "doctor: private key file: OK (using PP_PRIVATE_KEY_PEM)")
 	}
 
 	if errorsFound {
 		return 1
 	}
-	fmt.Fprintln(stdout, "doctor: all checks passed")
+	_, _ = fmt.Fprintln(stdout, "doctor: all checks passed")
 	return 0
 }
 
@@ -144,7 +187,7 @@ func runManifest(stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(manifest); err != nil {
-		fmt.Fprintf(stderr, "manifest: encode failed: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "manifest: encode failed: %v\n", err)
 		return 1
 	}
 	return 0
@@ -175,8 +218,4 @@ func envOrDefault(key, defaultValue string) string {
 		return defaultValue
 	}
 	return value
-}
-
-func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: patchpilot-app [serve|doctor|manifest]")
 }

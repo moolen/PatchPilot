@@ -1,0 +1,33 @@
+Repository path:
+{{.RepoPath}}
+
+Goal:
+Fix vulnerabilities with minimal changes and keep the build passing.
+
+Constraints:
+- prioritize minimal dependency upgrades
+- prefer fixing vulnerabilities over introducing new functionality
+- ensure repository builds successfully
+
+Remaining vulnerabilities (grype JSON):
+```json
+{{.RemainingVulnerabilities}}
+```
+
+Previous attempts:
+{{range .PreviousAttemptSummaries}}- {{.}}
+{{end}}
+
+Verification commands:
+{{range .ValidationCommands}}- {{.}}
+{{end}}
+
+Instructions to the agent:
+- modify the repository directly
+- run verification commands after each change
+- iterate until vulnerabilities are fixed and build passes
+- do not stop until verification commands succeed or attempts exhausted
+
+Attempt number: {{.AttemptNumber}}
+{{if .HasPromptFilePath}}Prompt file path: {{.PromptFilePath}}
+{{end}}

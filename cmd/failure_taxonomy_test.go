@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/moolen/patchpilot/report"
+	"github.com/moolen/patchpilot/internal/report"
 )
 
 func TestClassifyRunFailureVulnsRemainNoFix(t *testing.T) {

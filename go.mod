@@ -1,6 +1,8 @@
 module github.com/moolen/patchpilot
 
-go 1.26.1
+go 1.26
+
+toolchain go1.26.1
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.17.0

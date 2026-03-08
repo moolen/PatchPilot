@@ -1,0 +1,8 @@
+version: 1
+verification:
+  mode: APPEND
+  commands:
+    - run: make lint
+post_execution:
+  commands:
+    - run: echo cleanup

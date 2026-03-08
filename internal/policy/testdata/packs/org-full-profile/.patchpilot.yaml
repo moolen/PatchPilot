@@ -1,0 +1,40 @@
+version: 1
+verification:
+  mode: append
+  commands:
+    - name: lint
+      run: make lint
+      timeout: 4m
+post_execution:
+  commands:
+    - name: cleanup
+      run: rm -rf .tmp-work
+      when: always
+      fail_on_error: false
+exclude:
+  cves:
+    - CVE-2025-12345
+  vulnerabilities:
+    - id: GHSA-xxxx-yyyy-zzzz
+      package: openssl
+      ecosystem: deb
+      path: images/Dockerfile
+scan:
+  skip_paths:
+    - vendor/**
+    - examples/legacy/**
+registry:
+  cache:
+    dir: .patchpilot-cache/registry
+    ttl: 4h
+  auth:
+    mode: none
+docker:
+  allowed_base_images:
+    - golang:*
+    - cgr.dev/chainguard/*
+  disallowed_base_images:
+    - ubuntu:latest
+  patching:
+    base_images: auto
+    os_packages: disabled

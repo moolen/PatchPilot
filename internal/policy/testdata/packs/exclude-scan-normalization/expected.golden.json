@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "verification_mode": "append",
+  "verification_commands": null,
+  "post_execution_hooks": null,
+  "excluded_cves": [
+    "CVE-2026-0001"
+  ],
+  "excluded_vulnerabilities": [
+    {
+      "ID": "GHSA-abc",
+      "Package": "openssl",
+      "Ecosystem": "deb",
+      "Path": "images/../images/Dockerfile"
+    }
+  ],
+  "scan_skip_paths": [
+    "vendor"
+  ],
+  "registry_cache_dir": "",
+  "registry_cache_ttl": "",
+  "registry_auth_mode": "auto",
+  "registry_auth_token_env": "",
+  "docker_allowed_base_images": null,
+  "docker_disallowed_base_images": null,
+  "docker_base_image_patching": "auto",
+  "docker_os_package_patching": "auto"
+}

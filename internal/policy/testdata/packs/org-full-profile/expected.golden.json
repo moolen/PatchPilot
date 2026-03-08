@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "verification_mode": "append",
+  "verification_commands": [
+    {
+      "Name": "lint",
+      "Run": "make lint",
+      "Timeout": "4m"
+    }
+  ],
+  "post_execution_hooks": [
+    {
+      "Name": "cleanup",
+      "Run": "rm -rf .tmp-work",
+      "When": "always",
+      "FailOnError": false
+    }
+  ],
+  "excluded_cves": [
+    "CVE-2025-12345"
+  ],
+  "excluded_vulnerabilities": [
+    {
+      "ID": "GHSA-xxxx-yyyy-zzzz",
+      "Package": "openssl",
+      "Ecosystem": "deb",
+      "Path": "images/Dockerfile"
+    }
+  ],
+  "scan_skip_paths": [
+    "examples/legacy/**",
+    "vendor/**"
+  ],
+  "registry_cache_dir": ".patchpilot-cache/registry",
+  "registry_cache_ttl": "4h",
+  "registry_auth_mode": "none",
+  "registry_auth_token_env": "",
+  "docker_allowed_base_images": [
+    "cgr.dev/chainguard/*",
+    "golang:*"
+  ],
+  "docker_disallowed_base_images": [
+    "ubuntu:latest"
+  ],
+  "docker_base_image_patching": "auto",
+  "docker_os_package_patching": "disabled"
+}

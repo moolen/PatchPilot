@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "verification_mode": "append",
+  "verification_commands": null,
+  "post_execution_hooks": [
+    {
+      "Name": "success-cleanup",
+      "Run": "make post-success",
+      "When": "success",
+      "FailOnError": true
+    },
+    {
+      "Name": "hook-2",
+      "Run": "make always",
+      "When": "always",
+      "FailOnError": false
+    },
+    {
+      "Name": "hook-3",
+      "Run": "make on-failure",
+      "When": "failure",
+      "FailOnError": false
+    }
+  ],
+  "excluded_cves": null,
+  "excluded_vulnerabilities": null,
+  "scan_skip_paths": null,
+  "registry_cache_dir": "",
+  "registry_cache_ttl": "",
+  "registry_auth_mode": "auto",
+  "registry_auth_token_env": "",
+  "docker_allowed_base_images": null,
+  "docker_disallowed_base_images": null,
+  "docker_base_image_patching": "auto",
+  "docker_os_package_patching": "auto"
+}

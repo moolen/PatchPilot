@@ -1,0 +1,16 @@
+version: 1
+exclude:
+  cves:
+    - CVE-2026-0001
+    - CVE-2026-0001
+    - "  "
+  vulnerabilities:
+    - id: GHSA-abc
+      package: openssl
+      ecosystem: deb
+      path: ./images/../images/Dockerfile
+scan:
+  skip_paths:
+    - ./vendor
+    - vendor
+    - ""

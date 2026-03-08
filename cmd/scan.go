@@ -4,8 +4,8 @@ import (
 	"context"
 	"os"
 
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/report"
+	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/report"
 )
 
 func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool) (runErr error) {

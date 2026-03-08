@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/moolen/patchpilot/report"
+	"github.com/moolen/patchpilot/internal/report"
 )
 
 type runTracker struct {
@@ -85,10 +85,6 @@ func (tracker *runTracker) endStageFailure(index int, stageErr error, details ma
 
 func (tracker *runTracker) addCounter(name string, value int) {
 	tracker.record.Counters = append(tracker.record.Counters, report.RunCounter{Name: name, Value: value})
-}
-
-func (tracker *runTracker) addLabel(key, value string) {
-	tracker.record.Labels = append(tracker.record.Labels, report.RunLabel{Key: key, Value: value})
 }
 
 func (tracker *runTracker) complete(err error, failure *report.RunFailure) error {
