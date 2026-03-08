@@ -27,6 +27,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.4.0
+
       - name: Unit tests
         run: make test
 
