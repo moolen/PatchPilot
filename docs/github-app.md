@@ -40,6 +40,11 @@ Use these minimum GitHub App permissions:
 - `PP_ENABLE_PUSH_AUTOFIX` (optional, default `false`): enable push-triggered remediation.
 - `PP_GITHUB_WEB_BASE_URL` (optional, default `https://github.com`): clone URL base.
 - `PP_GITHUB_API_BASE_URL` and `PP_GITHUB_UPLOAD_API_URL` (optional, set both for GitHub Enterprise).
+- `PP_ENABLE_AUTO_MERGE` (optional, default `true`): allow app-side auto-merge enablement when requested.
+- `PP_DELIVERY_DEDUP_TTL` (optional, default `24h`): retention window for webhook delivery dedupe state.
+- `PP_MAX_RISK_SCORE` (optional, default `25`): maximum allowed remediation risk score before PR creation is blocked.
+- `PP_DISALLOWED_PATHS` (optional): comma-separated blocked path patterns (supports `*` and `/**`).
+- `PP_METRICS_PATH` (optional, default `/metrics`): metrics endpoint path.
 
 ## Run locally
 
@@ -52,7 +57,25 @@ PP_PRIVATE_KEY_PATH=./private-key.pem \
 ```
 
 Health endpoint: `GET /healthz`  
-Webhook endpoint: `POST /webhook`
+Webhook endpoint: `POST /webhook`  
+Metrics endpoint: `GET /metrics`
+
+## Doctor and Manifest UX
+
+Run environment diagnostics:
+
+```bash
+./bin/patchpilot-app doctor
+```
+
+Generate a starter GitHub App manifest JSON:
+
+```bash
+PP_APP_NAME=PatchPilot \
+PP_APP_URL=https://patchpilot.example.com \
+PP_WEBHOOK_URL=https://patchpilot.example.com/webhook \
+./bin/patchpilot-app manifest
+```
 
 ## Typical flow
 
@@ -61,3 +84,14 @@ Webhook endpoint: `POST /webhook`
 3. App runs `cvefix fix --enable-agent=false`.
 4. If files changed, app commits on `patchpilot/auto-fix-<timestamp>` and opens a PR.
 5. If no change is needed, app posts a status comment.
+
+Safety gates block PR creation when:
+
+- verification regressions are detected,
+- changed files match `PP_DISALLOWED_PATHS`,
+- computed risk score exceeds `PP_MAX_RISK_SCORE`.
+
+Webhook idempotency:
+
+- The app stores `X-GitHub-Delivery` IDs in `<PP_WORKDIR>/deliveries.json`.
+- Duplicate or retried deliveries are ignored within `PP_DELIVERY_DEDUP_TTL`.

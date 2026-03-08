@@ -1,0 +1,45 @@
+name: Action Tag Sync
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-major-tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Update major action tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF_NAME}"
+          if [[ ! "$ref" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Tag $ref is not semver, skipping"
+            exit 0
+          fi
+
+          major="${BASH_REMATCH[1]}"
+          if [[ "$major" -lt 1 ]]; then
+            echo "Pre-1.0 release detected ($ref), skipping major alias update"
+            exit 0
+          fi
+
+          major_tag="v${major}"
+          sha="${GITHUB_SHA}"
+          echo "Syncing ${major_tag} -> ${sha}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${major_tag}" "${sha}"
+          git push -f origin "refs/tags/${major_tag}"

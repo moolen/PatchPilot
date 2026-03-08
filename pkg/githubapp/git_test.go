@@ -44,3 +44,13 @@ func TestRepositoryCloneURLErrors(t *testing.T) {
 		t.Fatalf("expected token error")
 	}
 }
+
+func TestRepositoryCloneURLFileScheme(t *testing.T) {
+	cloneURL, err := repositoryCloneURL("file:///tmp/remotes", "acme", "demo", "ignored")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cloneURL != "file:///tmp/remotes/acme/demo.git" {
+		t.Fatalf("cloneURL = %q", cloneURL)
+	}
+}

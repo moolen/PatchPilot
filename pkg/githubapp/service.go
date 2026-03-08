@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v75/github"
@@ -16,8 +18,12 @@ import (
 type Service struct {
 	cfg           Config
 	logger        *log.Logger
+	slog          *structuredLogger
 	webhookSecret []byte
 	appClient     *github.Client
+	deliveryStore DeliveryStore
+	metrics       *Metrics
+	async         bool
 }
 
 func NewService(cfg Config, logger *log.Logger) (*Service, error) {
@@ -35,17 +41,31 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 		return nil, fmt.Errorf("create app transport: %w", err)
 	}
 
-	appClient := github.NewClient(&http.Client{Transport: transport})
+	httpClient := &http.Client{Transport: transport}
+	appClient := github.NewClient(httpClient)
+	if cfg.GitHubAPIBaseURL != "" {
+		appClient, err = github.NewEnterpriseClient(cfg.GitHubAPIBaseURL, cfg.GitHubUploadAPIURL, httpClient)
+		if err != nil {
+			return nil, fmt.Errorf("create app enterprise client: %w", err)
+		}
+	}
 
 	if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create workdir: %w", err)
 	}
 
+	deliveryStore := NewFileDeliveryStore(filepath.Join(cfg.WorkDir, "deliveries.json"), cfg.DeliveryDedupTTL)
+	metrics := NewMetrics()
+
 	return &Service{
 		cfg:           cfg,
 		logger:        logger,
+		slog:          newStructuredLogger(logger),
 		webhookSecret: []byte(cfg.WebhookSecret),
 		appClient:     appClient,
+		deliveryStore: deliveryStore,
+		metrics:       metrics,
+		async:         true,
 	}, nil
 }
 
@@ -67,20 +87,40 @@ func (service *Service) HandleWebhook(writer http.ResponseWriter, request *http.
 		return
 	}
 
+	deliveryID := strings.TrimSpace(request.Header.Get("X-GitHub-Delivery"))
+	if deliveryID != "" && service.deliveryStore != nil {
+		started, err := service.deliveryStore.TryStart(deliveryID)
+		if err != nil {
+			service.log("error", "delivery dedupe failed", map[string]interface{}{"delivery_id": deliveryID, "error": err.Error()})
+			http.Error(writer, "internal dedupe error", http.StatusInternalServerError)
+			return
+		}
+		if !started {
+			service.log("info", "skipping duplicate delivery", map[string]interface{}{"delivery_id": deliveryID})
+			if service.metrics != nil {
+				service.metrics.IncRun("webhook", "duplicate")
+			}
+			writer.WriteHeader(http.StatusAccepted)
+			return
+		}
+	}
+
 	switch typed := event.(type) {
 	case *github.IssueCommentEvent:
-		service.handleIssueCommentEvent(typed)
+		service.handleIssueCommentEvent(deliveryID, typed)
 	case *github.PushEvent:
-		service.handlePushEvent(typed)
+		service.handlePushEvent(deliveryID, typed)
 	default:
-		service.logger.Printf("ignored event type %T", typed)
+		service.log("info", "ignored unsupported event", map[string]interface{}{"delivery_id": deliveryID, "event_type": fmt.Sprintf("%T", typed)})
+		_ = service.markDeliveryDone(deliveryID)
 	}
 
 	writer.WriteHeader(http.StatusAccepted)
 }
 
-func (service *Service) handleIssueCommentEvent(event *github.IssueCommentEvent) {
+func (service *Service) handleIssueCommentEvent(deliveryID string, event *github.IssueCommentEvent) {
 	if event.GetAction() != "created" {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
@@ -97,70 +137,109 @@ func (service *Service) handleIssueCommentEvent(event *github.IssueCommentEvent)
 				fmt.Sprintf("Invalid PatchPilot command: %v", err),
 			)
 		}
-		service.logger.Printf("invalid slash command: %v", err)
+		service.log("warn", "invalid slash command", map[string]interface{}{"delivery_id": deliveryID, "error": err.Error()})
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 	if !found {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
 	if !service.repoAllowed(event.GetRepo().GetFullName()) {
-		service.logger.Printf("repo %s not allowed by policy", event.GetRepo().GetFullName())
+		service.log("warn", "repo not allowed", map[string]interface{}{"delivery_id": deliveryID, "repo": event.GetRepo().GetFullName()})
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
 	installationID := event.GetInstallation().GetID()
 	if installationID == 0 {
-		service.logger.Printf("missing installation ID for issue comment event")
+		service.log("warn", "missing installation ID", map[string]interface{}{"delivery_id": deliveryID, "event": "issue_comment"})
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
-	go service.runAsync("issue_comment", func() {
-		service.processIssueComment(event, installationID, command)
-	})
+	run := func() {
+		service.runAsync(deliveryID, "issue_comment", func() {
+			service.processIssueComment(event, installationID, command)
+		})
+	}
+	if service.async {
+		go run()
+	} else {
+		run()
+	}
 }
 
-func (service *Service) handlePushEvent(event *github.PushEvent) {
+func (service *Service) handlePushEvent(deliveryID string, event *github.PushEvent) {
 	if !service.cfg.EnablePushAutofix {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 	if event.GetDeleted() {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 	if strings.Contains(strings.ToLower(event.GetSender().GetLogin()), "bot") {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 	if !service.repoAllowed(event.GetRepo().GetFullName()) {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
 	defaultBranch := strings.TrimSpace(event.GetRepo().GetDefaultBranch())
 	if defaultBranch == "" {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 	ref := strings.TrimPrefix(event.GetRef(), "refs/heads/")
 	if ref != defaultBranch {
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
 	installationID := event.GetInstallation().GetID()
 	if installationID == 0 {
-		service.logger.Printf("missing installation ID for push event")
+		service.log("warn", "missing installation ID", map[string]interface{}{"delivery_id": deliveryID, "event": "push"})
+		_ = service.markDeliveryDone(deliveryID)
 		return
 	}
 
-	go service.runAsync("push", func() {
-		service.processPushEvent(event, installationID)
-	})
+	run := func() {
+		service.runAsync(deliveryID, "push", func() {
+			service.processPushEvent(event, installationID)
+		})
+	}
+	if service.async {
+		go run()
+	} else {
+		run()
+	}
 }
 
-func (service *Service) runAsync(label string, fn func()) {
+func (service *Service) runAsync(deliveryID, label string, fn func()) {
+	started := time.Now()
+	defer func() {
+		if service.metrics != nil {
+			service.metrics.ObserveRunDuration(time.Since(started))
+		}
+		_ = service.markDeliveryDone(deliveryID)
+	}()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			service.logger.Printf("panic in async %s handler: %v", label, recovered)
+			if service.metrics != nil {
+				service.metrics.IncRun(label, "panic")
+				service.metrics.IncFailure(label)
+			}
+			service.log("error", "panic in async handler", map[string]interface{}{"label": label, "delivery_id": deliveryID, "panic": fmt.Sprintf("%v", recovered)})
 		}
 	}()
 	fn()
+	if service.metrics != nil {
+		service.metrics.IncRun(label, "completed")
+	}
 }
 
 func (service *Service) installationClient(ctx context.Context, installationID int64) (*github.Client, string, error) {
@@ -191,6 +270,29 @@ func (service *Service) repoAllowed(repo string) bool {
 	}
 	_, ok := service.cfg.AllowedRepos[normalizeRepoName(repo)]
 	return ok
+}
+
+func (service *Service) log(level, message string, fields map[string]interface{}) {
+	if service.slog == nil {
+		service.logger.Printf("%s: %s", strings.ToUpper(level), message)
+		return
+	}
+	service.slog.Log(level, message, fields)
+}
+
+func (service *Service) markDeliveryDone(deliveryID string) error {
+	if strings.TrimSpace(deliveryID) == "" || service.deliveryStore == nil {
+		return nil
+	}
+	return service.deliveryStore.MarkDone(deliveryID)
+}
+
+func (service *Service) MetricsHandler(writer http.ResponseWriter, request *http.Request) {
+	if service.metrics == nil {
+		http.Error(writer, "metrics unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	service.metrics.ServeHTTP(writer, request)
 }
 
 func loadPrivateKey(cfg Config) ([]byte, error) {
