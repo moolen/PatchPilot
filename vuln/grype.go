@@ -296,6 +296,16 @@ func ReadNormalized(repo string) (*Report, error) {
 }
 
 func detectEcosystem(artifact rawArtifact) string {
+	purl := strings.ToLower(strings.TrimSpace(artifact.PURL))
+	if strings.HasPrefix(purl, "pkg:npm/") {
+		return "npm"
+	}
+	if strings.HasPrefix(purl, "pkg:pypi/") {
+		return "pypi"
+	}
+	if strings.HasPrefix(purl, "pkg:maven/") {
+		return "maven"
+	}
 	if artifact.Language == "go" || artifact.Type == "go-module" || strings.HasPrefix(artifact.PURL, "pkg:golang/") {
 		return "golang"
 	}
@@ -303,6 +313,21 @@ func detectEcosystem(artifact rawArtifact) string {
 	switch artifact.Type {
 	case "deb", "apk", "rpm":
 		return artifact.Type
+	case "npm":
+		return "npm"
+	case "python":
+		return "pypi"
+	case "maven":
+		return "maven"
+	}
+	if strings.EqualFold(artifact.Language, "javascript") || strings.EqualFold(artifact.Language, "node") {
+		return "npm"
+	}
+	if strings.EqualFold(artifact.Language, "python") {
+		return "pypi"
+	}
+	if strings.EqualFold(artifact.Language, "java") {
+		return "maven"
 	}
 
 	if strings.HasPrefix(artifact.PURL, "pkg:deb/") {
