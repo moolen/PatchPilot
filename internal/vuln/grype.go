@@ -15,8 +15,8 @@ import (
 
 	"golang.org/x/mod/semver"
 
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/sbom"
+	"github.com/moolen/patchpilot/internal/pathmatch"
+	"github.com/moolen/patchpilot/internal/sbom"
 )
 
 const (
@@ -234,7 +234,7 @@ func shouldSkipFindingByPath(repo string, finding Finding, skipPaths []string) b
 		return false
 	}
 	for _, location := range finding.Locations {
-		if policy.ShouldSkipPath(repo, location, skipPaths) {
+		if pathmatch.ShouldSkipPath(repo, location, skipPaths) {
 			return true
 		}
 	}
@@ -255,7 +255,7 @@ func shouldIgnoreFinding(repo string, finding Finding, rules []IgnoreRule) bool 
 		if strings.TrimSpace(rule.Path) != "" {
 			matched := false
 			for _, location := range finding.Locations {
-				if policy.LocationMatches(repo, location, rule.Path) {
+				if pathmatch.LocationMatches(repo, location, rule.Path) {
 					matched = true
 					break
 				}

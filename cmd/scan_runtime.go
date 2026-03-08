@@ -3,9 +3,9 @@ package cmd
 import (
 	"context"
 
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/sbom"
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/sbom"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func generateSBOM(ctx context.Context, repo string, cfg *policy.Config) error {

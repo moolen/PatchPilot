@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/moolen/patchpilot/verifycheck"
+	"github.com/moolen/patchpilot/internal/verifycheck"
 )
 
 func TestWriteAndReadVerificationBaseline(t *testing.T) {

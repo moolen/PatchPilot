@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func TestApplyNPMFixesWithOptions(t *testing.T) {

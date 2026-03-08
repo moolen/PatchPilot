@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moolen/patchpilot/policy"
+	"github.com/moolen/patchpilot/internal/policy"
 )
 
 func TestOptionsFromPolicy(t *testing.T) {

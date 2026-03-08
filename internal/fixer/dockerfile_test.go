@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func TestMaybePatchFromUpdatesPatchTagWithSuffix(t *testing.T) {

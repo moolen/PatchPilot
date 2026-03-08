@@ -1,4 +1,4 @@
-package policy
+package pathmatch
 
 import (
 	"path/filepath"
@@ -109,4 +109,14 @@ func globToRegex(pattern string) string {
 	}
 	builder.WriteString("$")
 	return builder.String()
+}
+
+func cleanRelativePath(path string) string {
+	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	path = strings.TrimPrefix(path, "./")
+	path = strings.TrimPrefix(path, "/")
+	if path == "." {
+		return ""
+	}
+	return path
 }

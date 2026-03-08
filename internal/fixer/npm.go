@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func ApplyNPMFixes(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {

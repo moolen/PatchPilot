@@ -3,7 +3,7 @@ package fixer
 import (
 	"context"
 	"errors"
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 	"os"
 	"path/filepath"
 	"reflect"

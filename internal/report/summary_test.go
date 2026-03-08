@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/moolen/patchpilot/fixer"
-	"github.com/moolen/patchpilot/verifycheck"
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/fixer"
+	"github.com/moolen/patchpilot/internal/verifycheck"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func TestBuildSummaryIncludesUnsupportedStdlibFindings(t *testing.T) {

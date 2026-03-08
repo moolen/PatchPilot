@@ -12,7 +12,7 @@ import (
 	"github.com/moby/buildkit/frontend/dockerfile/parser"
 	"golang.org/x/mod/semver"
 
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func ApplyDockerfileFixes(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {

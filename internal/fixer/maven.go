@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 var (

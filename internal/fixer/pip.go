@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 var requirementLinePattern = regexp.MustCompile(`^\s*([A-Za-z0-9_.-]+)\s*([<>=!~]{1,2})\s*([^\s#;]+)`)

@@ -14,8 +14,8 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/moolen/patchpilot/internal/goenv"
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/pathmatch"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 type Patch struct {
@@ -563,5 +563,5 @@ func shouldSkipWalkPath(root, path string, skipPaths []string) bool {
 	if len(skipPaths) == 0 {
 		return false
 	}
-	return policy.ShouldSkipPath(root, path, skipPaths)
+	return pathmatch.ShouldSkipPath(root, path, skipPaths)
 }

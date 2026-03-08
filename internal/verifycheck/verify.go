@@ -13,11 +13,13 @@ import (
 
 	"github.com/moolen/patchpilot/internal/execsafe"
 	"github.com/moolen/patchpilot/internal/goenv"
-	"github.com/moolen/patchpilot/policy"
+	"github.com/moolen/patchpilot/internal/pathmatch"
 )
 
 const (
 	ModeStandard       = "standard"
+	ModeAppend         = "append"
+	ModeReplace        = "replace"
 	checkTimeout       = 5 * time.Minute
 	maxPrintedFailures = 12
 )
@@ -267,11 +269,11 @@ func standardCheckDefinitions() []checkDefinition {
 
 func buildCommandDefinitions(mode string, commands []CommandSpec) ([]checkDefinition, string) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
-	if mode != policy.VerificationModeReplace {
-		mode = policy.VerificationModeAppend
+	if mode != ModeReplace {
+		mode = ModeAppend
 	}
 	definitions := make([]checkDefinition, 0, len(standardChecks)+len(commands))
-	if mode == policy.VerificationModeAppend {
+	if mode == ModeAppend {
 		definitions = append(definitions, standardCheckDefinitions()...)
 	}
 	for _, command := range commands {
@@ -292,7 +294,7 @@ func buildCommandDefinitions(mode string, commands []CommandSpec) ([]checkDefini
 	if len(definitions) == 0 {
 		return standardCheckDefinitions(), ModeStandard
 	}
-	if mode == policy.VerificationModeReplace {
+	if mode == ModeReplace {
 		return definitions, "custom"
 	}
 	if len(commands) == 0 {
@@ -458,7 +460,7 @@ func shouldSkipPath(repo, path string, skipPaths []string) bool {
 	if len(skipPaths) == 0 {
 		return false
 	}
-	return policy.ShouldSkipPath(repo, path, skipPaths)
+	return pathmatch.ShouldSkipPath(repo, path, skipPaths)
 }
 
 func trimError(message string) string {

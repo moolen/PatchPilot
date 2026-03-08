@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/moolen/patchpilot/verifycheck"
+	"github.com/moolen/patchpilot/internal/verifycheck"
 )
 
 const (

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/report"
-	"github.com/moolen/patchpilot/verifycheck"
+	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/report"
+	"github.com/moolen/patchpilot/internal/verifycheck"
 )
 
 func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool) (runErr error) {

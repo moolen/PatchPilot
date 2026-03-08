@@ -5,15 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/moolen/patchpilot/fixer"
-	agentpkg "github.com/moolen/patchpilot/pkg/agent"
-	"github.com/moolen/patchpilot/policy"
-	"github.com/moolen/patchpilot/report"
-	"github.com/moolen/patchpilot/verifycheck"
-	"github.com/moolen/patchpilot/vuln"
+	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/report"
+	"github.com/moolen/patchpilot/internal/verifycheck"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 type fixOptions struct {
@@ -139,30 +136,17 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	logProgress("applying deterministic fixes")
 	stage = tracker.beginStage("apply_deterministic_fixes")
-	allPatches := make([]fixer.Patch, 0)
-	engineDetails := map[string]any{}
-	for _, engine := range fixer.DefaultEngines(fileOptions, dockerOptions) {
-		patches, applyErr := engine.Apply(ctx, repo, before.Findings)
-		if applyErr != nil {
-			if !options.EnableAgent {
-				tracker.endStageFailure(stage, applyErr, map[string]any{"engine": engine.Name()})
-				return wrapWithExitCode(ExitCodePatchFailed, applyErr)
-			}
-			issue := fmt.Sprintf("%s fixes failed: %v", engine.Name(), applyErr)
-			deterministicIssues = append(deterministicIssues, issue)
-			engineDetails[engine.Name()] = map[string]any{
-				"status": "failed",
-				"error":  applyErr.Error(),
-			}
-			logProgress("%s", issue)
-			continue
-		}
-		allPatches = append(allPatches, patches...)
-		engineDetails[engine.Name()] = map[string]any{
-			"status":  "applied",
-			"patches": len(patches),
-		}
-		logProgress("applied %d patch(es) via %s", len(patches), engine.Name())
+	allPatches, deterministicIssues, engineDetails, err := applyDeterministicFixes(
+		ctx,
+		repo,
+		before.Findings,
+		fileOptions,
+		dockerOptions,
+		options.EnableAgent,
+	)
+	if err != nil {
+		tracker.endStageFailure(stage, err, nil)
+		return wrapWithExitCode(ExitCodePatchFailed, err)
 	}
 	tracker.endStageSuccess(stage, map[string]any{
 		"engines":       engineDetails,
@@ -194,105 +178,31 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	} else {
 		tracker.endStageSuccess(stage, map[string]any{"remaining_findings": 0})
 	}
-	shouldRunAgent := options.EnableAgent && (len(deterministicIssues) > 0 ||
-		validationErr != nil ||
-		(finalValidation.After != nil && len(finalValidation.After.Findings) > 0) ||
-		len(finalValidation.Verification.Regressions) > 0)
+	shouldRunAgent := shouldRunAgentRepair(options, deterministicIssues, finalValidation, validationErr)
 
 	if shouldRunAgent {
 		stage = tracker.beginStage("agent_repair_loop")
-		logProgress("deterministic phase incomplete, starting agent repair loop")
-
-		initialVulnCount := len(before.Findings)
-		initialVulnJSON := readFileOrDefault(before.RawPath, "{}")
-		if finalValidation.After != nil {
-			initialVulnCount = len(finalValidation.After.Findings)
-			if data := readFileOrDefault(finalValidation.After.RawPath, ""); strings.TrimSpace(data) != "" {
-				initialVulnJSON = data
-			}
+		var attempts int
+		finalValidation, agentSucceeded, attempts, err = runAgentRepairLoop(
+			ctx,
+			repo,
+			cfg,
+			options,
+			deterministicIssues,
+			before,
+			finalValidation,
+			validationErr,
+			verificationBaseline,
+			verificationDirs,
+		)
+		if err != nil {
+			tracker.endStageFailure(stage, err, nil)
+			return wrapWithExitCode(ExitCodePatchFailed, err)
 		}
-		knownVulnCount := initialVulnCount
-		lastValidationErr := validationErr
-
-		runner := agentpkg.Runner{
-			Command: options.AgentCommand,
-			Stdout:  os.Stderr,
-			Stderr:  os.Stderr,
-		}
-		loop := agentpkg.Loop{Agent: runner}
-
-		artifactDir := strings.TrimSpace(options.AgentArtifactDir)
-		if artifactDir == "" {
-			artifactDir = filepath.Join(repo, ".cvefix", "agent")
-		} else if !filepath.IsAbs(artifactDir) {
-			artifactDir = filepath.Join(repo, artifactDir)
-		}
-
-		loopResult, loopErr := loop.Run(ctx, agentpkg.LoopRequest{
-			RepoPath:                        repo,
-			WorkingDirectory:                repo,
-			ArtifactDirectory:               artifactDir,
-			MaxAttempts:                     options.AgentMaxAttempts,
-			InitialVulnerabilityCount:       initialVulnCount,
-			InitialRemainingVulnerabilities: initialVulnJSON,
-			PreviousAttemptSummaries:        deterministicIssues,
-			ValidationCommands:              validationCommandsForPrompt(cfg),
-			Validate: func(validateCtx context.Context, attemptNumber int) (agentpkg.ValidationResult, error) {
-				validation, err := runValidationCycle(validateCtx, repo, cfg, verificationBaseline, verificationDirs)
-				if err != nil {
-					lastValidationErr = err
-				}
-
-				result := agentpkg.ValidationResult{
-					ValidationPassed:   validation.ValidationPassed,
-					VulnerabilityCount: knownVulnCount,
-					Summary: fmt.Sprintf(
-						"attempt=%d validation_passed=%t vulnerabilities=%d",
-						attemptNumber,
-						validation.ValidationPassed,
-						knownVulnCount,
-					),
-					Logs: validation.Logs,
-				}
-
-				if validation.After != nil {
-					knownVulnCount = len(validation.After.Findings)
-					result.VulnerabilityCount = knownVulnCount
-					result.RemainingVulnerabilities = readFileOrDefault(validation.After.RawPath, "{}")
-					result.Summary = fmt.Sprintf(
-						"attempt=%d validation_passed=%t vulnerabilities=%d",
-						attemptNumber,
-						validation.ValidationPassed,
-						knownVulnCount,
-					)
-					finalValidation = validation
-				}
-
-				return result, err
-			},
+		tracker.endStageSuccess(stage, map[string]any{
+			"attempts": attempts,
+			"success":  agentSucceeded,
 		})
-		if loopErr != nil {
-			tracker.endStageFailure(stage, loopErr, nil)
-			return wrapWithExitCode(ExitCodePatchFailed, fmt.Errorf("run agent repair loop: %w", loopErr))
-		}
-
-		agentSucceeded = loopResult.Success
-		if agentSucceeded {
-			logProgress("agent repair loop succeeded after %d attempt(s)", loopResult.Attempts)
-			tracker.endStageSuccess(stage, map[string]any{
-				"attempts": loopResult.Attempts,
-				"success":  true,
-			})
-		} else {
-			logProgress("agent repair loop exhausted %d attempt(s) without success", loopResult.Attempts)
-			tracker.endStageSuccess(stage, map[string]any{
-				"attempts": loopResult.Attempts,
-				"success":  false,
-			})
-			if finalValidation.After == nil && lastValidationErr != nil {
-				return lastValidationErr
-			}
-		}
 	} else {
 		stage = tracker.beginStage("agent_repair_loop")
 		tracker.endStageSuccess(stage, map[string]any{"status": "skipped"})
@@ -358,89 +268,4 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	}
 
 	return nil
-}
-
-func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, verificationBaseline verifycheck.Report, verificationDirs []string) (validationCycle, error) {
-	result := validationCycle{}
-	var logs strings.Builder
-
-	logs.WriteString("generate SBOM\n")
-	if err := generateSBOM(ctx, repo, cfg); err != nil {
-		result.Logs = logs.String()
-		return result, err
-	}
-
-	logs.WriteString("scan vulnerabilities\n")
-	after, err := scanVulnerabilities(ctx, repo, cfg)
-	if err != nil {
-		result.Logs = logs.String()
-		return result, err
-	}
-	result.After = after
-	fmt.Fprintf(&logs, "remaining findings with fix versions: %d\n", len(after.Findings))
-
-	if len(verificationBaseline.Modules) == 0 {
-		result.ValidationPassed = true
-		result.Logs = strings.TrimSpace(logs.String())
-		return result, nil
-	}
-
-	logs.WriteString("run verification checks\n")
-	verificationAfter, err := runVerificationChecks(ctx, repo, verificationDirs, cfg)
-	if err != nil {
-		result.Logs = strings.TrimSpace(logs.String())
-		return result, err
-	}
-	verificationAfter.Regressions = verifycheck.Compare(verificationBaseline, verificationAfter)
-	if err := report.WriteVerification(repo, verificationAfter); err != nil {
-		result.Logs = strings.TrimSpace(logs.String())
-		return result, err
-	}
-	result.Verification = verificationAfter
-
-	verifySummary := verifycheck.Summarize(verificationAfter)
-	result.ValidationPassed = verifySummary.Failed == 0 && verifySummary.Timeouts == 0 && len(verificationAfter.Regressions) == 0
-
-	verifycheck.PrintSummary(&logs, verificationAfter)
-	result.Logs = strings.TrimSpace(logs.String())
-	return result, nil
-}
-
-func readFileOrDefault(path, fallback string) string {
-	if strings.TrimSpace(path) == "" {
-		return fallback
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fallback
-	}
-	trimmed := strings.TrimSpace(string(data))
-	if trimmed == "" {
-		return fallback
-	}
-	return trimmed
-}
-
-func validationCommandsForPrompt(cfg *policy.Config) []string {
-	standard := []string{"go build ./...", "go test -run=^$ ./...", "go vet ./..."}
-	if cfg == nil || len(cfg.Verification.Commands) == 0 {
-		return standard
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(cfg.Verification.Mode))
-	commands := make([]string, 0)
-	if mode != policy.VerificationModeReplace {
-		commands = append(commands, standard...)
-	}
-	for _, command := range cfg.Verification.Commands {
-		run := strings.TrimSpace(command.Run)
-		if run == "" {
-			continue
-		}
-		commands = append(commands, run)
-	}
-	if len(commands) == 0 {
-		return standard
-	}
-	return commands
 }

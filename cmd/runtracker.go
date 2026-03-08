@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/moolen/patchpilot/report"
+	"github.com/moolen/patchpilot/internal/report"
 )
 
 type runTracker struct {

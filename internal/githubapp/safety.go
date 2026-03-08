@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/moolen/patchpilot/report"
-	"github.com/moolen/patchpilot/verifycheck"
+	"github.com/moolen/patchpilot/internal/report"
+	"github.com/moolen/patchpilot/internal/verifycheck"
 )
 
 type SafetyAssessment struct {

@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/moolen/patchpilot/policy"
+	"github.com/moolen/patchpilot/internal/policy"
 	"github.com/spf13/cobra"
 )
 

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/moolen/patchpilot/report"
+	"github.com/moolen/patchpilot/internal/report"
 )
 
 type failureGoldenCase struct {
