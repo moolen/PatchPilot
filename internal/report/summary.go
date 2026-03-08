@@ -10,14 +10,24 @@ import (
 )
 
 const (
-	baselineFile     = "baseline-findings.json"
-	summaryFile      = "summary.json"
-	maxPrintedIssues = 50
-	locationGoMod    = "go.mod"
-	locationDocker   = "dockerfile"
-	locationNPM      = "package.json"
-	locationPIP      = "requirements.txt"
-	locationMaven    = "pom.xml"
+	baselineFile       = "baseline-findings.json"
+	summaryFile        = "summary.json"
+	maxPrintedIssues   = 50
+	locationGoMod      = "go.mod"
+	locationDocker     = "dockerfile"
+	locationNPM        = "package.json"
+	locationNPMLock    = "package-lock.json"
+	locationPnpmLock   = "pnpm-lock.yaml"
+	locationYarnLock   = "yarn.lock"
+	locationPIP        = "requirements.txt"
+	locationPyProject  = "pyproject.toml"
+	locationPoetryLock = "poetry.lock"
+	locationUVLock     = "uv.lock"
+	locationMaven      = "pom.xml"
+	locationGradle     = "build.gradle"
+	locationCargo      = "Cargo.toml"
+	locationNuGet      = ".csproj"
+	locationComposer   = "composer.json"
 )
 
 type Summary struct {

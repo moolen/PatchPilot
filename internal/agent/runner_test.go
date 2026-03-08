@@ -29,6 +29,27 @@ func TestRunnerRunAttemptSuccess(t *testing.T) {
 	}
 }
 
+func TestRunnerRunAttemptInheritsParentEnv(t *testing.T) {
+	t.Setenv("AZURE_OPENAI_API_KEY", "unit-test-key")
+
+	temp := t.TempDir()
+	runner := Runner{Command: `test "$AZURE_OPENAI_API_KEY" = "unit-test-key"`}
+
+	result, err := runner.RunAttempt(context.Background(), AttemptRequest{
+		RepoPath:                 temp,
+		AttemptNumber:            1,
+		RemainingVulnerabilities: "{}",
+		WorkingDirectory:         temp,
+		PromptFilePath:           filepath.Join(temp, "prompt.txt"),
+	})
+	if err != nil {
+		t.Fatalf("RunAttempt returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("expected success result, got %#v", result)
+	}
+}
+
 func TestRunnerRunAttemptNonZeroExitIsAttemptFailure(t *testing.T) {
 	temp := t.TempDir()
 	runner := Runner{Command: `echo run-failed; exit 3`}

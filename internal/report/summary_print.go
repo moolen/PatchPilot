@@ -184,8 +184,38 @@ func classifyFileLocation(location string) string {
 	if base == "package.json" {
 		return locationNPM
 	}
+	if base == "package-lock.json" || base == "npm-shrinkwrap.json" {
+		return locationNPMLock
+	}
+	if strings.EqualFold(base, "pnpm-lock.yaml") {
+		return locationPnpmLock
+	}
+	if strings.EqualFold(base, "yarn.lock") {
+		return locationYarnLock
+	}
+	if strings.EqualFold(base, "composer.json") {
+		return locationComposer
+	}
 	if strings.EqualFold(base, "pom.xml") {
 		return locationMaven
+	}
+	if strings.EqualFold(base, "build.gradle") || strings.EqualFold(base, "build.gradle.kts") {
+		return locationGradle
+	}
+	if strings.EqualFold(base, "Cargo.toml") {
+		return locationCargo
+	}
+	if strings.HasSuffix(strings.ToLower(base), ".csproj") {
+		return locationNuGet
+	}
+	if strings.EqualFold(base, "pyproject.toml") {
+		return locationPyProject
+	}
+	if strings.EqualFold(base, "poetry.lock") {
+		return locationPoetryLock
+	}
+	if strings.EqualFold(base, "uv.lock") {
+		return locationUVLock
 	}
 	if strings.EqualFold(base, "requirements.txt") || (strings.HasPrefix(strings.ToLower(base), "requirements") && strings.HasSuffix(strings.ToLower(base), ".txt")) {
 		return locationPIP
@@ -203,11 +233,19 @@ func isFixable(finding vuln.Finding, fileLocation, reason string) bool {
 	case "deb", "apk", "rpm":
 		return fileLocation == locationDocker
 	case "npm":
-		return fileLocation == locationNPM
+		return fileLocation == locationNPM || fileLocation == locationNPMLock || fileLocation == locationPnpmLock || fileLocation == locationYarnLock
 	case "pypi", "pip", "python":
-		return fileLocation == locationPIP
+		return fileLocation == locationPIP || fileLocation == locationPyProject || fileLocation == locationPoetryLock || fileLocation == locationUVLock
 	case "maven", "java":
 		return fileLocation == locationMaven
+	case "gradle":
+		return fileLocation == locationGradle
+	case "cargo", "rust":
+		return fileLocation == locationCargo
+	case "nuget", ".net", "dotnet", "csharp", "c#":
+		return fileLocation == locationNuGet
+	case "composer", "php":
+		return fileLocation == locationComposer
 	default:
 		return false
 	}

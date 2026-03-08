@@ -69,7 +69,9 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 			"CVEFIX_PROMPT_FILE=" + req.PromptFilePath,
 			"CVEFIX_AGENT_ARTIFACT_DIR=" + filepath.Dir(req.PromptFilePath),
 		},
-		EnvAllowlist: execsafe.DefaultEnvAllowlist(),
+		// Agent harnesses may require provider credentials and other host settings.
+		// Inherit the parent environment, then overlay CVEFIX_* variables above.
+		EnvAllowlist: []string{"*"},
 	})
 	result := AttemptResult{Logs: strings.TrimSpace(runResult.Combined)}
 	if err == nil {
