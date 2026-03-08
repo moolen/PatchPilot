@@ -134,3 +134,5 @@ Each run writes state into `<repo>/.cvefix/`, including:
 ## Proof Of Work
 
 Against `~/dev/external-secrets/external-secrets`, the tool reduced the source-focused fixable vulnerability count from `22` to `0` after the direct and transitive Go-module passes.
+
+CI PR smoke check: 2026-03-08
