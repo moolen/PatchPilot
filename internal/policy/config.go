@@ -327,7 +327,7 @@ func mergePolicyValue(base, overlay any) any {
 	baseList, baseIsList := base.([]any)
 	overlayList, overlayIsList := overlay.([]any)
 	if baseIsList && overlayIsList {
-		merged := make([]any, 0, len(baseList)+len(overlayList))
+		merged := make([]any, 0, len(baseList))
 		for _, item := range baseList {
 			merged = append(merged, clonePolicyValue(item))
 		}

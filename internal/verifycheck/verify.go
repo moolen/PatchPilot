@@ -491,7 +491,10 @@ func verifyRequirementsFiles(dir string) error {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if !(name == "requirements.txt" || (strings.HasPrefix(name, "requirements") && strings.HasSuffix(name, ".txt"))) {
+		if !strings.HasSuffix(name, ".txt") {
+			continue
+		}
+		if name != "requirements.txt" && !strings.HasPrefix(name, "requirements") {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
