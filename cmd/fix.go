@@ -58,31 +58,31 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	}
 	defer restoreRegistry()
 
-	logProgress("step 1/11: generating SBOM")
+	logProgress("step 1/14: generating SBOM")
 	if err := generateSBOM(ctx, repo, cfg); err != nil {
 		return err
 	}
 
-	logProgress("step 2/11: scanning vulnerabilities (baseline)")
+	logProgress("step 2/14: scanning vulnerabilities (baseline)")
 	before, err := scanVulnerabilities(ctx, repo, cfg)
 	if err != nil {
 		return err
 	}
 	logProgress("baseline findings with fix versions: %d", len(before.Findings))
 
-	logProgress("step 3/11: writing scan baseline")
+	logProgress("step 3/14: writing scan baseline")
 	if err := report.WriteBaseline(repo, before); err != nil {
 		return err
 	}
 
-	logProgress("step 4/11: discovering modules for verification")
+	logProgress("step 4/14: discovering modules for verification")
 	verificationDirs, err := discoverVerificationDirs(repo, cfg)
 	if err != nil {
 		return err
 	}
 	logProgress("discovered %d module(s)", len(verificationDirs))
 
-	logProgress("step 5/11: running baseline verification checks")
+	logProgress("step 5/14: running baseline verification checks")
 	verificationBaseline, err := runVerificationChecks(ctx, repo, verificationDirs, cfg)
 	if err != nil {
 		return err
@@ -96,7 +96,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	deterministicIssues := make([]string, 0)
 	fileOptions := fileOptionsFromPolicy(cfg)
 
-	logProgress("step 6/11: applying Go runtime bumps")
+	logProgress("step 6/14: applying Go runtime bumps")
 	runtimePatches, err := fixer.ApplyGoRuntimeFixesWithOptions(ctx, repo, fileOptions)
 	if err != nil {
 		if !options.EnableAgent {
@@ -109,7 +109,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		logProgress("applied %d Go runtime bump(s)", len(runtimePatches))
 	}
 
-	logProgress("step 7/11: applying Go module fixes")
+	logProgress("step 7/14: applying Go module fixes")
 	goPatches, err := fixer.ApplyGoModuleFixesWithOptions(ctx, repo, before.Findings, fileOptions)
 	if err != nil {
 		if !options.EnableAgent {
@@ -122,7 +122,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		logProgress("applied %d Go patch(es)", len(goPatches))
 	}
 
-	logProgress("step 8/11: applying Dockerfile fixes")
+	logProgress("step 8/14: applying Dockerfile fixes")
 	dockerPatches, err := fixer.ApplyDockerfileFixesWithOptions(ctx, repo, before.Findings, dockerOptionsFromPolicy(cfg))
 	if err != nil {
 		if !options.EnableAgent {
@@ -135,7 +135,46 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		logProgress("applied %d Docker patch(es)", len(dockerPatches))
 	}
 
-	logProgress("step 9/11: validating post-fix state")
+	logProgress("step 9/14: applying npm fixes")
+	npmPatches, err := fixer.ApplyNPMFixesWithOptions(ctx, repo, before.Findings, fileOptions)
+	if err != nil {
+		if !options.EnableAgent {
+			return wrapWithExitCode(ExitCodePatchFailed, err)
+		}
+		issue := fmt.Sprintf("npm fixes failed: %v", err)
+		deterministicIssues = append(deterministicIssues, issue)
+		logProgress("%s", issue)
+	} else {
+		logProgress("applied %d npm patch(es)", len(npmPatches))
+	}
+
+	logProgress("step 10/14: applying pip fixes")
+	pipPatches, err := fixer.ApplyPIPFixesWithOptions(ctx, repo, before.Findings, fileOptions)
+	if err != nil {
+		if !options.EnableAgent {
+			return wrapWithExitCode(ExitCodePatchFailed, err)
+		}
+		issue := fmt.Sprintf("pip fixes failed: %v", err)
+		deterministicIssues = append(deterministicIssues, issue)
+		logProgress("%s", issue)
+	} else {
+		logProgress("applied %d pip patch(es)", len(pipPatches))
+	}
+
+	logProgress("step 11/14: applying maven fixes")
+	mavenPatches, err := fixer.ApplyMavenFixesWithOptions(ctx, repo, before.Findings, fileOptions)
+	if err != nil {
+		if !options.EnableAgent {
+			return wrapWithExitCode(ExitCodePatchFailed, err)
+		}
+		issue := fmt.Sprintf("maven fixes failed: %v", err)
+		deterministicIssues = append(deterministicIssues, issue)
+		logProgress("%s", issue)
+	} else {
+		logProgress("applied %d maven patch(es)", len(mavenPatches))
+	}
+
+	logProgress("step 12/14: validating post-fix state")
 	finalValidation, validationErr := runValidationCycle(ctx, repo, cfg, verificationBaseline, verificationDirs)
 	if validationErr != nil {
 		if !options.EnableAgent {
@@ -148,10 +187,13 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		logProgress("remaining findings with fix versions: %d", len(finalValidation.After.Findings))
 	}
 
-	allPatches := make([]fixer.Patch, 0, len(runtimePatches)+len(goPatches)+len(dockerPatches))
+	allPatches := make([]fixer.Patch, 0, len(runtimePatches)+len(goPatches)+len(dockerPatches)+len(npmPatches)+len(pipPatches)+len(mavenPatches))
 	allPatches = append(allPatches, runtimePatches...)
 	allPatches = append(allPatches, goPatches...)
 	allPatches = append(allPatches, dockerPatches...)
+	allPatches = append(allPatches, npmPatches...)
+	allPatches = append(allPatches, pipPatches...)
+	allPatches = append(allPatches, mavenPatches...)
 
 	agentSucceeded := false
 	shouldRunAgent := options.EnableAgent && (len(deterministicIssues) > 0 ||
