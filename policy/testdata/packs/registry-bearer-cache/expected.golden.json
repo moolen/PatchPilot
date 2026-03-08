@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "verification_mode": "append",
+  "verification_commands": null,
+  "post_execution_hooks": null,
+  "excluded_cves": null,
+  "excluded_vulnerabilities": null,
+  "scan_skip_paths": null,
+  "registry_cache_dir": ".cache/registry",
+  "registry_cache_ttl": "4h",
+  "registry_auth_mode": "bearer",
+  "registry_auth_token_env": "REGISTRY_TOKEN",
+  "docker_allowed_base_images": null,
+  "docker_disallowed_base_images": null,
+  "docker_base_image_patching": "auto",
+  "docker_os_package_patching": "auto"
+}

@@ -1,0 +1,5 @@
+version: 1
+docker:
+  patching:
+    base_images: AUTO
+    os_packages: DISABLED

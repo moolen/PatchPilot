@@ -1,0 +1,9 @@
+version: 1
+verification:
+  mode: replace
+  commands:
+    - name: unit
+      run: make test
+      timeout: 5m
+    - run: make verify
+      timeout: 90s

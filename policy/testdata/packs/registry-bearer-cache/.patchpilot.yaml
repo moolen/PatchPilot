@@ -1,0 +1,8 @@
+version: 1
+registry:
+  cache:
+    dir: .cache/registry
+    ttl: 4h
+  auth:
+    mode: bearer
+    token_env: REGISTRY_TOKEN

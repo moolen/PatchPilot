@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "verification_mode": "replace",
+  "verification_commands": [
+    {
+      "Name": "custom-1",
+      "Run": "make ci",
+      "Timeout": ""
+    }
+  ],
+  "post_execution_hooks": [
+    {
+      "Name": "hook-1",
+      "Run": "echo migrated",
+      "When": "always",
+      "FailOnError": false
+    }
+  ],
+  "excluded_cves": [
+    "CVE-1234"
+  ],
+  "excluded_vulnerabilities": null,
+  "scan_skip_paths": [
+    "examples/**"
+  ],
+  "registry_cache_dir": "",
+  "registry_cache_ttl": "",
+  "registry_auth_mode": "auto",
+  "registry_auth_token_env": "",
+  "docker_allowed_base_images": null,
+  "docker_disallowed_base_images": null,
+  "docker_base_image_patching": "auto",
+  "docker_os_package_patching": "auto"
+}

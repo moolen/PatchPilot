@@ -1,0 +1,5 @@
+version: 1
+verification:
+  commands:
+    - run: make verify
+      timeout: not-a-duration

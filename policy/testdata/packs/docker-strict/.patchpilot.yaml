@@ -1,0 +1,12 @@
+version: 1
+docker:
+  allowed_base_images:
+    - golang:*
+    - cgr.dev/chainguard/*
+    - golang:*
+  disallowed_base_images:
+    - ubuntu:latest
+    - ubuntu:latest
+  patching:
+    base_images: disabled
+    os_packages: auto

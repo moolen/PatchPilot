@@ -1,0 +1,14 @@
+version: 1
+postExecution:
+  commands:
+    - run: echo migrated
+verificationMode: replace
+verification:
+  commands:
+    - command: make ci
+skip_paths:
+  - ./examples/**
+  - examples/**
+excludes:
+  cves:
+    - CVE-1234

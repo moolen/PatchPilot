@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "verification_mode": "append",
+  "verification_commands": null,
+  "post_execution_hooks": null,
+  "excluded_cves": null,
+  "excluded_vulnerabilities": null,
+  "scan_skip_paths": null,
+  "registry_cache_dir": "",
+  "registry_cache_ttl": "",
+  "registry_auth_mode": "auto",
+  "registry_auth_token_env": "",
+  "docker_allowed_base_images": [
+    "cgr.dev/chainguard/*",
+    "golang:*"
+  ],
+  "docker_disallowed_base_images": [
+    "ubuntu:latest"
+  ],
+  "docker_base_image_patching": "disabled",
+  "docker_os_package_patching": "auto"
+}
