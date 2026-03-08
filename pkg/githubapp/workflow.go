@@ -48,7 +48,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 		return
 	}
 
-	service.postIssueComment(ctx, client, owner, repo, issueNumber, "PatchPilot started remediation with `cvefix fix`.")
+	service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationStartedComment())
 
 	existingPR, _, err := service.findOpenRemediationPR(ctx, client, owner, repo, defaultBranch)
 	if err != nil {
@@ -63,7 +63,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	if err != nil {
 		service.metrics.IncFix("failed")
 		service.metrics.IncFailure("fix_workflow")
-		service.postIssueComment(ctx, client, owner, repo, issueNumber, fmt.Sprintf("PatchPilot remediation failed: %v", err))
+		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationFailedComment(err))
 		return
 	}
 	if result.BlockedReason != "" {
@@ -74,15 +74,14 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 			owner,
 			repo,
 			issueNumber,
-			fmt.Sprintf("PatchPilot blocked PR creation due to safety policy: %s (risk score: %d).", result.BlockedReason, result.RiskScore),
+			remediationBlockedComment(result.BlockedReason, result.RiskScore),
 		)
 		return
 	}
 
 	if !result.Changed {
 		service.metrics.IncFix("nochange")
-		message := fmt.Sprintf("PatchPilot finished. No file changes were needed (cvefix exit code `%d`).", result.ExitCode)
-		service.postIssueComment(ctx, client, owner, repo, issueNumber, message)
+		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationNoChangesComment(result.ExitCode))
 		return
 	}
 
@@ -95,7 +94,7 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	if err != nil {
 		service.metrics.IncFix("failed")
 		service.metrics.IncFailure("pr_upsert")
-		service.postIssueComment(ctx, client, owner, repo, issueNumber, fmt.Sprintf("PatchPilot applied changes but failed to create PR: %v", err))
+		service.postIssueComment(ctx, client, owner, repo, issueNumber, remediationPRUpsertFailedComment(err))
 		return
 	}
 	service.metrics.IncFix("changed")
@@ -104,16 +103,11 @@ func (service *Service) processIssueComment(event *github.IssueCommentEvent, ins
 	if created {
 		action = "opened"
 	}
-	message := fmt.Sprintf("PatchPilot %s remediation PR: %s", action, pr.GetHTMLURL())
+	autoMergeErr := error(nil)
 	if command.AutoMerge && service.cfg.EnableAutoMerge {
-		if err := service.enablePRAutoMerge(ctx, token, pr.GetNodeID()); err != nil {
-			message += fmt.Sprintf("\n\n`--auto-merge` requested, but enabling auto-merge failed: %v", err)
-		} else {
-			message += "\n\n`--auto-merge` requested and enabled."
-		}
-	} else if command.AutoMerge {
-		message += "\n\n`--auto-merge` was requested, but PP_ENABLE_AUTO_MERGE is disabled."
+		autoMergeErr = service.enablePRAutoMerge(ctx, token, pr.GetNodeID())
 	}
+	message := remediationPRReadyComment(action, pr.GetHTMLURL(), command.AutoMerge, service.cfg.EnableAutoMerge, autoMergeErr)
 	service.postIssueComment(ctx, client, owner, repo, issueNumber, message)
 }
 

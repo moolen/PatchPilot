@@ -139,7 +139,7 @@ func (service *Service) handleIssueCommentEvent(deliveryID string, event *github
 				event.GetRepo().GetOwner().GetLogin(),
 				event.GetRepo().GetName(),
 				event.GetIssue().GetNumber(),
-				fmt.Sprintf("Invalid PatchPilot command: %v", err),
+				invalidCommandComment(err),
 			)
 		}
 		service.log("warn", "invalid slash command", map[string]interface{}{"delivery_id": deliveryID, "error": err.Error()})
