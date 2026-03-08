@@ -63,6 +63,7 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 		"CVEFIX_REPO_PATH="+req.RepoPath,
 		fmt.Sprintf("CVEFIX_ATTEMPT_NUMBER=%d", req.AttemptNumber),
 		"CVEFIX_PROMPT_FILE="+req.PromptFilePath,
+		"CVEFIX_AGENT_ARTIFACT_DIR="+filepath.Dir(req.PromptFilePath),
 	)
 
 	err := command.Run()

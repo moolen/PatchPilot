@@ -55,6 +55,9 @@ func TestFixHelpShowsAgentFlags(t *testing.T) {
 	if !strings.Contains(text, "--agent-max-attempts") {
 		t.Fatalf("expected --agent-max-attempts in help output, got:\n%s", text)
 	}
+	if !strings.Contains(text, "--agent-artifact-dir") {
+		t.Fatalf("expected --agent-artifact-dir in help output, got:\n%s", text)
+	}
 }
 
 func TestResolveRepoRejectsMutuallyExclusiveFlags(t *testing.T) {

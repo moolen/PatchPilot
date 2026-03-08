@@ -20,6 +20,7 @@ type fixOptions struct {
 	EnableAgent      bool
 	AgentCommand     string
 	AgentMaxAttempts int
+	AgentArtifactDir string
 }
 
 type validationCycle struct {
@@ -222,10 +223,17 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		}
 		loop := agentpkg.Loop{Agent: runner}
 
+		artifactDir := strings.TrimSpace(options.AgentArtifactDir)
+		if artifactDir == "" {
+			artifactDir = filepath.Join(repo, ".cvefix", "agent")
+		} else if !filepath.IsAbs(artifactDir) {
+			artifactDir = filepath.Join(repo, artifactDir)
+		}
+
 		loopResult, loopErr := loop.Run(ctx, agentpkg.LoopRequest{
 			RepoPath:                        repo,
 			WorkingDirectory:                repo,
-			ArtifactDirectory:               filepath.Join(repo, ".cvefix", "agent"),
+			ArtifactDirectory:               artifactDir,
 			MaxAttempts:                     options.AgentMaxAttempts,
 			InitialVulnerabilityCount:       initialVulnCount,
 			InitialRemainingVulnerabilities: initialVulnJSON,
