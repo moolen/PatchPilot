@@ -216,7 +216,7 @@ func readFileOrDefault(path, fallback string) string {
 }
 
 func validationCommandsForPrompt(cfg *policy.Config) []string {
-	standard := []string{"go build ./...", "go test -run=^$ ./...", "go vet ./..."}
+	standard := []string{"go build ./...", "go test -run=^$ ./..."}
 	if cfg == nil || len(cfg.Verification.Commands) == 0 {
 		return standard
 	}

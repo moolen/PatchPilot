@@ -71,7 +71,7 @@ func TestOptionsFromPolicy(t *testing.T) {
 }
 
 func TestValidationCommandsForPrompt(t *testing.T) {
-	standard := []string{"go build ./...", "go test -run=^$ ./...", "go vet ./..."}
+	standard := []string{"go build ./...", "go test -run=^$ ./..."}
 
 	if got := validationCommandsForPrompt(nil); !reflect.DeepEqual(got, standard) {
 		t.Fatalf("unexpected commands for nil config: %#v", got)
