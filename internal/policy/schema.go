@@ -134,6 +134,19 @@ func SchemaJSON() []byte {
           }
         }
       }
+    },
+    "go": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "patching": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "runtime": { "type": "string", "enum": ["disabled", "toolchain", "minimum"] }
+          }
+        }
+      }
     }
   }
 }`)

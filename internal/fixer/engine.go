@@ -24,13 +24,12 @@ func (engine engineFunc) Apply(ctx context.Context, repo string, findings []vuln
 	return engine.apply(ctx, repo, findings)
 }
 
-func DefaultEngines(fileOptions FileOptions, dockerOptions DockerfileOptions) []Engine {
+func DefaultEngines(fileOptions FileOptions, dockerOptions DockerfileOptions, goRuntimeOptions GoRuntimeOptions) []Engine {
 	return []Engine{
 		engineFunc{
 			name: "go_runtime",
 			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
-				_ = findings
-				return ApplyGoRuntimeFixesWithOptions(ctx, repo, fileOptions)
+				return ApplyGoRuntimeFixesWithOptions(ctx, repo, findings, goRuntimeOptions)
 			},
 		},
 		engineFunc{

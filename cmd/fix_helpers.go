@@ -15,12 +15,12 @@ import (
 	"github.com/moolen/patchpilot/internal/vuln"
 )
 
-func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
+func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
 	patches := make([]fixer.Patch, 0)
 	issues := make([]string, 0)
 	engineDetails := map[string]any{}
 
-	for _, engine := range fixer.DefaultEngines(fileOptions, dockerOptions) {
+	for _, engine := range fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions) {
 		enginePatches, applyErr := engine.Apply(ctx, repo, findings)
 		if applyErr != nil {
 			if !allowFailures {

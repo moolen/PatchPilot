@@ -22,6 +22,9 @@ func TestLoadMissingPolicyReturnsDefaults(t *testing.T) {
 	if cfg.Registry.Auth.Mode != RegistryAuthAuto {
 		t.Fatalf("expected registry auth auto mode, got %q", cfg.Registry.Auth.Mode)
 	}
+	if cfg.Go.Patching.Runtime != GoRuntimePatchMinimum {
+		t.Fatalf("expected go runtime patch mode %q, got %q", GoRuntimePatchMinimum, cfg.Go.Patching.Runtime)
+	}
 }
 
 func TestLoadRejectsUnknownField(t *testing.T) {
@@ -71,6 +74,9 @@ docker:
   patching:
     base_images: disabled
     os_packages: auto
+go:
+  patching:
+    runtime: toolchain
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write policy file: %v", err)
@@ -97,6 +103,9 @@ docker:
 	}
 	if cfg.Docker.Patching.BaseImages != DockerPatchDisabled {
 		t.Fatalf("unexpected docker base patch mode: %q", cfg.Docker.Patching.BaseImages)
+	}
+	if cfg.Go.Patching.Runtime != GoRuntimePatchToolchain {
+		t.Fatalf("unexpected go runtime patch mode: %q", cfg.Go.Patching.Runtime)
 	}
 }
 
@@ -174,6 +183,8 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"skip_paths"`,
 		`"expires_at"`,
 		`"cve_rules"`,
+		`"go"`,
+		`"runtime"`,
 	} {
 		if !strings.Contains(schema, expected) {
 			t.Fatalf("expected schema to contain %q, got:\n%s", expected, schema)
