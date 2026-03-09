@@ -30,6 +30,10 @@ const (
 	DockerPatchAuto     = "auto"
 	DockerPatchDisabled = "disabled"
 
+	GoRuntimePatchDisabled  = "disabled"
+	GoRuntimePatchToolchain = "toolchain"
+	GoRuntimePatchMinimum   = "minimum"
+
 	LoadModeMerge    = "merge"
 	LoadModeOverride = "override"
 )
@@ -42,6 +46,15 @@ type Config struct {
 	Scan          ScanPolicy          `yaml:"scan"`
 	Registry      RegistryPolicy      `yaml:"registry"`
 	Docker        DockerPolicy        `yaml:"docker"`
+	Go            GoPolicy            `yaml:"go"`
+}
+
+type GoPolicy struct {
+	Patching GoPatchingPolicy `yaml:"patching"`
+}
+
+type GoPatchingPolicy struct {
+	Runtime string `yaml:"runtime"`
 }
 
 type VerificationPolicy struct {
@@ -134,6 +147,11 @@ func Default() *Config {
 			Patching: DockerPatchingPolicy{
 				BaseImages: DockerPatchAuto,
 				OSPackages: DockerPatchAuto,
+			},
+		},
+		Go: GoPolicy{
+			Patching: GoPatchingPolicy{
+				Runtime: GoRuntimePatchMinimum,
 			},
 		},
 	}
@@ -575,6 +593,14 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 	if cfg.Docker.Patching.OSPackages != DockerPatchAuto && cfg.Docker.Patching.OSPackages != DockerPatchDisabled {
 		return fmt.Errorf("docker.patching.os_packages must be %q or %q", DockerPatchAuto, DockerPatchDisabled)
+	}
+
+	cfg.Go.Patching.Runtime = normalizeLower(cfg.Go.Patching.Runtime)
+	if cfg.Go.Patching.Runtime == "" {
+		cfg.Go.Patching.Runtime = GoRuntimePatchMinimum
+	}
+	if cfg.Go.Patching.Runtime != GoRuntimePatchDisabled && cfg.Go.Patching.Runtime != GoRuntimePatchToolchain && cfg.Go.Patching.Runtime != GoRuntimePatchMinimum {
+		return fmt.Errorf("go.patching.runtime must be %q, %q, or %q", GoRuntimePatchDisabled, GoRuntimePatchToolchain, GoRuntimePatchMinimum)
 	}
 
 	return nil

@@ -78,6 +78,16 @@ func dockerOptionsFromPolicy(cfg *policy.Config) fixer.DockerfileOptions {
 	}
 }
 
+func goRuntimeOptionsFromPolicy(cfg *policy.Config) fixer.GoRuntimeOptions {
+	if cfg == nil {
+		return fixer.GoRuntimeOptions{Mode: fixer.GoRuntimeModeMinimum}
+	}
+	return fixer.GoRuntimeOptions{
+		SkipPaths: append([]string(nil), cfg.Scan.SkipPaths...),
+		Mode:      cfg.Go.Patching.Runtime,
+	}
+}
+
 func discoverVerificationDirs(repo string, cfg *policy.Config) ([]string, error) {
 	if cfg == nil {
 		return verifycheck.DiscoverModuleDirs(repo)

@@ -63,7 +63,8 @@ Policy controls include:
 - vulnerability/CVE excludes,
 - skip-paths for scanning/module discovery/fixers,
 - registry cache/auth configuration for Docker tag/digest resolution,
-- Docker base-image allow/deny policy and patch strategy toggles.
+- Docker base-image allow/deny policy and patch strategy toggles,
+- Go runtime remediation policy (`disabled`, `toolchain`, `minimum`).
 
 ## Requirements
 
@@ -192,7 +193,13 @@ docker:
   patching:
     base_images: auto # auto | disabled
     os_packages: auto # auto | disabled
+
+go:
+  patching:
+    runtime: minimum # disabled | toolchain | minimum
 ```
+
+Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a patched local toolchain without hard-raising the declared minimum Go version. Use `minimum` for applications or enterprise environments that want to require the patched Go version everywhere.
 
 Policy parsing is strict after applying built-in legacy migrations (for example `postExecution` -> `post_execution`, `verification.commands[].command` -> `run`, and top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
 

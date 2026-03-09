@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/moolen/patchpilot/internal/fixer"
 	"github.com/moolen/patchpilot/internal/policy"
 )
 
@@ -34,6 +35,9 @@ func TestOptionsFromPolicy(t *testing.T) {
 				BaseImages: policy.DockerPatchDisabled,
 				OSPackages: policy.DockerPatchAuto,
 			},
+		},
+		Go: policy.GoPolicy{
+			Patching: policy.GoPatchingPolicy{Runtime: policy.GoRuntimePatchToolchain},
 		},
 	}
 
@@ -67,6 +71,14 @@ func TestOptionsFromPolicy(t *testing.T) {
 	}
 	if !reflect.DeepEqual(dockerOptions.DisallowedBaseImages, []string{"ubuntu:latest"}) {
 		t.Fatalf("unexpected disallowed base images: %#v", dockerOptions.DisallowedBaseImages)
+	}
+
+	goRuntimeOptions := goRuntimeOptionsFromPolicy(cfg)
+	if goRuntimeOptions.Mode != fixer.GoRuntimeModeToolchain {
+		t.Fatalf("unexpected go runtime mode: %q", goRuntimeOptions.Mode)
+	}
+	if !reflect.DeepEqual(goRuntimeOptions.SkipPaths, []string{"vendor/**", "examples/**"}) {
+		t.Fatalf("unexpected go runtime skip paths: %#v", goRuntimeOptions.SkipPaths)
 	}
 }
 

@@ -133,6 +133,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	fileOptions := fileOptionsFromPolicy(cfg)
 	dockerOptions := dockerOptionsFromPolicy(cfg)
+	goRuntimeOptions := goRuntimeOptionsFromPolicy(cfg)
 
 	logProgress("applying deterministic fixes")
 	stage = tracker.beginStage("apply_deterministic_fixes")
@@ -142,6 +143,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		before.Findings,
 		fileOptions,
 		dockerOptions,
+		goRuntimeOptions,
 		options.EnableAgent,
 	)
 	if err != nil {

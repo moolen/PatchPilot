@@ -14,6 +14,14 @@ import (
 	"time"
 
 	"golang.org/x/mod/modfile"
+
+	"github.com/moolen/patchpilot/internal/vuln"
+)
+
+const (
+	GoRuntimeModeDisabled  = "disabled"
+	GoRuntimeModeToolchain = "toolchain"
+	GoRuntimeModeMinimum   = "minimum"
 )
 
 var (
@@ -21,6 +29,11 @@ var (
 	goReleaseAPIURL                   = "https://go.dev/dl/?mode=json"
 	fetchSupportedGoPatchVersionsFunc = fetchSupportedGoPatchVersions
 )
+
+type GoRuntimeOptions struct {
+	SkipPaths []string
+	Mode      string
+}
 
 type goPatchVersion struct {
 	Major int
@@ -59,17 +72,21 @@ func (version goPatchVersion) compare(other goPatchVersion) int {
 }
 
 func ApplyGoRuntimeFixes(ctx context.Context, repo string) ([]Patch, error) {
-	return ApplyGoRuntimeFixesWithOptions(ctx, repo, FileOptions{})
+	return ApplyGoRuntimeFixesWithOptions(ctx, repo, []vuln.Finding{{Package: "stdlib", Ecosystem: "golang"}}, GoRuntimeOptions{Mode: GoRuntimeModeMinimum})
 }
 
-func ApplyGoRuntimeFixesWithOptions(ctx context.Context, repo string, options FileOptions) ([]Patch, error) {
+func ApplyGoRuntimeFixesWithOptions(ctx context.Context, repo string, findings []vuln.Finding, options GoRuntimeOptions) ([]Patch, error) {
 	if goRuntimeBumpsDisabled() {
+		return nil, nil
+	}
+	mode := normalizeGoRuntimeMode(options.Mode)
+	if mode == GoRuntimeModeDisabled || !hasGoRuntimeFinding(findings) {
 		return nil, nil
 	}
 
 	goMods, err := findFilesWithOptions(repo, func(path string, entry os.DirEntry) bool {
 		return entry.Name() == "go.mod"
-	}, options)
+	}, FileOptions{SkipPaths: options.SkipPaths})
 	if err != nil {
 		return nil, err
 	}
@@ -91,14 +108,14 @@ func ApplyGoRuntimeFixesWithOptions(ctx context.Context, repo string, options Fi
 	vendorDirs := map[string]struct{}{}
 
 	for _, goModPath := range goMods {
-		patch, changed, err := patchGoRuntimeDirective(goModPath, supportedByLine)
+		directPatches, changed, err := patchGoRuntimeDirective(goModPath, supportedByLine, mode)
 		if err != nil {
 			return nil, err
 		}
 		if !changed {
 			continue
 		}
-		patches = append(patches, patch)
+		patches = append(patches, directPatches...)
 		moduleDir := filepath.Dir(goModPath)
 		modifiedDirs[moduleDir] = struct{}{}
 		if hasVendorDir(moduleDir) {
@@ -144,52 +161,110 @@ func goRuntimeBumpsDisabled() bool {
 	}
 }
 
-func patchGoRuntimeDirective(path string, supportedByLine map[string]goPatchVersion) (Patch, bool, error) {
+func hasGoRuntimeFinding(findings []vuln.Finding) bool {
+	for _, finding := range findings {
+		if finding.Ecosystem == "golang" && finding.Package == "stdlib" {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeGoRuntimeMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", GoRuntimeModeMinimum:
+		return GoRuntimeModeMinimum
+	case GoRuntimeModeDisabled:
+		return GoRuntimeModeDisabled
+	case GoRuntimeModeToolchain:
+		return GoRuntimeModeToolchain
+	default:
+		return GoRuntimeModeMinimum
+	}
+}
+
+func patchGoRuntimeDirective(path string, supportedByLine map[string]goPatchVersion, mode string) ([]Patch, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Patch{}, false, fmt.Errorf("read %s: %w", path, err)
+		return nil, false, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	parsed, err := modfile.Parse(path, data, nil)
 	if err != nil {
-		return Patch{}, false, fmt.Errorf("parse %s: %w", path, err)
+		return nil, false, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if parsed.Go == nil {
-		return Patch{}, false, nil
+		return nil, false, nil
 	}
 
 	currentRaw := parsed.Go.Version
 	current, ok := parseGoDirectiveVersion(currentRaw)
 	if !ok {
 		warnGoFix("skipping Go runtime bump for %s: cannot parse go directive %q", path, currentRaw)
-		return Patch{}, false, nil
+		return nil, false, nil
 	}
 
 	target, shouldBump := chooseTargetGoVersion(current, supportedByLine)
 	if !shouldBump {
-		return Patch{}, false, nil
+		return nil, false, nil
 	}
 
-	if err := parsed.AddGoStmt(target.String()); err != nil {
-		return Patch{}, false, fmt.Errorf("update go directive in %s: %w", path, err)
+	patches := make([]Patch, 0, 2)
+	switch mode {
+	case GoRuntimeModeToolchain:
+		targetToolchain := "go" + target.String()
+		currentToolchain := ""
+		if parsed.Toolchain != nil {
+			currentToolchain = parsed.Toolchain.Name
+		}
+		if currentToolchain == targetToolchain {
+			return nil, false, nil
+		}
+		if err := parsed.AddToolchainStmt(targetToolchain); err != nil {
+			return nil, false, fmt.Errorf("update toolchain directive in %s: %w", path, err)
+		}
+		patches = append(patches, Patch{
+			Manager: "goruntime",
+			Target:  path,
+			Package: "go-toolchain",
+			From:    currentToolchain,
+			To:      targetToolchain,
+		})
+	case GoRuntimeModeMinimum:
+		if err := parsed.AddGoStmt(target.String()); err != nil {
+			return nil, false, fmt.Errorf("update go directive in %s: %w", path, err)
+		}
+		patches = append(patches, Patch{
+			Manager: "goruntime",
+			Target:  path,
+			Package: "go",
+			From:    currentRaw,
+			To:      target.String(),
+		})
+		if parsed.Toolchain != nil && parsed.Toolchain.Name == "go"+target.String() {
+			patches = append(patches, Patch{
+				Manager: "goruntime",
+				Target:  path,
+				Package: "go-toolchain",
+				From:    parsed.Toolchain.Name,
+				To:      "",
+			})
+			parsed.DropToolchainStmt()
+		}
+	default:
+		return nil, false, nil
 	}
 	parsed.Cleanup()
 
 	formatted, err := parsed.Format()
 	if err != nil {
-		return Patch{}, false, fmt.Errorf("format %s: %w", path, err)
+		return nil, false, fmt.Errorf("format %s: %w", path, err)
 	}
 	if err := os.WriteFile(path, formatted, 0o644); err != nil {
-		return Patch{}, false, fmt.Errorf("write %s: %w", path, err)
+		return nil, false, fmt.Errorf("write %s: %w", path, err)
 	}
 
-	return Patch{
-		Manager: "goruntime",
-		Target:  path,
-		Package: "go",
-		From:    currentRaw,
-		To:      target.String(),
-	}, true, nil
+	return patches, true, nil
 }
 
 func fetchSupportedGoPatchVersions(ctx context.Context) (map[string]goPatchVersion, error) {
