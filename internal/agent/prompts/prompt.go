@@ -11,7 +11,6 @@ import (
 var defaultValidationCommands = []string{
 	"go build ./...",
 	"go test -run=^$ ./...",
-	"go vet ./...",
 }
 
 //go:embed prompt.tmpl

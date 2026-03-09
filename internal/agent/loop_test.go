@@ -20,7 +20,7 @@ func TestLoopRunPersistsArtifactsAndStopsOnSuccess(t *testing.T) {
 		MaxAttempts:                     5,
 		InitialVulnerabilityCount:       3,
 		InitialRemainingVulnerabilities: `{"matches":[{"id":"CVE-1"}]}`,
-		ValidationCommands:              []string{"go build ./...", "go test -run=^$ ./...", "go vet ./..."},
+		ValidationCommands:              []string{"go build ./...", "go test -run=^$ ./..."},
 		Validate: func(ctx context.Context, attemptNumber int) (ValidationResult, error) {
 			attempts++
 			if attemptNumber == 1 {

@@ -23,7 +23,6 @@ func TestBuildPromptIncludesCoreSections(t *testing.T) {
 		"Verification commands:",
 		"go build ./...",
 		"go test -run=^$ ./...",
-		"go vet ./...",
 		"Attempt number: 2",
 	}
 	for _, check := range checks {
