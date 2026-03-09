@@ -123,6 +123,8 @@ Defaults and controls:
 Create `<repo>/.patchpilot.yaml` to control behavior per repository.
 Use `--policy` to add a central baseline policy on top.
 
+Full example (`.patchpilot.yaml`, all supported top-level keys):
+
 ```yaml
 version: 1
 
@@ -132,6 +134,9 @@ verification:
     - name: lint
       run: make lint
       timeout: 4m
+    - name: integration
+      run: make test-integration
+      timeout: 15m
 
 post_execution:
   commands:
@@ -139,12 +144,19 @@ post_execution:
       run: rm -rf .tmp-work
       when: always # always | success | failure
       fail_on_error: false
+    - name: notify-on-failure
+      run: ./scripts/notify-slack.sh
+      when: failure
+      fail_on_error: true
 
 exclude:
   cves:
     - CVE-2025-12345
   cve_rules:
     - id: CVE-2025-22222
+      package: github.com/example/legacy-lib
+      ecosystem: golang
+      path: services/api/go.mod
       reason: pending upstream patch
       owner: team-security
       expires_at: 2026-12-31
@@ -161,18 +173,19 @@ scan:
   skip_paths:
     - vendor/**
     - examples/legacy/**
+    - third_party/**
 
 registry:
   cache:
     dir: .patchpilot-cache/registry
     ttl: 4h
   auth:
-    mode: auto # auto | none | bearer
+    mode: bearer # auto | none | bearer
     token_env: REGISTRY_TOKEN # required when mode=bearer
 
 docker:
   allowed_base_images:
-    - golang:*
+    - golang:1.24-alpine
     - cgr.dev/chainguard/*
   disallowed_base_images:
     - ubuntu:latest
