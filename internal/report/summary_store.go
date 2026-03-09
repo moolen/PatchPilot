@@ -17,7 +17,7 @@ func WriteBaseline(repo string, baseline *vuln.Report) error {
 	if err != nil {
 		return fmt.Errorf("marshal baseline: %w", err)
 	}
-	path := filepath.Join(repo, ".cvefix", baselineFile)
+	path := filepath.Join(repo, ".patchpilot", baselineFile)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write baseline: %w", err)
 	}
@@ -25,7 +25,7 @@ func WriteBaseline(repo string, baseline *vuln.Report) error {
 }
 
 func ReadBaseline(repo string) (*vuln.Report, error) {
-	data, err := os.ReadFile(filepath.Join(repo, ".cvefix", baselineFile))
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", baselineFile))
 	if err != nil {
 		return nil, fmt.Errorf("read baseline: %w", err)
 	}
@@ -44,7 +44,7 @@ func WriteSummary(repo string, summary Summary) error {
 	if err != nil {
 		return fmt.Errorf("marshal summary: %w", err)
 	}
-	path := filepath.Join(repo, ".cvefix", summaryFile)
+	path := filepath.Join(repo, ".patchpilot", summaryFile)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write summary: %w", err)
 	}
@@ -52,7 +52,7 @@ func WriteSummary(repo string, summary Summary) error {
 }
 
 func ensureStateDir(repo string) error {
-	if err := os.MkdirAll(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
 		return fmt.Errorf("create state dir: %w", err)
 	}
 	return nil

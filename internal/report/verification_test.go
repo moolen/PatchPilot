@@ -10,8 +10,8 @@ import (
 
 func TestWriteAndReadVerificationBaseline(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(repo+"/.cvefix", 0o755); err != nil {
-		t.Fatalf("mkdir .cvefix: %v", err)
+	if err := os.MkdirAll(repo+"/.patchpilot", 0o755); err != nil {
+		t.Fatalf("mkdir .patchpilot: %v", err)
 	}
 	input := verifycheck.Report{Mode: verifycheck.ModeStandard, Modules: []verifycheck.ModuleResult{{Dir: "/repo/a"}}}
 	if err := WriteVerificationBaseline(repo, input); err != nil {
@@ -32,7 +32,7 @@ func TestWriteVerificationCreatesStateDir(t *testing.T) {
 	if err := WriteVerification(repo, input); err != nil {
 		t.Fatalf("WriteVerification returned error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".cvefix", verificationFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(repo, ".patchpilot", verificationFile)); err != nil {
 		t.Fatalf("expected verification file to exist: %v", err)
 	}
 }

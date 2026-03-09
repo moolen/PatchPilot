@@ -135,7 +135,7 @@ func ApplyGoRuntimeFixesWithOptions(ctx context.Context, repo string, options Fi
 }
 
 func goRuntimeBumpsDisabled() bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv("CVEFIX_DISABLE_GO_RUNTIME_BUMPS")))
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("PATCHPILOT_DISABLE_GO_RUNTIME_BUMPS")))
 	switch value {
 	case "1", "true", "yes", "on":
 		return true

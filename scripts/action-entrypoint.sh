@@ -41,7 +41,7 @@ if [[ -n "${extra_args}" ]]; then
 fi
 
 set +e
-cvefix "${command}" "${args[@]}"
+patchpilot "${command}" "${args[@]}"
 exit_code=$?
 set -e
 
@@ -54,8 +54,8 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
 		repo_dir="${dir:-.}"
 		if [[ -d "${repo_dir}" ]]; then
 			repo_abs="$(cd "${repo_dir}" && pwd)"
-			sarif_path="${repo_abs}/.cvefix/findings.sarif"
-			summary_path="${repo_abs}/.cvefix/summary.json"
+			sarif_path="${repo_abs}/.patchpilot/findings.sarif"
+			summary_path="${repo_abs}/.patchpilot/summary.json"
 			if [[ -f "${sarif_path}" ]]; then
 				echo "sarif-path=${sarif_path}" >> "${GITHUB_OUTPUT}"
 			else

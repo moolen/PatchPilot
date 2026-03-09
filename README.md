@@ -1,15 +1,15 @@
-# cvefix
+# PatchPilot
 
-`cvefix` is a Go CLI that fixes known vulnerabilities in a source repository by upgrading only the minimal dependency versions required by `grype` findings.
+`PatchPilot` is a Go CLI that fixes known vulnerabilities in a source repository by upgrading only the minimal dependency versions required by `grype` findings.
 
 It uses existing security tooling for discovery and keeps remediation narrow: no custom CVE database, no feature-chasing upgrades, and no unnecessary version bumps.
 
 ## Commands
 
-- `cvefix scan [repo]`: generate an SBOM with `syft`, scan it with `grype`, and write normalized findings to `<repo>/.cvefix/`.
-- `cvefix fix [repo]`: scan, apply minimal dependency fixes, run standard verification across discovered Go modules, re-scan, and write summaries into `<repo>/.cvefix/`.
-- `cvefix verify [repo]`: re-run the scan and standard verification checks, then compare against the saved baselines.
-- `cvefix schema`: print the JSON schema for `.patchpilot.yaml` (useful for editor validation/CI checks).
+- `patchpilot scan [repo]`: generate an SBOM with `syft`, scan it with `grype`, and write normalized findings to `<repo>/.patchpilot/`.
+- `patchpilot fix [repo]`: scan, apply minimal dependency fixes, run standard verification across discovered Go modules, re-scan, and write summaries into `<repo>/.patchpilot/`.
+- `patchpilot verify [repo]`: re-run the scan and standard verification checks, then compare against the saved baselines.
+- `patchpilot schema`: print the JSON schema for `.patchpilot.yaml` (useful for editor validation/CI checks).
 
 Global flags:
 
@@ -32,8 +32,8 @@ When multiple failure conditions apply, precedence is: scan/patch failures first
 
 ## How it works
 
-1. Generate an SBOM with `syft` into `.cvefix/sbom.json`.
-2. Scan the SBOM with `grype` into `.cvefix/vulns.json`.
+1. Generate an SBOM with `syft` into `.patchpilot/sbom.json`.
+2. Scan the SBOM with `grype` into `.patchpilot/vulns.json`.
 3. Normalize only findings that include a known fix version.
 4. Apply direct Go fixes with `golang.org/x/mod/modfile`.
 5. Apply transitive Go fixes with `go list -m all` plus `go get module@fixedVersion` when a vulnerable module is present in the module build list.
@@ -83,7 +83,7 @@ Build both binaries locally:
 make build
 ```
 
-- `bin/cvefix`: CLI tool
+- `bin/patchpilot`: PatchPilot CLI binary
 - `bin/patchpilot-app`: webhook service for GitHub App automation
 
 GitHub App utility commands:
@@ -94,18 +94,18 @@ GitHub App utility commands:
 ## Example
 
 ```bash
-go run ./cmd/cvefix scan ~/dev/external-secrets/external-secrets
-go run ./cmd/cvefix fix ~/dev/external-secrets/external-secrets
-go run ./cmd/cvefix verify ~/dev/external-secrets/external-secrets
-go run ./cmd/cvefix scan --dir ~/dev/external-secrets/external-secrets
-go run ./cmd/cvefix fix --repo-url https://github.com/external-secrets/external-secrets.git
-go run ./cmd/cvefix fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/org-baseline.yaml --policy-mode merge
-go run ./cmd/cvefix fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/org-baseline.yaml --policy-mode override
+patchpilot scan ~/dev/external-secrets/external-secrets
+patchpilot fix ~/dev/external-secrets/external-secrets
+patchpilot verify ~/dev/external-secrets/external-secrets
+patchpilot scan --dir ~/dev/external-secrets/external-secrets
+patchpilot fix --repo-url https://github.com/external-secrets/external-secrets.git
+patchpilot fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/org-baseline.yaml --policy-mode merge
+patchpilot fix --dir ~/dev/external-secrets/external-secrets --policy ~/policies/org-baseline.yaml --policy-mode override
 ```
 
 ## Agent Artifacts
 
-When agent mode is enabled, cvefix stores per-attempt artifacts that include:
+When agent mode is enabled, PatchPilot stores per-attempt artifacts that include:
 
 - `prompt.txt` (input prompt sent to the external agent)
 - `agent.log` (captured stdout/stderr from the agent command)
@@ -114,9 +114,9 @@ When agent mode is enabled, cvefix stores per-attempt artifacts that include:
 
 Defaults and controls:
 
-- default artifact path: `<repo>/.cvefix/agent`
+- default artifact path: `<repo>/.patchpilot/agent`
 - override path: `--agent-artifact-dir <path>`
-- default non-interactive command: `codex exec ... < "$CVEFIX_PROMPT_FILE"`
+- default non-interactive command: `codex exec ... < "$PATCHPILOT_PROMPT_FILE"`
 
 ## Policy File
 
@@ -198,7 +198,7 @@ Policy parsing is strict after applying built-in legacy migrations (for example 
 
 ## Output
 
-Each run writes state into `<repo>/.cvefix/`, including:
+Each run writes state into `<repo>/.patchpilot/`, including:
 
 - `sbom.json`
 - `vulns.json`

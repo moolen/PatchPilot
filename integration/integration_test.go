@@ -44,17 +44,17 @@ func TestMain(m *testing.M) {
 	}
 	integrationRoot = filepath.Clean(filepath.Join(wd, ".."))
 
-	buildDir, err := os.MkdirTemp(integrationRoot, ".cvefix-integration-build-")
+	buildDir, err := os.MkdirTemp(integrationRoot, ".patchpilot-integration-build-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "create build dir: %v\n", err)
 		os.Exit(1)
 	}
-	integrationBinary = filepath.Join(buildDir, "cvefix")
-	buildCommand := exec.Command("go", "build", "-o", integrationBinary, "./cmd/cvefix")
+	integrationBinary = filepath.Join(buildDir, "patchpilot")
+	buildCommand := exec.Command("go", "build", "-o", integrationBinary, "./cmd/patchpilot")
 	buildCommand.Dir = integrationRoot
 	buildOutput, err := buildCommand.CombinedOutput()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "build cvefix binary: %v\n%s", err, string(buildOutput))
+		fmt.Fprintf(os.Stderr, "build patchpilot binary: %v\n%s", err, string(buildOutput))
 		os.Exit(1)
 	}
 
@@ -157,7 +157,7 @@ func TestFixScenarios(t *testing.T) {
 		{
 			name: "docker deb patch",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
 			},
 			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
@@ -168,7 +168,7 @@ func TestFixScenarios(t *testing.T) {
 		{
 			name: "docker apk patch",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:apk-busybox\nFROM alpine:3.19\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:apk-busybox\nFROM alpine:3.19\nRUN echo baseline\n",
 			},
 			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
@@ -179,7 +179,7 @@ func TestFixScenarios(t *testing.T) {
 		{
 			name: "docker base image patch",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:base-golang\nFROM golang:1.21-alpine\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:base-golang\nFROM golang:1.21-alpine\nRUN echo baseline\n",
 			},
 			policy:           "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n",
 			expectedExitCode: 0,
@@ -191,7 +191,7 @@ func TestFixScenarios(t *testing.T) {
 		{
 			name: "os package patching disabled",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
 			},
 			policy:           "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n",
 			expectedExitCode: 23,
@@ -203,7 +203,7 @@ func TestFixScenarios(t *testing.T) {
 		{
 			name: "disallowed base image policy",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:deb-openssl\nFROM ubuntu:latest\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM ubuntu:latest\nRUN echo baseline\n",
 			},
 			policy:           "version: 1\ndocker:\n  disallowed_base_images:\n    - ubuntu:latest\n",
 			expectedExitCode: 21,
@@ -267,7 +267,7 @@ func TestFixScenarios(t *testing.T) {
 				t.Fatalf("unexpected exit code: got %d want %d\nstdout:\n%s\nstderr:\n%s", result.exitCode, testCase.expectedExitCode, result.stdout, result.stderr)
 			}
 
-			summaryPath := filepath.Join(repo, ".cvefix", "summary.json")
+			summaryPath := filepath.Join(repo, ".patchpilot", "summary.json")
 			_, summaryErr := os.Stat(summaryPath)
 			if !testCase.expectNoSummary {
 				if summaryErr != nil {
@@ -384,7 +384,7 @@ func TestVerifyScenarios(t *testing.T) {
 
 	t.Run("verify returns 23 when vulnerabilities remain", func(t *testing.T) {
 		repo := newScenarioRepo(t, map[string]string{
-			"Dockerfile": "# cvefix:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+			"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
 		})
 		writeFile(t, repo, ".patchpilot.yaml", "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n")
 
@@ -470,8 +470,8 @@ func mergedEnv(overrides map[string]string) []string {
 
 func integrationEnv(toolsDir string) map[string]string {
 	return map[string]string{
-		"PATH":                            toolsDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"CVEFIX_DISABLE_GO_RUNTIME_BUMPS": "1",
+		"PATH":                                toolsDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATCHPILOT_DISABLE_GO_RUNTIME_BUMPS": "1",
 	}
 }
 
@@ -509,7 +509,7 @@ func readFile(t *testing.T, root, path string) string {
 
 func readSummary(t *testing.T, repo string) summarySnapshot {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repo, ".cvefix", "summary.json"))
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", "summary.json"))
 	if err != nil {
 		t.Fatalf("read summary: %v", err)
 	}
@@ -522,7 +522,7 @@ func readSummary(t *testing.T, repo string) summarySnapshot {
 
 func readFindingsCount(t *testing.T, repo string) int {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repo, ".cvefix", "findings.json"))
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", "findings.json"))
 	if err != nil {
 		t.Fatalf("read findings: %v", err)
 	}
@@ -565,8 +565,8 @@ for arg in "$@"; do
     sbom:*)
       sbom_path="${arg#sbom:}"
       case "$sbom_path" in
-        */.cvefix/sbom.json)
-          repo="${sbom_path%/.cvefix/sbom.json}"
+        */.patchpilot/sbom.json)
+          repo="${sbom_path%/.patchpilot/sbom.json}"
           ;;
       esac
       ;;
@@ -715,19 +715,19 @@ while IFS= read -r dockerfile; do
   [ -n "$dockerfile" ] || continue
   rel="${dockerfile#$repo/}"
 
-  if grep -q "cvefix:deb-openssl" "$dockerfile"; then
+  if grep -q "patchpilot:deb-openssl" "$dockerfile"; then
     if ! grep -Eq "apt-get upgrade|apt-get install --only-upgrade" "$dockerfile"; then
       append_match "{\"artifact\":{\"name\":\"openssl\",\"version\":\"1.0.0\",\"type\":\"deb\",\"language\":\"\",\"purl\":\"pkg:deb/debian/openssl@1.0.0\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"CVE-deb-openssl\",\"namespace\":\"debian:distro:debian:12\",\"fix\":{\"versions\":[\"1.0.3\"],\"state\":\"fixed\"}}}"
     fi
   fi
 
-  if grep -q "cvefix:apk-busybox" "$dockerfile"; then
+  if grep -q "patchpilot:apk-busybox" "$dockerfile"; then
     if ! grep -Eq "apk upgrade" "$dockerfile"; then
       append_match "{\"artifact\":{\"name\":\"busybox\",\"version\":\"1.0.0\",\"type\":\"apk\",\"language\":\"\",\"purl\":\"pkg:apk/alpine/busybox@1.0.0\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"CVE-apk-busybox\",\"namespace\":\"alpine:distro:alpine:3.19\",\"fix\":{\"versions\":[\"1.0.2\"],\"state\":\"fixed\"}}}"
     fi
   fi
 
-  if grep -q "cvefix:base-golang" "$dockerfile"; then
+  if grep -q "patchpilot:base-golang" "$dockerfile"; then
     from_line=$(grep -E '^[[:space:]]*FROM[[:space:]]+' "$dockerfile" | head -n 1 || true)
     image=$(printf '%s' "$from_line" | awk '{print $2}')
     image_no_digest="${image%@*}"

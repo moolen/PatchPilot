@@ -17,7 +17,7 @@ func TestParseFixCommand(t *testing.T) {
 		},
 		{
 			name:      "basic command",
-			body:      "/cvefix fix",
+			body:      "/patchpilot fix",
 			wantFound: true,
 			want:      FixCommand{},
 		},
@@ -32,7 +32,7 @@ func TestParseFixCommand(t *testing.T) {
 		},
 		{
 			name:      "policy mode merge",
-			body:      "/cvefix fix --policy /etc/patchpilot/central.yaml --policy-mode merge",
+			body:      "/patchpilot fix --policy /etc/patchpilot/central.yaml --policy-mode merge",
 			wantFound: true,
 			want: FixCommand{
 				PolicyPath: "/etc/patchpilot/central.yaml",
@@ -41,19 +41,19 @@ func TestParseFixCommand(t *testing.T) {
 		},
 		{
 			name:      "unknown option",
-			body:      "/cvefix fix --wat",
+			body:      "/patchpilot fix --wat",
 			wantFound: true,
 			wantErr:   true,
 		},
 		{
 			name:      "missing policy value",
-			body:      "/cvefix fix --policy",
+			body:      "/patchpilot fix --policy",
 			wantFound: true,
 			wantErr:   true,
 		},
 		{
 			name:      "invalid policy mode",
-			body:      "/cvefix fix --policy-mode invalid",
+			body:      "/patchpilot fix --policy-mode invalid",
 			wantFound: true,
 			wantErr:   true,
 		},

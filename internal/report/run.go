@@ -58,7 +58,7 @@ func WriteRunRecord(repo string, record RunRecord) error {
 	if err != nil {
 		return fmt.Errorf("marshal run record: %w", err)
 	}
-	path := filepath.Join(repo, ".cvefix", runFile)
+	path := filepath.Join(repo, ".patchpilot", runFile)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write run record: %w", err)
 	}

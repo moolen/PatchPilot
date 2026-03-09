@@ -99,7 +99,7 @@ func ScanWithOptions(ctx context.Context, repo string, options ScanOptions) (*Re
 		return nil, err
 	}
 
-	stateDir := filepath.Join(repo, ".cvefix")
+	stateDir := filepath.Join(repo, ".patchpilot")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
@@ -275,7 +275,7 @@ func writeNormalized(repo string, report *Report) error {
 		return fmt.Errorf("marshal normalized findings: %w", err)
 	}
 
-	outputPath := filepath.Join(repo, ".cvefix", normalizedFileName)
+	outputPath := filepath.Join(repo, ".patchpilot", normalizedFileName)
 	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
 		return fmt.Errorf("write normalized findings: %w", err)
 	}
@@ -283,7 +283,7 @@ func writeNormalized(repo string, report *Report) error {
 }
 
 func ReadNormalized(repo string) (*Report, error) {
-	data, err := os.ReadFile(filepath.Join(repo, ".cvefix", normalizedFileName))
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", normalizedFileName))
 	if err != nil {
 		return nil, fmt.Errorf("read normalized findings: %w", err)
 	}

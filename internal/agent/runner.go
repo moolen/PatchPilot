@@ -64,13 +64,13 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 		ArtifactDir:    filepath.Dir(req.PromptFilePath),
 		ArtifactPrefix: "agent-command",
 		Env: []string{
-			"CVEFIX_REPO_PATH=" + req.RepoPath,
-			fmt.Sprintf("CVEFIX_ATTEMPT_NUMBER=%d", req.AttemptNumber),
-			"CVEFIX_PROMPT_FILE=" + req.PromptFilePath,
-			"CVEFIX_AGENT_ARTIFACT_DIR=" + filepath.Dir(req.PromptFilePath),
+			"PATCHPILOT_REPO_PATH=" + req.RepoPath,
+			fmt.Sprintf("PATCHPILOT_ATTEMPT_NUMBER=%d", req.AttemptNumber),
+			"PATCHPILOT_PROMPT_FILE=" + req.PromptFilePath,
+			"PATCHPILOT_AGENT_ARTIFACT_DIR=" + filepath.Dir(req.PromptFilePath),
 		},
 		// Agent harnesses may require provider credentials and other host settings.
-		// Inherit the parent environment, then overlay CVEFIX_* variables above.
+		// Inherit the parent environment, then overlay PATCHPILOT_* variables above.
 		EnvAllowlist: []string{"*"},
 	})
 	result := AttemptResult{Logs: strings.TrimSpace(runResult.Combined)}

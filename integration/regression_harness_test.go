@@ -40,7 +40,7 @@ func TestRegressionSnapshots(t *testing.T) {
 			name:     "docker-os-disabled",
 			snapshot: "docker-os-disabled.json",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
 			},
 			policy: "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n",
 		},
@@ -48,7 +48,7 @@ func TestRegressionSnapshots(t *testing.T) {
 			name:     "policy-blocked",
 			snapshot: "policy-blocked.json",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:deb-openssl\nFROM ubuntu:latest\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM ubuntu:latest\nRUN echo baseline\n",
 			},
 			policy: "version: 1\ndocker:\n  disallowed_base_images:\n    - ubuntu:latest\n",
 		},

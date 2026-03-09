@@ -18,7 +18,7 @@ type scriptResult struct {
 
 func TestActionEntrypointRejectsUnsupportedCommand(t *testing.T) {
 	tempDir := t.TempDir()
-	createFakeCVEFix(t, tempDir)
+	createFakePatchPilot(t, tempDir)
 	outputPath := filepath.Join(tempDir, "github-output.txt")
 
 	result := runActionEntrypoint(t, tempDir, map[string]string{
@@ -35,14 +35,14 @@ func TestActionEntrypointRejectsUnsupportedCommand(t *testing.T) {
 
 func TestActionEntrypointAcceptableExitCodeAndOutputContract(t *testing.T) {
 	tempDir := t.TempDir()
-	argsPath := createFakeCVEFix(t, tempDir)
+	argsPath := createFakePatchPilot(t, tempDir)
 	outputPath := filepath.Join(tempDir, "github-output.txt")
 
 	result := runActionEntrypoint(t, tempDir, map[string]string{
 		"INPUT_COMMAND":               "scan",
 		"INPUT_DIR":                   "repo",
 		"INPUT_ACCEPTABLE_EXIT_CODES": "0, 23",
-		"CVEFIX_EXIT_CODE":            "23",
+		"PATCHPILOT_EXIT_CODE":        "23",
 		"GITHUB_OUTPUT":               outputPath,
 	})
 	if result.exitCode != 0 {
@@ -71,7 +71,7 @@ func TestActionEntrypointAcceptableExitCodeAndOutputContract(t *testing.T) {
 
 func TestActionEntrypointFixCommandPassesAgentAndExtraArgs(t *testing.T) {
 	tempDir := t.TempDir()
-	argsPath := createFakeCVEFix(t, tempDir)
+	argsPath := createFakePatchPilot(t, tempDir)
 
 	result := runActionEntrypoint(t, tempDir, map[string]string{
 		"INPUT_COMMAND":            "fix",
@@ -90,7 +90,7 @@ func TestActionEntrypointFixCommandPassesAgentAndExtraArgs(t *testing.T) {
 	args := readArgLines(t, argsPath)
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "fix --repo-url https://github.com/example/service.git") {
-		t.Fatalf("expected repo_url to be passed to cvefix, args=%v", args)
+		t.Fatalf("expected repo_url to be passed to patchpilot, args=%v", args)
 	}
 	if strings.Contains(joined, "--dir repo-dir") {
 		t.Fatalf("did not expect --dir when repo_url is set, args=%v", args)
@@ -140,15 +140,15 @@ func runActionEntrypoint(t *testing.T, tempDir string, extraEnv map[string]strin
 	return result
 }
 
-func createFakeCVEFix(t *testing.T, tempDir string) string {
+func createFakePatchPilot(t *testing.T, tempDir string) string {
 	t.Helper()
-	argsPath := filepath.Join(tempDir, "cvefix-args.txt")
-	binaryPath := filepath.Join(tempDir, "cvefix")
-	script := "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$@\" > \"$CVEFIX_ARGS_FILE\"\nexit \"${CVEFIX_EXIT_CODE:-0}\"\n"
+	argsPath := filepath.Join(tempDir, "patchpilot-args.txt")
+	binaryPath := filepath.Join(tempDir, "patchpilot")
+	script := "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$@\" > \"$PATCHPILOT_ARGS_FILE\"\nexit \"${PATCHPILOT_EXIT_CODE:-0}\"\n"
 	if err := os.WriteFile(binaryPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake cvefix binary: %v", err)
+		t.Fatalf("write fake patchpilot binary: %v", err)
 	}
-	t.Setenv("CVEFIX_ARGS_FILE", argsPath)
+	t.Setenv("PATCHPILOT_ARGS_FILE", argsPath)
 	return argsPath
 }
 
@@ -156,7 +156,7 @@ func readArgLines(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read cvefix args: %v", err)
+		t.Fatalf("read patchpilot args: %v", err)
 	}
 	trimmed := strings.TrimSpace(string(data))
 	if trimmed == "" {

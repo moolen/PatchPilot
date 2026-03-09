@@ -1,6 +1,6 @@
-.cvefix/
+.patchpilot/
 .cache/
-.cvefix-integration-build-*/
+.patchpilot-integration-build-*/
 .validation-*/
 bin/
 coverage*.out

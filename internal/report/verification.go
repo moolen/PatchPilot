@@ -15,15 +15,15 @@ const (
 )
 
 func WriteVerificationBaseline(repo string, verification verifycheck.Report) error {
-	return writeVerificationFile(filepath.Join(repo, ".cvefix", verificationBaselineFile), verification)
+	return writeVerificationFile(filepath.Join(repo, ".patchpilot", verificationBaselineFile), verification)
 }
 
 func ReadVerificationBaseline(repo string) (*verifycheck.Report, error) {
-	return readVerificationFile(filepath.Join(repo, ".cvefix", verificationBaselineFile), "verification baseline")
+	return readVerificationFile(filepath.Join(repo, ".patchpilot", verificationBaselineFile), "verification baseline")
 }
 
 func WriteVerification(repo string, verification verifycheck.Report) error {
-	return writeVerificationFile(filepath.Join(repo, ".cvefix", verificationFile), verification)
+	return writeVerificationFile(filepath.Join(repo, ".patchpilot", verificationFile), verification)
 }
 
 func readVerificationFile(path, label string) (*verifycheck.Report, error) {

@@ -42,7 +42,7 @@ func TestRunDoctor(t *testing.T) {
 			t.Fatalf("write fake binary %s: %v", name, err)
 		}
 	}
-	createBinary("cvefix")
+	createBinary("patchpilot")
 	createBinary("syft")
 	createBinary("grype")
 
@@ -51,7 +51,7 @@ func TestRunDoctor(t *testing.T) {
 	t.Setenv("PP_WEBHOOK_SECRET", "secret")
 	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
 	t.Setenv("PP_WORKDIR", filepath.Join(temp, "work"))
-	t.Setenv("PP_CVEFIX_BINARY", "cvefix")
+	t.Setenv("PP_PATCHPILOT_BINARY", "patchpilot")
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

@@ -9,7 +9,7 @@ import (
 
 func TestParseAndNormalizeRawReport(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
 	for _, path := range []string{
@@ -21,7 +21,7 @@ func TestParseAndNormalizeRawReport(t *testing.T) {
 		}
 	}
 
-	rawPath := filepath.Join(repo, ".cvefix", "raw.json")
+	rawPath := filepath.Join(repo, ".patchpilot", "raw.json")
 	raw := `{
   "matches": [
     {
@@ -151,7 +151,7 @@ func TestParseRawReportBytesRejectsTruncatedJSON(t *testing.T) {
 
 func TestNormalizeReportAppliesIgnoreRules(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
 		t.Fatalf("mkdir state dir: %v", err)
 	}
 	dockerfile := filepath.Join(repo, "Dockerfile")

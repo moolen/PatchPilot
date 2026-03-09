@@ -6,7 +6,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cvefix ./cmd/cvefix
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/patchpilot ./cmd/patchpilot
 
 FROM alpine:3.22
 
@@ -27,8 +27,8 @@ RUN arch="$(uname -m)"; \
 	tar -xzf /tmp/grype.tgz -C /usr/local/bin grype; \
 	rm -f /tmp/syft.tgz /tmp/grype.tgz
 
-COPY --from=builder /out/cvefix /usr/local/bin/cvefix
+COPY --from=builder /out/patchpilot /usr/local/bin/patchpilot
 COPY scripts/action-entrypoint.sh /usr/local/bin/action-entrypoint.sh
-RUN chmod +x /usr/local/bin/cvefix /usr/local/bin/action-entrypoint.sh
+RUN chmod +x /usr/local/bin/patchpilot /usr/local/bin/action-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/action-entrypoint.sh"]

@@ -131,7 +131,7 @@ func TestApplyGoRuntimeFixesDisabledByEnv(t *testing.T) {
 		fetchSupportedGoPatchVersionsFunc = originalFetch
 	}()
 
-	t.Setenv("CVEFIX_DISABLE_GO_RUNTIME_BUMPS", "true")
+	t.Setenv("PATCHPILOT_DISABLE_GO_RUNTIME_BUMPS", "true")
 
 	called := false
 	fetchSupportedGoPatchVersionsFunc = func(ctx context.Context) (map[string]goPatchVersion, error) {

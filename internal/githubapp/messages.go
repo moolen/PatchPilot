@@ -3,7 +3,7 @@ package githubapp
 import "fmt"
 
 func remediationStartedComment() string {
-	return "PatchPilot started remediation with `cvefix fix`."
+	return "PatchPilot started remediation with `patchpilot fix`."
 }
 
 func invalidCommandComment(err error) string {
@@ -19,7 +19,7 @@ func remediationBlockedComment(reason string, riskScore int) string {
 }
 
 func remediationNoChangesComment(exitCode int) string {
-	return fmt.Sprintf("PatchPilot finished. No file changes were needed (cvefix exit code `%d`).", exitCode)
+	return fmt.Sprintf("PatchPilot finished. No file changes were needed (PatchPilot exit code `%d`).", exitCode)
 }
 
 func remediationPRUpsertFailedComment(err error) string {

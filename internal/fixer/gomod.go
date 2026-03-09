@@ -470,7 +470,7 @@ func isNonFatalGoModuleStateError(err error) bool {
 }
 
 func warnGoFix(format string, args ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, "cvefix: warn: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(os.Stderr, "patchpilot: warn: "+format+"\n", args...)
 }
 
 func maxSemver(left, right string) string {
@@ -531,7 +531,7 @@ func findFilesWithOptions(root string, match func(path string, entry fs.DirEntry
 				return filepath.SkipDir
 			}
 			switch entry.Name() {
-			case ".git", ".cvefix", "vendor":
+			case ".git", ".patchpilot", "vendor":
 				return filepath.SkipDir
 			}
 			return nil

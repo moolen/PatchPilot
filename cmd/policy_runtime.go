@@ -160,12 +160,12 @@ func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config,
 			Name:           "post-exec-hook",
 			Dir:            repo,
 			ShellCommand:   hook.Run,
-			ArtifactDir:    filepath.Join(repo, ".cvefix"),
+			ArtifactDir:    filepath.Join(repo, ".patchpilot"),
 			ArtifactPrefix: fmt.Sprintf("post-hook-%s", sanitizeArtifactName(hook.Name)),
 		})
 		trimmed := strings.TrimSpace(result.Combined)
 		if trimmed != "" {
-			_, _ = fmt.Fprintf(os.Stderr, "[cvefix] post-exec %q output:\n%s\n", hook.Name, trimmed)
+			_, _ = fmt.Fprintf(os.Stderr, "[patchpilot] post-exec %q output:\n%s\n", hook.Name, trimmed)
 		}
 		if err != nil {
 			if hook.FailOnError {

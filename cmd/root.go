@@ -41,7 +41,7 @@ func NewRootCommand() *cobra.Command {
 	options := &cliOptions{}
 
 	root := &cobra.Command{
-		Use:           "cvefix",
+		Use:           "patchpilot",
 		Short:         "Fix vulnerabilities in source repositories with minimal version bumps",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -106,9 +106,9 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 	}
 
 	command.Flags().BoolVar(&options.enableAgent, "enable-agent", true, "Enable external agent repair loop when deterministic fixes fail")
-	command.Flags().StringVar(&options.agentCommand, "agent-command", "codex exec --skip-git-repo-check --sandbox workspace-write -o \"$CVEFIX_AGENT_ARTIFACT_DIR/last-message.txt\" - < \"$CVEFIX_PROMPT_FILE\"", "External agent harness command (must run non-interactively)")
+	command.Flags().StringVar(&options.agentCommand, "agent-command", "codex exec --skip-git-repo-check --sandbox workspace-write -o \"$PATCHPILOT_AGENT_ARTIFACT_DIR/last-message.txt\" - < \"$PATCHPILOT_PROMPT_FILE\"", "External agent harness command (must run non-interactively)")
 	command.Flags().IntVar(&options.agentMaxAttempts, "agent-max-attempts", 5, "Maximum number of external agent repair attempts")
-	command.Flags().StringVar(&options.agentArtifactDir, "agent-artifact-dir", "", "Directory for agent attempt artifacts (default: <repo>/.cvefix/agent)")
+	command.Flags().StringVar(&options.agentArtifactDir, "agent-artifact-dir", "", "Directory for agent attempt artifacts (default: <repo>/.patchpilot/agent state directory)")
 
 	return command
 }
@@ -157,7 +157,7 @@ func resolveRepo(command *cobra.Command, options *cliOptions, args []string) (st
 }
 
 func cloneRepoToTemp(ctx context.Context, writer io.Writer, repoURL string) (string, error) {
-	tempRoot, err := makeTempDir("", "cvefix-clone-")
+	tempRoot, err := makeTempDir("", "patchpilot-clone-")
 	if err != nil {
 		return "", fmt.Errorf("create temp dir: %w", err)
 	}

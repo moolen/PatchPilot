@@ -1,6 +1,6 @@
 name: PatchPilot CVE Fix
 
-description: Run cvefix scan/fix/verify in a GitHub Actions job.
+description: Run PatchPilot scan/fix/verify in a GitHub Actions job.
 author: moolen
 
 inputs:
@@ -37,17 +37,17 @@ inputs:
     required: false
     default: ''
   acceptable_exit_codes:
-    description: Comma-separated list of acceptable cvefix exit codes
+    description: Comma-separated list of acceptable PatchPilot exit codes
     required: false
     default: '0'
 
 outputs:
   exit-code:
-    description: cvefix process exit code
+    description: PatchPilot process exit code
   sarif-path:
-    description: Absolute path to generated SARIF report (.cvefix/findings.sarif) when available
+    description: Absolute path to generated SARIF report (.patchpilot/findings.sarif) when available
   summary-path:
-    description: Absolute path to generated summary JSON (.cvefix/summary.json) when available
+    description: Absolute path to generated summary JSON (.patchpilot/summary.json) when available
 
 runs:
   using: docker

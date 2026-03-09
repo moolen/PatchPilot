@@ -25,7 +25,7 @@ func TestWriteRunRecordCreatesRunFile(t *testing.T) {
 		t.Fatalf("WriteRunRecord returned error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(repo, ".cvefix", runFile))
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", runFile))
 	if err != nil {
 		t.Fatalf("read run record: %v", err)
 	}

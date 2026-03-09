@@ -127,7 +127,7 @@ func WriteSARIF(repo string, findings []vuln.Finding) error {
 		Schema:  "https://json.schemastore.org/sarif-2.1.0.json",
 		Runs: []sarifRun{{
 			Tool: sarifTool{Driver: sarifDriver{
-				Name:           "cvefix",
+				Name:           "PatchPilot",
 				InformationURI: "https://github.com/moolen/PatchPilot",
 				Rules:          rules,
 			}},
@@ -142,7 +142,7 @@ func WriteSARIF(repo string, findings []vuln.Finding) error {
 	if err != nil {
 		return fmt.Errorf("marshal sarif: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".cvefix", sarifFile), data, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".patchpilot", sarifFile), data, 0o644); err != nil {
 		return fmt.Errorf("write sarif report: %w", err)
 	}
 	return nil

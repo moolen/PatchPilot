@@ -9,7 +9,7 @@ import (
 
 func TestRunnerRunAttemptSuccess(t *testing.T) {
 	temp := t.TempDir()
-	runner := Runner{Command: `echo run-ok; test -f "$CVEFIX_PROMPT_FILE"`}
+	runner := Runner{Command: `echo run-ok; test -f "$PATCHPILOT_PROMPT_FILE"`}
 
 	result, err := runner.RunAttempt(context.Background(), AttemptRequest{
 		RepoPath:                 temp,

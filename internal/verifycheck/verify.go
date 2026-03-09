@@ -125,7 +125,7 @@ func DiscoverModuleDirsWithOptions(repo string, options DiscoverOptions) ([]stri
 				return filepath.SkipDir
 			}
 			switch entry.Name() {
-			case ".git", ".cvefix", "vendor":
+			case ".git", ".patchpilot", "vendor":
 				return filepath.SkipDir
 			}
 			return nil
@@ -418,7 +418,7 @@ func discoverStandardTargetDirs(repoAbs string) ([]string, error) {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", ".cvefix", "vendor":
+			case ".git", ".patchpilot", "vendor":
 				return filepath.SkipDir
 			}
 			return nil
@@ -785,7 +785,7 @@ func printFailures(w io.Writer, report Report) {
 	}
 	_, _ = fmt.Fprintf(w, "Verification detail entries: %d\n", total)
 	if total > printed {
-		_, _ = fmt.Fprintf(w, "... %d more verification failures written to .cvefix/verification.json\n", total-printed)
+		_, _ = fmt.Fprintf(w, "... %d more verification failures written to .patchpilot/verification.json\n", total-printed)
 	}
 }
 

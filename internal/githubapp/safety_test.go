@@ -20,13 +20,13 @@ func TestPathBlocked(t *testing.T) {
 
 func TestEvaluateSafetyBlocksOnVerificationRegression(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".cvefix", "summary.json"), []byte(`{"before":2,"fixed":1,"after":1}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".patchpilot", "summary.json"), []byte(`{"before":2,"fixed":1,"after":1}`), 0o644); err != nil {
 		t.Fatalf("write summary: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".cvefix", "verification.json"), []byte(`{"mode":"standard","modules":[],"regressions":[{"dir":".","check":"build","baseline_status":"ok","after_status":"failed"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".patchpilot", "verification.json"), []byte(`{"mode":"standard","modules":[],"regressions":[{"dir":".","check":"build","baseline_status":"ok","after_status":"failed"}]}`), 0o644); err != nil {
 		t.Fatalf("write verification: %v", err)
 	}
 
@@ -45,10 +45,10 @@ func TestEvaluateSafetyBlocksOnVerificationRegression(t *testing.T) {
 
 func TestEvaluateSafetyBlocksOnRiskThreshold(t *testing.T) {
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".cvefix", "summary.json"), []byte(`{"before":10,"fixed":0,"after":10}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".patchpilot", "summary.json"), []byte(`{"before":10,"fixed":0,"after":10}`), 0o644); err != nil {
 		t.Fatalf("write summary: %v", err)
 	}
 

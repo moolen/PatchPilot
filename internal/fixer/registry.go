@@ -539,12 +539,12 @@ func defaultRegistryCacheDir() (string, error) {
 	if override := strings.TrimSpace(registryCacheDirOverride); override != "" {
 		return override, nil
 	}
-	if override := strings.TrimSpace(os.Getenv("CVEFIX_REGISTRY_CACHE_DIR")); override != "" {
+	if override := strings.TrimSpace(os.Getenv("PATCHPILOT_REGISTRY_CACHE_DIR")); override != "" {
 		return override, nil
 	}
 	base, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "cvefix", "registry-tags"), nil
+	return filepath.Join(base, "patchpilot", "registry-tags"), nil
 }

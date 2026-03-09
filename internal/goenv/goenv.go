@@ -46,7 +46,7 @@ func CommandEnv(dir string) ([]string, error) {
 func StateDir(dir string) (string, error) {
 	current := dir
 	for {
-		candidate := filepath.Join(current, ".cvefix")
+		candidate := filepath.Join(current, ".patchpilot")
 		info, err := os.Stat(candidate)
 		if err == nil && info.IsDir() {
 			return candidate, nil
@@ -62,7 +62,7 @@ func StateDir(dir string) (string, error) {
 		current = parent
 	}
 
-	fallback := filepath.Join(dir, ".cvefix")
+	fallback := filepath.Join(dir, ".patchpilot")
 	if err := os.MkdirAll(fallback, 0o755); err != nil {
 		return "", fmt.Errorf("create fallback state dir %s: %w", fallback, err)
 	}
