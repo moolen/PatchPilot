@@ -1,6 +1,6 @@
 # PatchPilot GitHub Action
 
-This repository exposes a Docker-based GitHub Action that packages `cvefix` with `syft` and `grype`.
+This repository exposes a Docker-based GitHub Action that packages `PatchPilot` with `syft` and `grype`.
 
 Use it from any repository:
 
@@ -12,7 +12,7 @@ on:
   pull_request:
 
 jobs:
-  cvefix:
+  patchpilot:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,9 +45,9 @@ jobs:
 
 ## Outputs
 
-- `exit-code`: raw `cvefix` process exit code.
-- `sarif-path`: absolute path to `.cvefix/findings.sarif` when generated locally (`repo_url` runs are excluded).
-- `summary-path`: absolute path to `.cvefix/summary.json` when generated.
+- `exit-code`: raw `PatchPilot` process exit code.
+- `sarif-path`: absolute path to `.patchpilot/findings.sarif` when generated locally (`repo_url` runs are excluded).
+- `summary-path`: absolute path to `.patchpilot/summary.json` when generated.
 
 ## Notes
 

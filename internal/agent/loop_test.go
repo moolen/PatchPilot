@@ -16,7 +16,7 @@ func TestLoopRunPersistsArtifactsAndStopsOnSuccess(t *testing.T) {
 	result, err := loop.Run(context.Background(), LoopRequest{
 		RepoPath:                        temp,
 		WorkingDirectory:                temp,
-		ArtifactDirectory:               filepath.Join(temp, ".cvefix", "agent"),
+		ArtifactDirectory:               filepath.Join(temp, ".patchpilot", "agent"),
 		MaxAttempts:                     5,
 		InitialVulnerabilityCount:       3,
 		InitialRemainingVulnerabilities: `{"matches":[{"id":"CVE-1"}]}`,
@@ -43,14 +43,14 @@ func TestLoopRunPersistsArtifactsAndStopsOnSuccess(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		".cvefix/agent/attempt-1/prompt.txt",
-		".cvefix/agent/attempt-1/agent.log",
-		".cvefix/agent/attempt-1/validation.log",
-		".cvefix/agent/attempt-1/summary.json",
-		".cvefix/agent/attempt-2/prompt.txt",
-		".cvefix/agent/attempt-2/agent.log",
-		".cvefix/agent/attempt-2/validation.log",
-		".cvefix/agent/attempt-2/summary.json",
+		".patchpilot/agent/attempt-1/prompt.txt",
+		".patchpilot/agent/attempt-1/agent.log",
+		".patchpilot/agent/attempt-1/validation.log",
+		".patchpilot/agent/attempt-1/summary.json",
+		".patchpilot/agent/attempt-2/prompt.txt",
+		".patchpilot/agent/attempt-2/agent.log",
+		".patchpilot/agent/attempt-2/validation.log",
+		".patchpilot/agent/attempt-2/summary.json",
 	} {
 		path := filepath.Join(temp, rel)
 		if _, statErr := os.Stat(path); statErr != nil {
@@ -66,7 +66,7 @@ func TestLoopRunCanSucceedEvenWhenAgentCommandExitsNonZero(t *testing.T) {
 	result, err := loop.Run(context.Background(), LoopRequest{
 		RepoPath:                        temp,
 		WorkingDirectory:                temp,
-		ArtifactDirectory:               filepath.Join(temp, ".cvefix", "agent"),
+		ArtifactDirectory:               filepath.Join(temp, ".patchpilot", "agent"),
 		MaxAttempts:                     1,
 		InitialVulnerabilityCount:       2,
 		InitialRemainingVulnerabilities: "{}",

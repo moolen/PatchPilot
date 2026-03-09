@@ -32,7 +32,7 @@ func (service *Service) evaluateSafety(repoPath string, changedFiles []string) (
 		}
 	}
 
-	summaryPath := filepath.Join(repoPath, ".cvefix", "summary.json")
+	summaryPath := filepath.Join(repoPath, ".patchpilot", "summary.json")
 	if data, err := os.ReadFile(summaryPath); err == nil {
 		var summary report.Summary
 		if unmarshalErr := json.Unmarshal(data, &summary); unmarshalErr == nil {
@@ -42,7 +42,7 @@ func (service *Service) evaluateSafety(repoPath string, changedFiles []string) (
 		}
 	}
 
-	verificationPath := filepath.Join(repoPath, ".cvefix", "verification.json")
+	verificationPath := filepath.Join(repoPath, ".patchpilot", "verification.json")
 	if data, err := os.ReadFile(verificationPath); err == nil {
 		var verification verifycheck.Report
 		if unmarshalErr := json.Unmarshal(data, &verification); unmarshalErr == nil {

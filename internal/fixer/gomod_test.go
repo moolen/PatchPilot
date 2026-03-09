@@ -197,8 +197,8 @@ func TestApplyGoModuleFixesKeepsDirectPatchesWhenTidyIsNonFatal(t *testing.T) {
 	}()
 
 	repo := t.TempDir()
-	if err := os.Mkdir(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
-		t.Fatalf("mkdir .cvefix: %v", err)
+	if err := os.Mkdir(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
+		t.Fatalf("mkdir .patchpilot: %v", err)
 	}
 	goModPath := filepath.Join(repo, "go.mod")
 	content := `module example.com/test
@@ -275,7 +275,7 @@ func TestRunGoCommandPreservesParseErrors(t *testing.T) {
 func TestGoCommandEnvUsesRepoStateDir(t *testing.T) {
 	repo := t.TempDir()
 	moduleDir := filepath.Join(repo, "nested", "module")
-	stateDir := filepath.Join(repo, ".cvefix")
+	stateDir := filepath.Join(repo, ".patchpilot")
 	for _, dir := range []string{moduleDir, stateDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
@@ -317,8 +317,8 @@ func TestApplyGoModuleFixesKeepsDirectPatchesWhenRevisionIsUnknown(t *testing.T)
 	}()
 
 	repo := t.TempDir()
-	if err := os.Mkdir(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
-		t.Fatalf("mkdir .cvefix: %v", err)
+	if err := os.Mkdir(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
+		t.Fatalf("mkdir .patchpilot: %v", err)
 	}
 	goModPath := filepath.Join(repo, "go.mod")
 	content := `module example.com/test
@@ -390,8 +390,8 @@ func TestApplyGoModuleFixesRefreshesVendorForModifiedModules(t *testing.T) {
 	}()
 
 	repo := t.TempDir()
-	if err := os.Mkdir(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
-		t.Fatalf("mkdir .cvefix: %v", err)
+	if err := os.Mkdir(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
+		t.Fatalf("mkdir .patchpilot: %v", err)
 	}
 	if err := os.MkdirAll(filepath.Join(repo, "vendor"), 0o755); err != nil {
 		t.Fatalf("mkdir vendor: %v", err)
@@ -509,8 +509,8 @@ func TestApplyGoModuleFixesDropsTransitivePatchesThatDoNotStick(t *testing.T) {
 	}()
 
 	repo := t.TempDir()
-	if err := os.Mkdir(filepath.Join(repo, ".cvefix"), 0o755); err != nil {
-		t.Fatalf("mkdir .cvefix: %v", err)
+	if err := os.Mkdir(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
+		t.Fatalf("mkdir .patchpilot: %v", err)
 	}
 	goModPath := filepath.Join(repo, "go.mod")
 	content := `module example.com/test

@@ -90,7 +90,7 @@ func runAgentRepairLoop(
 
 	artifactDir := strings.TrimSpace(options.AgentArtifactDir)
 	if artifactDir == "" {
-		artifactDir = filepath.Join(repo, ".cvefix", "agent")
+		artifactDir = filepath.Join(repo, ".patchpilot", "agent")
 	} else if !filepath.IsAbs(artifactDir) {
 		artifactDir = filepath.Join(repo, artifactDir)
 	}

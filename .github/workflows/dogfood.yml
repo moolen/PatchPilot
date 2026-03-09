@@ -40,15 +40,15 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Build cvefix
+      - name: Build PatchPilot
         run: make build
 
-      - name: Run cvefix remediation
+      - name: Run PatchPilot remediation
         id: remediate
         shell: bash
         run: |
           set +e
-          ./bin/cvefix fix --dir . --enable-agent=false
+          ./bin/patchpilot fix --dir . --enable-agent=false
           code=$?
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -68,14 +68,14 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
         with:
-          branch: automation/daily-cvefix
+          branch: automation/daily-patchpilot
           delete-branch: true
-          commit-message: 'chore: daily cvefix remediation'
+          commit-message: 'chore: daily PatchPilot remediation'
           title: 'chore: daily CVE remediation'
           body: |
             Automated daily remediation run.
 
-            - `cvefix fix` exit code: `${{ steps.remediate.outputs.exit_code }}`
+            - `patchpilot fix` exit code: `${{ steps.remediate.outputs.exit_code }}`
             - local CI outcome: `${{ steps.local_ci.outcome }}`
 
             Auto-merge is attempted only when all vulnerabilities are fixed (`exit code 0`) and CI checks pass.

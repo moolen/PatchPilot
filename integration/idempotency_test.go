@@ -28,7 +28,7 @@ func TestFixIdempotency(t *testing.T) {
 		{
 			name: "docker idempotent",
 			files: map[string]string{
-				"Dockerfile": "# cvefix:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
 			},
 		},
 		{
@@ -99,7 +99,7 @@ func trackedFileHashes(repo string) (map[string]string, error) {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", ".cvefix", ".scenario":
+			case ".git", ".patchpilot", ".scenario":
 				return filepath.SkipDir
 			}
 			return nil
@@ -133,7 +133,7 @@ func mapsEqual(left, right map[string]string) bool {
 
 func readRunRecord(t *testing.T, repo string) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repo, ".cvefix", "run.json"))
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", "run.json"))
 	if err != nil {
 		t.Fatalf("read run record: %v", err)
 	}

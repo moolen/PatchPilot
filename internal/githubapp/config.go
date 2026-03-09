@@ -16,7 +16,7 @@ type Config struct {
 	PrivateKeyPEM       string
 	ListenAddr          string
 	WorkDir             string
-	CVEFixBinary        string
+	PatchPilotBinary    string
 	EnablePushAutofix   bool
 	AllowedRepos        map[string]struct{}
 	GitHubBaseWebURL    string
@@ -68,7 +68,7 @@ func LoadConfigFromEnv() (Config, error) {
 	cfg := Config{
 		ListenAddr:          firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
 		WorkDir:             firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
-		CVEFixBinary:        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_CVEFIX_BINARY")), "cvefix"),
+		PatchPilotBinary:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_PATCHPILOT_BINARY")), "patchpilot"),
 		EnablePushAutofix:   parseBoolEnv("PP_ENABLE_PUSH_AUTOFIX"),
 		GitHubBaseWebURL:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
 		EnableAutoMerge:     parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", true),

@@ -16,7 +16,7 @@ const fileName = "sbom.json"
 
 var defaultExcludes = []string{
 	"./.git",
-	"./.cvefix",
+	"./.patchpilot",
 	"./bin",
 	"./vendor",
 	"**/.terraform",
@@ -36,7 +36,7 @@ func GenerateWithOptions(ctx context.Context, repo string, options Options) (str
 		return "", err
 	}
 
-	stateDir := filepath.Join(repo, ".cvefix")
+	stateDir := filepath.Join(repo, ".patchpilot")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return "", fmt.Errorf("create state dir: %w", err)
 	}
@@ -104,7 +104,7 @@ func buildExcludes(extra []string) []string {
 }
 
 func Path(repo string) string {
-	return filepath.Join(repo, ".cvefix", fileName)
+	return filepath.Join(repo, ".patchpilot", fileName)
 }
 
 func ensureTool(name string) error {

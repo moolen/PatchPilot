@@ -82,7 +82,7 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 
 	artifactDir := strings.TrimSpace(req.ArtifactDirectory)
 	if artifactDir == "" {
-		artifactDir = filepath.Join(req.RepoPath, ".cvefix", "agent")
+		artifactDir = filepath.Join(req.RepoPath, ".patchpilot", "agent")
 	}
 	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
 		return LoopResult{}, fmt.Errorf("create agent artifact dir: %w", err)

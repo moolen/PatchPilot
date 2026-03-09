@@ -138,7 +138,7 @@ func runDoctor(stdout, stderr io.Writer) int {
 	}
 
 	check("workdir writable", ensureWritableDir(cfg.WorkDir))
-	check("cvefix binary", ensureBinary(cfg.CVEFixBinary))
+	check("PatchPilot binary", ensureBinary(cfg.PatchPilotBinary))
 	check("syft binary", ensureBinary("syft"))
 	check("grype binary", ensureBinary("grype"))
 

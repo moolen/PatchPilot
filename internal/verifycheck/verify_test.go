@@ -25,7 +25,7 @@ go 1.22
 			t.Fatalf("write go.mod in %s: %v", moduleDir, err)
 		}
 	}
-	for _, dir := range []string{"vendor/dep", ".git/hooks", ".cvefix/cache"} {
+	for _, dir := range []string{"vendor/dep", ".git/hooks", ".patchpilot/cache"} {
 		skipDir := filepath.Join(repo, dir)
 		if err := os.MkdirAll(skipDir, 0o755); err != nil {
 			t.Fatalf("mkdir skipped dir %s: %v", skipDir, err)

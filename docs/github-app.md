@@ -1,6 +1,6 @@
 # PatchPilot GitHub App
 
-`patchpilot-app` is a webhook service that runs `cvefix` on repositories where your GitHub App is installed and opens remediation pull requests.
+`patchpilot-app` is a webhook service that runs `PatchPilot` on repositories where your GitHub App is installed and opens remediation pull requests.
 
 ## Supported triggers
 
@@ -10,10 +10,8 @@
 Slash command format:
 
 ```text
-/cvefix fix [--policy <path>] [--policy-mode <merge|override>] [--auto-merge]
+/patchpilot fix [--policy <path>] [--policy-mode <merge|override>] [--auto-merge]
 ```
-
-`/patchpilot fix` is accepted as an alias.
 
 ## App permissions and events
 
@@ -36,7 +34,7 @@ Use these minimum GitHub App permissions:
 - `PP_PRIVATE_KEY_PATH` or `PP_PRIVATE_KEY_PEM` (required): app private key.
 - `PP_LISTEN_ADDR` (optional, default `:8080`): HTTP listen address.
 - `PP_WORKDIR` (optional): temporary working directory root.
-- `PP_CVEFIX_BINARY` (optional, default `cvefix`): path to cvefix binary.
+- `PP_PATCHPILOT_BINARY` (optional, default `patchpilot`): path to the PatchPilot binary.
 - `PP_ALLOWED_REPOS` (optional): comma-separated allow-list (`org/repo,org/repo2`).
 - `PP_ENABLE_PUSH_AUTOFIX` (optional, default `false`): enable push-triggered remediation.
 - `PP_GITHUB_WEB_BASE_URL` (optional, default `https://github.com`): clone URL base.
@@ -84,9 +82,9 @@ PP_WEBHOOK_URL=https://patchpilot.example.com/webhook \
 
 ## Typical flow
 
-1. User comments `/cvefix fix` on an issue/PR.
+1. User comments `/patchpilot fix` on an issue/PR.
 2. App clones the repository default branch with an installation token.
-3. App runs `cvefix fix --enable-agent=false`.
+3. App runs `patchpilot fix --enable-agent=false`.
 4. If files changed, app commits on `patchpilot/auto-fix-<timestamp>` and opens a PR.
 5. If no change is needed, app posts a status comment.
 

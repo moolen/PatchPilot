@@ -430,8 +430,8 @@ func syncJSLockfiles(ctx context.Context, dir string, requirements map[string]st
 		if err := runPNPMLockfileSyncFunc(ctx, dir); err != nil {
 			fallbackPatches, fallbackErr := patchPNPMLockfileDirect(filepath.Join(dir, pnpmLockFile), requirements)
 			if fallbackErr != nil {
-				fmt.Fprintf(os.Stderr, "cvefix: warn: skipping pnpm lockfile sync in %s: %v\n", dir, err)
-				fmt.Fprintf(os.Stderr, "cvefix: warn: pnpm direct lockfile fallback in %s also failed: %v\n", dir, fallbackErr)
+				fmt.Fprintf(os.Stderr, "patchpilot: warn: skipping pnpm lockfile sync in %s: %v\n", dir, err)
+				fmt.Fprintf(os.Stderr, "patchpilot: warn: pnpm direct lockfile fallback in %s also failed: %v\n", dir, fallbackErr)
 			} else {
 				patches := append(detectChangedLockfiles(before), fallbackPatches...)
 				return dedupePatchList(patches), nil
@@ -440,7 +440,7 @@ func syncJSLockfiles(ctx context.Context, dir string, requirements map[string]st
 	}
 	if kinds.Yarn {
 		if err := runYarnLockfileSyncFunc(ctx, dir); err != nil {
-			fmt.Fprintf(os.Stderr, "cvefix: warn: skipping yarn lockfile sync in %s: %v\n", dir, err)
+			fmt.Fprintf(os.Stderr, "patchpilot: warn: skipping yarn lockfile sync in %s: %v\n", dir, err)
 		}
 	}
 

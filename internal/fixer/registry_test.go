@@ -147,7 +147,7 @@ func TestMaybePatchFromUsesRegistryTagResolution(t *testing.T) {
 
 func TestDefaultRegistryCacheDirUsesEnvOverride(t *testing.T) {
 	want := filepath.Join(t.TempDir(), "registry-cache")
-	t.Setenv("CVEFIX_REGISTRY_CACHE_DIR", want)
+	t.Setenv("PATCHPILOT_REGISTRY_CACHE_DIR", want)
 
 	got, err := defaultRegistryCacheDir()
 	if err != nil {

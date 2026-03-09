@@ -13,7 +13,7 @@ func TestIssueCommentMessagesGolden(t *testing.T) {
 	payload := map[string]string{
 		"started":                   remediationStartedComment(),
 		"invalid_command":           invalidCommandComment(errors.New("unknown option")),
-		"failed":                    remediationFailedComment(errors.New("cvefix failed")),
+		"failed":                    remediationFailedComment(errors.New("PatchPilot failed")),
 		"blocked":                   remediationBlockedComment("risk score too high", 42),
 		"no_changes":                remediationNoChangesComment(0),
 		"pr_upsert_failed":          remediationPRUpsertFailedComment(errors.New("api unavailable")),
@@ -32,7 +32,7 @@ func TestIssueCommentMessagesGolden(t *testing.T) {
 
 func TestRemediationPRBodyGolden(t *testing.T) {
 	service := &Service{}
-	body := service.remediationPRBody("issue comment by @alice", "/cvefix fix", fixRunResult{
+	body := service.remediationPRBody("issue comment by @alice", "/patchpilot fix", fixRunResult{
 		ExitCode:     23,
 		Stdout:       "stdout line",
 		Stderr:       "stderr line",

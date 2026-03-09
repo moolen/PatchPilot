@@ -110,7 +110,7 @@ func TestIssueCommentRunKeyUsesCommentID(t *testing.T) {
 	event := &github.IssueCommentEvent{
 		Comment: &github.IssueComment{
 			ID:   github.Ptr(int64(77)),
-			Body: github.Ptr("/cvefix fix"),
+			Body: github.Ptr("/patchpilot fix"),
 		},
 		Issue: &github.Issue{Number: github.Ptr(9)},
 		Repo:  &github.Repository{FullName: github.Ptr("Acme/Demo")},
@@ -124,7 +124,7 @@ func TestIssueCommentRunKeyUsesCommentID(t *testing.T) {
 
 func TestIssueCommentRunKeyFallbackDiffersByDelivery(t *testing.T) {
 	event := &github.IssueCommentEvent{
-		Comment: &github.IssueComment{Body: github.Ptr("/cvefix fix")},
+		Comment: &github.IssueComment{Body: github.Ptr("/patchpilot fix")},
 		Issue:   &github.Issue{Number: github.Ptr(9)},
 		Repo:    &github.Repository{FullName: github.Ptr("acme/demo")},
 		Sender:  &github.User{Login: github.Ptr("alice")},

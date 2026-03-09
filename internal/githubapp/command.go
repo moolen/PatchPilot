@@ -22,7 +22,7 @@ func ParseFixCommand(body string) (FixCommand, bool, error) {
 		if len(tokens) < 2 {
 			continue
 		}
-		if tokens[0] != "/cvefix" && tokens[0] != "/patchpilot" {
+		if tokens[0] != "/patchpilot" {
 			continue
 		}
 		if tokens[1] != "fix" {

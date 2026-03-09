@@ -49,7 +49,7 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
-	tracker.endStageSuccess(stage, map[string]any{"path": ".cvefix/findings.sarif"})
+	tracker.endStageSuccess(stage, map[string]any{"path": ".patchpilot/findings.sarif"})
 
 	stage = tracker.beginStage("build_summary")
 	summary := report.BuildSummary(baseline, after, nil)

@@ -76,7 +76,7 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Build cvefix
+      - name: Build PatchPilot
         run: make build
 
       - name: Clone target repository
@@ -96,7 +96,7 @@ jobs:
           mkdir -p "$run_dir"
 
           set +e
-          ./bin/cvefix fix --dir "$repo_dir" --enable-agent=false --json >"$run_dir/cvefix.log" 2>&1
+          ./bin/patchpilot fix --dir "$repo_dir" --enable-agent=false --json >"$run_dir/patchpilot.log" 2>&1
           code=$?
           set -e
 
@@ -111,14 +111,14 @@ jobs:
               ;;
           esac
 
-          if [[ -f "$repo_dir/.cvefix/run.json" ]]; then
-            cp "$repo_dir/.cvefix/run.json" "$run_dir/run.json"
+          if [[ -f "$repo_dir/.patchpilot/run.json" ]]; then
+            cp "$repo_dir/.patchpilot/run.json" "$run_dir/run.json"
           fi
-          if [[ -f "$repo_dir/.cvefix/summary.json" ]]; then
-            cp "$repo_dir/.cvefix/summary.json" "$run_dir/summary.json"
+          if [[ -f "$repo_dir/.patchpilot/summary.json" ]]; then
+            cp "$repo_dir/.patchpilot/summary.json" "$run_dir/summary.json"
           fi
-          if [[ -f "$repo_dir/.cvefix/findings.json" ]]; then
-            cp "$repo_dir/.cvefix/findings.json" "$run_dir/findings.json"
+          if [[ -f "$repo_dir/.patchpilot/findings.json" ]]; then
+            cp "$repo_dir/.patchpilot/findings.json" "$run_dir/findings.json"
           fi
 
           before="n/a"
@@ -148,5 +148,5 @@ jobs:
         if: ${{ steps.benchmark.outputs.unexpected == 'true' }}
         shell: bash
         run: |
-          echo "Unexpected cvefix exit code for ${{ matrix.repo }}: ${{ steps.benchmark.outputs.exit_code }}"
+          echo "Unexpected PatchPilot exit code for ${{ matrix.repo }}: ${{ steps.benchmark.outputs.exit_code }}"
           exit 1

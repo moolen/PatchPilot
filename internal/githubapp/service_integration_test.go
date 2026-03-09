@@ -28,7 +28,7 @@ import (
 func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
 
 	fakeAPI := newFakeGitHubAPI(owner, repo)
 	server := httptest.NewServer(fakeAPI)
@@ -40,7 +40,7 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
 		ListenAddr:         ":0",
 		WorkDir:            filepath.Join(temp, "work"),
-		CVEFixBinary:       cvefixPath,
+		PatchPilotBinary:   patchpilotPath,
 		GitHubBaseWebURL:   "file://" + remoteRoot,
 		GitHubAPIBaseURL:   server.URL + "/api/v3/",
 		GitHubUploadAPIURL: server.URL + "/api/uploads/",
@@ -57,7 +57,7 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 
 	payload := []byte(`{
 		"action":"created",
-		"comment":{"id":101,"body":"/cvefix fix --auto-merge"},
+		"comment":{"id":101,"body":"/patchpilot fix --auto-merge"},
 		"issue":{"number":1},
 		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
 		"sender":{"login":"alice"},
@@ -66,7 +66,7 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 
 	nextCommentPayload := []byte(`{
 		"action":"created",
-		"comment":{"id":102,"body":"/cvefix fix --auto-merge"},
+		"comment":{"id":102,"body":"/patchpilot fix --auto-merge"},
 		"issue":{"number":1},
 		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
 		"sender":{"login":"alice"},
@@ -122,7 +122,7 @@ func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
 func TestHandleWebhookPushE2E_RunIdempotencyKey(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
 
 	fakeAPI := newFakeGitHubAPI(owner, repo)
 	server := httptest.NewServer(fakeAPI)
@@ -134,7 +134,7 @@ func TestHandleWebhookPushE2E_RunIdempotencyKey(t *testing.T) {
 		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
 		ListenAddr:         ":0",
 		WorkDir:            filepath.Join(temp, "work"),
-		CVEFixBinary:       cvefixPath,
+		PatchPilotBinary:   patchpilotPath,
 		EnablePushAutofix:  true,
 		GitHubBaseWebURL:   "file://" + remoteRoot,
 		GitHubAPIBaseURL:   server.URL + "/api/v3/",
@@ -175,7 +175,7 @@ func TestHandleWebhookPushE2E_RunIdempotencyKey(t *testing.T) {
 func TestHandleWebhookIssueCommentE2E_RetriesTransientGitHubFailures(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
 
 	fakeAPI := newFakeGitHubAPI(owner, repo)
 	fakeAPI.setFailures("token",
@@ -213,7 +213,7 @@ func TestHandleWebhookIssueCommentE2E_RetriesTransientGitHubFailures(t *testing.
 		PrivateKeyPEM:       generateTestPrivateKeyPEM(t),
 		ListenAddr:          ":0",
 		WorkDir:             filepath.Join(temp, "work"),
-		CVEFixBinary:        cvefixPath,
+		PatchPilotBinary:    patchpilotPath,
 		GitHubBaseWebURL:    "file://" + remoteRoot,
 		GitHubAPIBaseURL:    server.URL + "/api/v3/",
 		GitHubUploadAPIURL:  server.URL + "/api/uploads/",
@@ -233,7 +233,7 @@ func TestHandleWebhookIssueCommentE2E_RetriesTransientGitHubFailures(t *testing.
 
 	payload := []byte(`{
 		"action":"created",
-		"comment":{"id":201,"body":"/cvefix fix --auto-merge"},
+		"comment":{"id":201,"body":"/patchpilot fix --auto-merge"},
 		"issue":{"number":1},
 		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
 		"sender":{"login":"alice"},
@@ -266,7 +266,7 @@ func TestHandleWebhookIssueCommentE2E_RetriesTransientGitHubFailures(t *testing.
 func TestHandleWebhookIssueCommentE2E_RetryExhaustionFailsCleanly(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
 
 	fakeAPI := newFakeGitHubAPI(owner, repo)
 	fakeAPI.setFailures("create_pr",
@@ -289,7 +289,7 @@ func TestHandleWebhookIssueCommentE2E_RetryExhaustionFailsCleanly(t *testing.T) 
 		PrivateKeyPEM:       generateTestPrivateKeyPEM(t),
 		ListenAddr:          ":0",
 		WorkDir:             filepath.Join(temp, "work"),
-		CVEFixBinary:        cvefixPath,
+		PatchPilotBinary:    patchpilotPath,
 		GitHubBaseWebURL:    "file://" + remoteRoot,
 		GitHubAPIBaseURL:    server.URL + "/api/v3/",
 		GitHubUploadAPIURL:  server.URL + "/api/uploads/",
@@ -309,7 +309,7 @@ func TestHandleWebhookIssueCommentE2E_RetryExhaustionFailsCleanly(t *testing.T) 
 
 	payload := []byte(`{
 		"action":"created",
-		"comment":{"id":301,"body":"/cvefix fix"},
+		"comment":{"id":301,"body":"/patchpilot fix"},
 		"issue":{"number":1},
 		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
 		"sender":{"login":"alice"},
@@ -347,7 +347,7 @@ func TestHandleWebhookIssueCommentE2E_RetryExhaustionFailsCleanly(t *testing.T) 
 func TestHandleWebhookPushE2EBlockedBySafety(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	cvefixPath := setupFakeCVEFix(t, temp, "README.md")
+	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
 
 	fakeAPI := newFakeGitHubAPI(owner, repo)
 	server := httptest.NewServer(fakeAPI)
@@ -359,7 +359,7 @@ func TestHandleWebhookPushE2EBlockedBySafety(t *testing.T) {
 		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
 		ListenAddr:         ":0",
 		WorkDir:            filepath.Join(temp, "work"),
-		CVEFixBinary:       cvefixPath,
+		PatchPilotBinary:   patchpilotPath,
 		EnablePushAutofix:  true,
 		GitHubBaseWebURL:   "file://" + remoteRoot,
 		GitHubAPIBaseURL:   server.URL + "/api/v3/",
@@ -432,13 +432,13 @@ func generateTestPrivateKeyPEM(t *testing.T) string {
 	return string(encoded)
 }
 
-func setupFakeCVEFix(t *testing.T, root, targetFile string) string {
+func setupFakePatchPilot(t *testing.T, root, targetFile string) string {
 	t.Helper()
 	binDir := filepath.Join(root, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
 	}
-	path := filepath.Join(binDir, "cvefix")
+	path := filepath.Join(binDir, "patchpilot")
 	script := "#!/bin/sh\nset -eu\n" +
 		"dir=\"\"\n" +
 		"while [ \"$#\" -gt 0 ]; do\n" +
@@ -448,16 +448,16 @@ func setupFakeCVEFix(t *testing.T, root, targetFile string) string {
 		"  esac\n" +
 		"done\n" +
 		"echo \"patched $(date +%s)\" >> \"$dir/" + targetFile + "\"\n" +
-		"mkdir -p \"$dir/.cvefix\"\n" +
-		"cat <<'EOF' > \"$dir/.cvefix/summary.json\"\n" +
+		"mkdir -p \"$dir/.patchpilot\"\n" +
+		"cat <<'EOF' > \"$dir/.patchpilot/summary.json\"\n" +
 		"{\"before\":1,\"fixed\":1,\"after\":0}\n" +
 		"EOF\n" +
-		"cat <<'EOF' > \"$dir/.cvefix/verification.json\"\n" +
+		"cat <<'EOF' > \"$dir/.patchpilot/verification.json\"\n" +
 		"{\"mode\":\"standard\",\"modules\":[],\"regressions\":[]}\n" +
 		"EOF\n" +
 		"exit 0\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake cvefix: %v", err)
+		t.Fatalf("write fake patchpilot: %v", err)
 	}
 	return path
 }

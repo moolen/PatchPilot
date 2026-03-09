@@ -23,7 +23,7 @@ func PrintCurrent(w io.Writer, repo string, report *vuln.Report) {
 
 	_, _ = fmt.Fprintf(w, "Repository: %s\n", repo)
 	_, _ = fmt.Fprintf(w, "Findings with fix version: %d\n", len(report.Findings))
-	_, _ = fmt.Fprintf(w, "Unsupported by cvefix: %d\n", unsupported)
+	_, _ = fmt.Fprintf(w, "Unsupported by PatchPilot: %d\n", unsupported)
 	_, _ = fmt.Fprintf(w, "Ignored without fix version: %d\n", report.IgnoredWithoutFix)
 	_, _ = fmt.Fprintf(w, "Ignored by policy: %d\n", report.IgnoredByPolicy)
 	if len(rows) == 0 {
@@ -46,7 +46,7 @@ func PrintCurrent(w io.Writer, repo string, report *vuln.Report) {
 	}
 	printTable(w, []string{"CVE", "Package", "File Location", "Fixable"}, table)
 	if len(rows) > limit {
-		_, _ = fmt.Fprintf(w, "... %d more findings written to .cvefix/findings.json\n", len(rows)-limit)
+		_, _ = fmt.Fprintf(w, "... %d more findings written to .patchpilot/findings.json\n", len(rows)-limit)
 	}
 }
 
@@ -78,7 +78,7 @@ func PrintSummary(w io.Writer, summary Summary) {
 		}
 	}
 	if len(summary.Unsupported) > 0 {
-		_, _ = fmt.Fprintln(w, "Unsupported by cvefix (still actionable):")
+		_, _ = fmt.Fprintln(w, "Unsupported by PatchPilot (still actionable):")
 		for _, finding := range summary.Unsupported {
 			target := finding.Target
 			if target == "" {

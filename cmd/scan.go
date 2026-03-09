@@ -45,7 +45,7 @@ func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bo
 		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
-	tracker.endStageSuccess(stage, map[string]any{"path": ".cvefix/findings.sarif"})
+	tracker.endStageSuccess(stage, map[string]any{"path": ".patchpilot/findings.sarif"})
 
 	stage = tracker.beginStage("print_report")
 	report.PrintCurrent(os.Stdout, repo, vulnReport)

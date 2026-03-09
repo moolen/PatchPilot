@@ -8,7 +8,7 @@ LINT_BIN ?= $(LINT_TOOLS_DIR)/bin/golangci-lint
 
 build:
 	mkdir -p bin
-	go build -o bin/cvefix ./cmd/cvefix
+	go build -o bin/patchpilot ./cmd/patchpilot
 	go build -o bin/patchpilot-app ./cmd/patchpilot-app
 
 build.app:

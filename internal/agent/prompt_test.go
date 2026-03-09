@@ -40,7 +40,7 @@ func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
 		RemainingVulnerabilities: "{}",
 		PreviousAttemptSummaries: []string{"attempt 1 failed"},
 		ValidationCommands:       []string{"make verify"},
-		PromptFilePath:           "/repo/.cvefix/agent/attempt-1/prompt.txt",
+		PromptFilePath:           "/repo/.patchpilot/agent/attempt-1/prompt.txt",
 	})
 
 	if !strings.Contains(prompt, "- attempt 1 failed") {
@@ -52,7 +52,7 @@ func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
 	if strings.Contains(prompt, "go build ./...") {
 		t.Fatalf("expected default commands to be omitted when explicit commands are set, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Prompt file path: /repo/.cvefix/agent/attempt-1/prompt.txt") {
+	if !strings.Contains(prompt, "Prompt file path: /repo/.patchpilot/agent/attempt-1/prompt.txt") {
 		t.Fatalf("expected prompt file path in prompt, got:\n%s", prompt)
 	}
 }

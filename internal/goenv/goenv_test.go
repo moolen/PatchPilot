@@ -10,7 +10,7 @@ import (
 func TestCommandEnvUsesRepoStateDir(t *testing.T) {
 	repo := t.TempDir()
 	moduleDir := filepath.Join(repo, "nested", "module")
-	stateDir := filepath.Join(repo, ".cvefix")
+	stateDir := filepath.Join(repo, ".patchpilot")
 	for _, dir := range []string{moduleDir, stateDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)

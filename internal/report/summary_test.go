@@ -48,7 +48,7 @@ func TestPrintCurrentShowsUnsupportedCount(t *testing.T) {
 	var out strings.Builder
 	PrintCurrent(&out, "/repo", report)
 	text := out.String()
-	if !strings.Contains(text, "Unsupported by cvefix: 1") {
+	if !strings.Contains(text, "Unsupported by PatchPilot: 1") {
 		t.Fatalf("expected unsupported count in output, got:\n%s", text)
 	}
 	if !strings.Contains(text, "File Location") || !strings.Contains(text, "Fixable") {
@@ -89,7 +89,7 @@ func TestPrintSummaryShowsUnsupportedSection(t *testing.T) {
 	if !containsCompactedLine(text, "CVE-1 stdlib unknown not fixed requires Go toolchain upgrade") {
 		t.Fatalf("expected not-fixed table row with reason, got:\n%s", text)
 	}
-	if !strings.Contains(text, "Unsupported by cvefix (still actionable):") {
+	if !strings.Contains(text, "Unsupported by PatchPilot (still actionable):") {
 		t.Fatalf("expected unsupported section, got:\n%s", text)
 	}
 	if !strings.Contains(text, "requires Go toolchain upgrade") {
@@ -174,7 +174,7 @@ func TestPrintSummaryShowsUnsupportedSectionManualSummary(t *testing.T) {
 	var out strings.Builder
 	PrintSummary(&out, summary)
 	text := out.String()
-	if !strings.Contains(text, "Unsupported by cvefix (still actionable):") {
+	if !strings.Contains(text, "Unsupported by PatchPilot (still actionable):") {
 		t.Fatalf("expected unsupported section, got:\n%s", text)
 	}
 	if !strings.Contains(text, "requires Go toolchain upgrade") {
@@ -199,7 +199,7 @@ func TestWriteSummaryCreatesStateDir(t *testing.T) {
 	if err := WriteSummary(repo, Summary{Before: 1}); err != nil {
 		t.Fatalf("WriteSummary returned error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".cvefix", summaryFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(repo, ".patchpilot", summaryFile)); err != nil {
 		t.Fatalf("expected summary file to exist: %v", err)
 	}
 }

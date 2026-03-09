@@ -239,7 +239,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		tracker.endStageFailure(stage, err, nil)
 		return err
 	}
-	tracker.endStageSuccess(stage, map[string]any{"path": ".cvefix/findings.sarif"})
+	tracker.endStageSuccess(stage, map[string]any{"path": ".patchpilot/findings.sarif"})
 
 	logProgress("writing summary report")
 	stage = tracker.beginStage("write_summary")
