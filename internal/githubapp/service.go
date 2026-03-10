@@ -47,6 +47,8 @@ type repositoryCronSchedule struct {
 	Key      string
 }
 
+const policyRequiredMissingScheduleKey = "repository-policy-required-missing"
+
 func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 	if logger == nil {
 		logger = log.New(os.Stderr, "[patchpilot-app] ", log.LstdFlags)
@@ -231,7 +233,67 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 		})
 	}
 
-	_, schedule, enabled, err := service.loadRepositoryPolicy(parentCtx, client, owner, repo, defaultBranch)
+	if len(service.cfg.RepositoryLabelSelectors) > 0 || len(service.cfg.RepositoryIgnoreLabelSelectors) > 0 {
+		labels, err := service.repositoryLabels(parentCtx, client, owner, repo)
+		if err != nil {
+			if service.metrics != nil {
+				service.metrics.IncFailure("repository_labels")
+				service.metrics.IncSchedulerRepositoryState("repository_labels_failed")
+			}
+			service.log("error", "load repository labels failed", map[string]interface{}{
+				"owner": owner,
+				"repo":  repo,
+				"error": err.Error(),
+			})
+			return
+		}
+		if repositoryMatchesLabelSelectors(labels, service.cfg.RepositoryIgnoreLabelSelectors) {
+			if service.metrics != nil {
+				service.metrics.IncSchedulerRepositoryState("label_ignored")
+			}
+			if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+				state.ScheduleKey = labelIgnoredScheduleKey
+				state.NextRunAt = time.Time{}
+			}, now); err != nil {
+				service.log("warn", "persist ignored repository state failed", map[string]interface{}{
+					"owner": owner,
+					"repo":  repo,
+					"error": err.Error(),
+				})
+			}
+			service.log("info", "repository skipped by ignore label selector", map[string]interface{}{
+				"owner":             owner,
+				"repo":              repo,
+				"repository_labels": labels,
+				"ignore_labels":     service.cfg.RepositoryIgnoreLabelSelectors,
+			})
+			return
+		}
+		if len(service.cfg.RepositoryLabelSelectors) > 0 && !repositoryMatchesLabelSelectors(labels, service.cfg.RepositoryLabelSelectors) {
+			if service.metrics != nil {
+				service.metrics.IncSchedulerRepositoryState("label_filtered")
+			}
+			if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+				state.ScheduleKey = labelFilteredScheduleKey
+				state.NextRunAt = time.Time{}
+			}, now); err != nil {
+				service.log("warn", "persist label-filtered repository state failed", map[string]interface{}{
+					"owner": owner,
+					"repo":  repo,
+					"error": err.Error(),
+				})
+			}
+			service.log("info", "repository skipped by label selector", map[string]interface{}{
+				"owner":             owner,
+				"repo":              repo,
+				"repository_labels": labels,
+				"required_labels":   service.cfg.RepositoryLabelSelectors,
+			})
+			return
+		}
+	}
+
+	_, schedule, enabled, hasPolicyFile, err := service.loadRepositoryPolicy(parentCtx, client, owner, repo, defaultBranch)
 	if err != nil {
 		if service.metrics != nil {
 			service.metrics.IncFailure("load_policy")
@@ -242,6 +304,27 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 			"repo":   repo,
 			"error":  err.Error(),
 			"branch": defaultBranch,
+		})
+		return
+	}
+	if service.cfg.RequirePolicyFile && !hasPolicyFile {
+		if service.metrics != nil {
+			service.metrics.IncSchedulerRepositoryState("policy_file_missing")
+		}
+		if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+			state.ScheduleKey = policyRequiredMissingScheduleKey
+			state.NextRunAt = time.Time{}
+		}, now); err != nil {
+			service.log("warn", "persist policy-file-missing repository state failed", map[string]interface{}{
+				"owner": owner,
+				"repo":  repo,
+				"error": err.Error(),
+			})
+		}
+		service.log("info", "repository skipped because required policy file is missing", map[string]interface{}{
+			"owner":       owner,
+			"repo":        repo,
+			"policy_file": policy.FileName,
 		})
 		return
 	}
@@ -585,7 +668,7 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, defaul
 	}, nil
 }
 
-func (service *Service) loadRepositoryPolicy(ctx context.Context, client *github.Client, owner, repo, defaultBranch string) (*policy.Config, *repositoryCronSchedule, bool, error) {
+func (service *Service) loadRepositoryPolicy(ctx context.Context, client *github.Client, owner, repo, defaultBranch string) (*policy.Config, *repositoryCronSchedule, bool, bool, error) {
 	cfg := policy.Default()
 	var content *github.RepositoryContent
 	err := service.withGitHubRetry(ctx, "get_policy_file", func(callCtx context.Context) error {
@@ -601,24 +684,24 @@ func (service *Service) loadRepositoryPolicy(ctx context.Context, client *github
 	if err != nil {
 		if isGitHubNotFound(err) {
 			schedule, enabled, scheduleErr := buildRepositoryCronSchedule(cfg)
-			return cfg, schedule, enabled, scheduleErr
+			return cfg, schedule, enabled, false, scheduleErr
 		}
-		return nil, nil, false, err
+		return nil, nil, false, false, err
 	}
 
 	text, err := content.GetContent()
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("decode %s: %w", policy.FileName, err)
+		return nil, nil, false, false, fmt.Errorf("decode %s: %w", policy.FileName, err)
 	}
 	cfg, err = policy.ParseYAMLWithOptions([]byte(text), policy.ParseOptions{UntrustedRepo: true})
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, true, err
 	}
 	schedule, enabled, err := buildRepositoryCronSchedule(cfg)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, true, err
 	}
-	return cfg, schedule, enabled, nil
+	return cfg, schedule, enabled, true, nil
 }
 
 func (service *Service) claimRepositoryRun(repoKey string, schedule *repositoryCronSchedule, now time.Time) (time.Time, bool, error) {
@@ -690,6 +773,19 @@ func (service *Service) listInstallationRepos(ctx context.Context, client *githu
 		}
 		options.Page = response.NextPage
 	}
+}
+
+func (service *Service) repositoryLabels(ctx context.Context, client *github.Client, owner, repo string) ([]string, error) {
+	topics := make([]string, 0)
+	err := service.withGitHubRetry(ctx, "list_repository_topics", func(callCtx context.Context) error {
+		var listErr error
+		topics, _, listErr = client.Repositories.ListAllTopics(callCtx, owner, repo)
+		return listErr
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list repository topics: %w", err)
+	}
+	return normalizeRepositoryLabels(topics), nil
 }
 
 func (service *Service) installationClient(ctx context.Context, installationID int64) (*github.Client, string, error) {

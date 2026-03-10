@@ -32,6 +32,8 @@ Use these minimum GitHub App permissions:
 
 Install the app on the repositories you want PatchPilot to manage. Installed repositories are discovered automatically.
 
+For gradual rollout, PatchPilot can gate scheduled work on repository topics. GitHub does not have first-class repository labels, so PatchPilot treats repository topics as rollout labels.
+
 ## Environment
 
 Required:
@@ -52,9 +54,23 @@ Common optional settings:
 - `PP_GITHUB_API_BASE_URL` and `PP_GITHUB_UPLOAD_API_URL`: set both for GitHub Enterprise.
 - `PP_ENABLE_AUTO_MERGE`: allow auto-merge enablement when PatchPilot requests it.
 - `PP_DISALLOWED_PATHS`: block PR creation for matching changed paths.
+- `PP_REPOSITORY_LABEL_SELECTOR`: comma-separated repository topic selectors for opt-in rollout. If set, a repository must match at least one selector before PatchPilot will scan it. Wildcards such as `patchpilot-*` are supported.
+- `PP_REPOSITORY_IGNORE_LABEL_SELECTOR`: comma-separated repository topic selectors that force PatchPilot to skip a repository even if it matches the opt-in selector.
 - `PP_LISTEN_ADDR`: HTTP listen address if you expose health/metrics endpoints.
 - `PP_METRICS_PATH`: metrics endpoint path. Defaults to `/metrics`.
 - `PP_GITHUB_RETRY_MAX_ATTEMPTS`, `PP_GITHUB_RETRY_INITIAL_BACKOFF`, `PP_GITHUB_RETRY_MAX_BACKOFF`: GitHub API retry controls.
+
+Example gradual rollout:
+
+```bash
+PP_REPOSITORY_LABEL_SELECTOR=patchpilot,opt-in-security \
+PP_REPOSITORY_IGNORE_LABEL_SELECTOR=patchpilot-ignore \
+./bin/patchpilot-app
+```
+
+- Add a matching topic such as `patchpilot` to let engineers opt a repository in.
+- Add an ignore topic such as `patchpilot-ignore` to force that repository out of scope.
+- Ignore selectors win over opt-in selectors.
 
 ## Run
 
@@ -64,6 +80,16 @@ PP_APP_ID=123 \
 PP_PRIVATE_KEY_PATH=./private-key.pem \
 ./bin/patchpilot-app
 ```
+
+Require an in-repo policy file before the scheduler will process a repository:
+
+```bash
+PP_APP_ID=123 \
+PP_PRIVATE_KEY_PATH=./private-key.pem \
+./bin/patchpilot-app run --require-policy-file
+```
+
+With `--require-policy-file`, repositories that do not contain `.patchpilot.yaml` are skipped entirely instead of inheriting the default scan schedule.
 
 Container image:
 

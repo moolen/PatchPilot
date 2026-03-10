@@ -77,6 +77,29 @@ func TestSchedulerCycleRespectsDisabledSchedule(t *testing.T) {
 	}
 }
 
+func TestSchedulerCycleSkipsRepositoryWithoutPolicyFileWhenRequired(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	service.cfg.RequirePolicyFile = true
+	service.runSchedulerCycle(context.Background())
+
+	created, edited := fakeAPI.counts()
+	if created != 0 || edited != 0 {
+		t.Fatalf("expected no PR activity, got created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 0 {
+		t.Fatalf("scan count = %d, want 0", count)
+	}
+}
+
 func TestSchedulerCycleIgnoresPatchpilotArtifacts(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
@@ -97,6 +120,82 @@ func TestSchedulerCycleIgnoresPatchpilotArtifacts(t *testing.T) {
 	}
 	if count := readInvocationCount(t, scanCountPath); count != 1 {
 		t.Fatalf("scan count = %d, want 1", count)
+	}
+}
+
+func TestSchedulerCycleRequiresRepositoryOptInLabel(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.topics = []string{"team-a"}
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	service.cfg.RepositoryLabelSelectors = []string{"patchpilot"}
+	service.runSchedulerCycle(context.Background())
+
+	created, edited := fakeAPI.counts()
+	if created != 0 || edited != 0 {
+		t.Fatalf("expected no PR activity, got created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 0 {
+		t.Fatalf("scan count = %d, want 0", count)
+	}
+}
+
+func TestSchedulerCycleProcessesRepositoryWhenOptInLabelMatches(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.topics = []string{"patchpilot", "team-a"}
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	service.cfg.RepositoryLabelSelectors = []string{"patch*"}
+	service.runSchedulerCycle(context.Background())
+
+	created, edited := fakeAPI.counts()
+	if created != 1 || edited != 0 {
+		t.Fatalf("unexpected PR counts: created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 1 {
+		t.Fatalf("scan count = %d, want 1", count)
+	}
+}
+
+func TestSchedulerCycleIgnoreLabelOverridesOptInLabel(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.topics = []string{"patchpilot", "patchpilot-ignore"}
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	service.cfg.RepositoryLabelSelectors = []string{"patchpilot"}
+	service.cfg.RepositoryIgnoreLabelSelectors = []string{"*-ignore"}
+	service.runSchedulerCycle(context.Background())
+
+	created, edited := fakeAPI.counts()
+	if created != 0 || edited != 0 {
+		t.Fatalf("expected no PR activity, got created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 0 {
+		t.Fatalf("scan count = %d, want 0", count)
 	}
 }
 
@@ -278,6 +377,7 @@ type fakeSchedulerGitHubAPI struct {
 
 	owner         string
 	repo          string
+	topics        []string
 	policyContent string
 	prs           map[int]fakePR
 	nextPRNumber  int
@@ -357,6 +457,13 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 					},
 				},
 			},
+		})
+		return
+	}
+
+	if path == "/api/v3/repos/"+api.owner+"/"+api.repo+"/topics" && request.Method == http.MethodGet {
+		writeJSON(writer, map[string]interface{}{
+			"names": api.topics,
 		})
 		return
 	}
