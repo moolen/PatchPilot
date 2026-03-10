@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -151,5 +152,31 @@ func TestSchemaCommandPrintsJSONSchema(t *testing.T) {
 	}
 	if !strings.Contains(text, "\"PatchPilot Policy\"") {
 		t.Fatalf("expected schema title, got:\n%s", text)
+	}
+}
+
+func TestNormalizeBoolFlagArgsRewritesEnableAgentFalse(t *testing.T) {
+	args := []string{"fix", "--enable-agent", "false", "--dir", "/repo"}
+	got := normalizeBoolFlagArgs(args)
+	want := []string{"fix", "--enable-agent=false", "--dir", "/repo"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected normalized args: got %#v want %#v", got, want)
+	}
+}
+
+func TestNormalizeBoolFlagArgsRewritesEnableAgentTrue(t *testing.T) {
+	args := []string{"fix", "--enable-agent", "TRUE", "--dir", "/repo"}
+	got := normalizeBoolFlagArgs(args)
+	want := []string{"fix", "--enable-agent=true", "--dir", "/repo"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("unexpected normalized args: got %#v want %#v", got, want)
+	}
+}
+
+func TestNormalizeBoolFlagArgsLeavesPositionalArgsAfterDoubleDash(t *testing.T) {
+	args := []string{"fix", "--", "--enable-agent", "false"}
+	got := normalizeBoolFlagArgs(args)
+	if !slices.Equal(got, args) {
+		t.Fatalf("unexpected normalized args after --: got %#v want %#v", got, args)
 	}
 }

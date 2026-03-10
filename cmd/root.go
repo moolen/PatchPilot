@@ -34,8 +34,33 @@ var (
 
 func Execute(args []string) error {
 	command := NewRootCommand()
-	command.SetArgs(args)
+	command.SetArgs(normalizeBoolFlagArgs(args))
 	return command.Execute()
+}
+
+func normalizeBoolFlagArgs(args []string) []string {
+	if len(args) < 2 {
+		return args
+	}
+
+	normalized := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		current := args[index]
+		if current == "--" {
+			normalized = append(normalized, args[index:]...)
+			break
+		}
+		if current == "--enable-agent" && index+1 < len(args) {
+			next := strings.TrimSpace(args[index+1])
+			if strings.EqualFold(next, "true") || strings.EqualFold(next, "false") {
+				normalized = append(normalized, current+"="+strings.ToLower(next))
+				index++
+				continue
+			}
+		}
+		normalized = append(normalized, current)
+	}
+	return normalized
 }
 
 func NewRootCommand() *cobra.Command {
