@@ -73,8 +73,7 @@ func standardNonGoChecksForDir(absDir string) []checkDefinition {
 		checks = append(checks, checkDefinition{
 			Name: "cargo-manifest-parse",
 			Internal: func(ctx context.Context, dir string) error {
-				_ = ctx
-				return verifyCargoManifest(filepath.Join(dir, "Cargo.toml"))
+				return verifyCargoProject(ctx, dir)
 			},
 		})
 	}

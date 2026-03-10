@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -17,6 +18,10 @@ var (
 	cargoSimpleDependencyPattern = regexp.MustCompile(`^(\s*([A-Za-z0-9_.-]+)\s*=\s*")([^"]+)("\s*(?:#.*)?)$`)
 	cargoInlineDependencyPattern = regexp.MustCompile(`^(\s*([A-Za-z0-9_.-]+)\s*=\s*\{[^\n#}]*\bversion\s*=\s*")([^"]+)("[^\n}]*\}\s*(?:#.*)?)$`)
 )
+
+var runCargoLockfileSyncFunc = runCargoLockfileSync
+
+const cargoLockfilePatch = "cargo-lockfile"
 
 func ApplyCargoFixes(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
 	return ApplyCargoFixesWithOptions(ctx, repo, findings, FileOptions{})
@@ -47,6 +52,11 @@ func ApplyCargoFixesWithOptions(ctx context.Context, repo string, findings []vul
 			return nil, err
 		}
 		patches = append(patches, filePatches...)
+		lockfilePatches, err := syncCargoLockfiles(ctx, repo, manifestPath, required)
+		if err != nil {
+			return nil, err
+		}
+		patches = append(patches, lockfilePatches...)
 	}
 	return patches, nil
 }
@@ -164,4 +174,115 @@ func cargoTargetForLocation(location string, known map[string]struct{}) string {
 		}
 	}
 	return ""
+}
+
+func syncCargoLockfiles(ctx context.Context, repo, manifestPath string, requirements map[string]string) ([]Patch, error) {
+	lockfiles := cargoLockfilesForManifest(repo, manifestPath)
+	before := make(map[string][]byte, len(lockfiles))
+	for _, path := range lockfiles {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		before[path] = data
+	}
+	if len(before) == 0 {
+		return nil, nil
+	}
+
+	if err := runCargoLockfileSyncFunc(ctx, manifestPath, requirements); err != nil {
+		return nil, fmt.Errorf("sync cargo lockfile for %s: %w", manifestPath, err)
+	}
+
+	patches := make([]Patch, 0, len(before))
+	for path, previous := range before {
+		updated, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if string(updated) == string(previous) {
+			continue
+		}
+		patches = append(patches, Patch{
+			Manager: cargoLockfilePatch,
+			Target:  path,
+			Package: filepath.Base(path),
+			From:    "stale",
+			To:      "synced",
+		})
+	}
+	sort.Slice(patches, func(i, j int) bool {
+		return patches[i].Target < patches[j].Target
+	})
+	return patches, nil
+}
+
+func cargoLockfilesForManifest(repo, manifestPath string) []string {
+	repoAbs, err := filepath.Abs(repo)
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Dir(manifestPath)
+	current, err := filepath.Abs(dir)
+	if err != nil {
+		return nil
+	}
+
+	lockfiles := make([]string, 0)
+	seen := map[string]struct{}{}
+	for {
+		rel, relErr := filepath.Rel(repoAbs, current)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			break
+		}
+		candidate := filepath.Join(current, "Cargo.lock")
+		if _, err := os.Stat(candidate); err == nil {
+			if _, ok := seen[candidate]; !ok {
+				seen[candidate] = struct{}{}
+				lockfiles = append(lockfiles, candidate)
+			}
+		}
+		if current == repoAbs {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	sort.Strings(lockfiles)
+	return lockfiles
+}
+
+func runCargoLockfileSync(ctx context.Context, manifestPath string, requirements map[string]string) error {
+	if _, err := exec.LookPath("cargo"); err != nil {
+		return fmt.Errorf("required tool %q not found in PATH", "cargo")
+	}
+
+	packages := make([]string, 0, len(requirements))
+	for pkg, fixed := range requirements {
+		if strings.TrimSpace(pkg) == "" || strings.TrimSpace(fixed) == "" {
+			continue
+		}
+		packages = append(packages, pkg)
+	}
+	sort.Strings(packages)
+
+	dir := filepath.Dir(manifestPath)
+	for _, pkg := range packages {
+		fixed := strings.TrimSpace(requirements[pkg])
+		command := exec.CommandContext(ctx, "cargo", "update", "--manifest-path", manifestPath, "-p", pkg, "--precise", fixed)
+		command.Dir = dir
+		output, err := command.CombinedOutput()
+		if err == nil {
+			continue
+		}
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			return fmt.Errorf("cargo update --manifest-path %s -p %s --precise %s: %w", manifestPath, pkg, fixed, err)
+		}
+		return fmt.Errorf("cargo update --manifest-path %s -p %s --precise %s: %w: %s", manifestPath, pkg, fixed, err, message)
+	}
+	return nil
 }

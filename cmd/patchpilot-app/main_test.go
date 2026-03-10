@@ -55,6 +55,7 @@ func TestRunDoctor(t *testing.T) {
 	createBinary("go")
 	createBinary("node")
 	createBinary("npm")
+	createBinary("cargo")
 
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("PP_APP_ID", "123")
