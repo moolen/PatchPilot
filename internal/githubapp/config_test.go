@@ -59,6 +59,8 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	t.Setenv("PP_APP_ID", "123")
 	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
 	t.Setenv("PP_DISALLOWED_PATHS", ".github/**, secrets/*.txt")
+	t.Setenv("PP_REPOSITORY_LABEL_SELECTOR", "patchpilot, Pilot-* , patchpilot")
+	t.Setenv("PP_REPOSITORY_IGNORE_LABEL_SELECTOR", "patchpilot-ignore, no-pp")
 	t.Setenv("PP_SCHEDULER_TICK", "2h")
 	t.Setenv("PP_REPO_RUN_TIMEOUT", "45m")
 	t.Setenv("PP_ENABLE_AUTO_MERGE", "false")
@@ -90,6 +92,15 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	}
 	if len(cfg.DisallowedPaths) != 2 {
 		t.Fatalf("DisallowedPaths len = %d, want 2", len(cfg.DisallowedPaths))
+	}
+	if len(cfg.RepositoryLabelSelectors) != 2 {
+		t.Fatalf("RepositoryLabelSelectors len = %d, want 2", len(cfg.RepositoryLabelSelectors))
+	}
+	if cfg.RepositoryLabelSelectors[0] != "patchpilot" || cfg.RepositoryLabelSelectors[1] != "pilot-*" {
+		t.Fatalf("RepositoryLabelSelectors = %#v", cfg.RepositoryLabelSelectors)
+	}
+	if len(cfg.RepositoryIgnoreLabelSelectors) != 2 {
+		t.Fatalf("RepositoryIgnoreLabelSelectors len = %d, want 2", len(cfg.RepositoryIgnoreLabelSelectors))
 	}
 }
 

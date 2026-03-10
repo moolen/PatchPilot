@@ -10,28 +10,31 @@ import (
 )
 
 type Config struct {
-	AppID               int64
-	PrivateKeyPath      string
-	PrivateKeyPEM       string
-	ListenAddr          string
-	WorkDir             string
-	PatchPilotBinary    string
-	JobRunner           string
-	JobContainerRuntime string
-	JobContainerImage   string
-	JobContainerBinary  string
-	JobContainerNetwork string
-	GitHubBaseWebURL    string
-	GitHubAPIBaseURL    string
-	GitHubUploadAPIURL  string
-	EnableAutoMerge     bool
-	DisallowedPaths     []string
-	MetricsPath         string
-	SchedulerTick       time.Duration
-	RepoRunTimeout      time.Duration
-	RetryMaxAttempts    int
-	RetryInitialBackoff time.Duration
-	RetryMaxBackoff     time.Duration
+	AppID                          int64
+	PrivateKeyPath                 string
+	PrivateKeyPEM                  string
+	ListenAddr                     string
+	WorkDir                        string
+	PatchPilotBinary               string
+	JobRunner                      string
+	JobContainerRuntime            string
+	JobContainerImage              string
+	JobContainerBinary             string
+	JobContainerNetwork            string
+	GitHubBaseWebURL               string
+	GitHubAPIBaseURL               string
+	GitHubUploadAPIURL             string
+	EnableAutoMerge                bool
+	RequirePolicyFile              bool
+	DisallowedPaths                []string
+	RepositoryLabelSelectors       []string
+	RepositoryIgnoreLabelSelectors []string
+	MetricsPath                    string
+	SchedulerTick                  time.Duration
+	RepoRunTimeout                 time.Duration
+	RetryMaxAttempts               int
+	RetryInitialBackoff            time.Duration
+	RetryMaxBackoff                time.Duration
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -63,23 +66,25 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	cfg := Config{
-		ListenAddr:          firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
-		WorkDir:             firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
-		PatchPilotBinary:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_PATCHPILOT_BINARY")), "patchpilot"),
-		JobRunner:           firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_RUNNER")), "local"),
-		JobContainerRuntime: firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_RUNTIME")), "docker"),
-		JobContainerImage:   strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_IMAGE")),
-		JobContainerBinary:  firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_BINARY")), "patchpilot"),
-		JobContainerNetwork: firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_NETWORK")), "bridge"),
-		GitHubBaseWebURL:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
-		EnableAutoMerge:     parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", false),
-		DisallowedPaths:     parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
-		MetricsPath:         firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
-		SchedulerTick:       schedulerTick,
-		RepoRunTimeout:      repoRunTimeout,
-		RetryMaxAttempts:    retryMaxAttempts,
-		RetryInitialBackoff: retryInitialBackoff,
-		RetryMaxBackoff:     retryMaxBackoff,
+		ListenAddr:                     firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
+		WorkDir:                        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
+		PatchPilotBinary:               firstNonEmpty(strings.TrimSpace(os.Getenv("PP_PATCHPILOT_BINARY")), "patchpilot"),
+		JobRunner:                      firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_RUNNER")), "local"),
+		JobContainerRuntime:            firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_RUNTIME")), "docker"),
+		JobContainerImage:              strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_IMAGE")),
+		JobContainerBinary:             firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_BINARY")), "patchpilot"),
+		JobContainerNetwork:            firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_NETWORK")), "bridge"),
+		GitHubBaseWebURL:               firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
+		EnableAutoMerge:                parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", false),
+		DisallowedPaths:                parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
+		RepositoryLabelSelectors:       parseLabelSelectors(os.Getenv("PP_REPOSITORY_LABEL_SELECTOR")),
+		RepositoryIgnoreLabelSelectors: parseLabelSelectors(os.Getenv("PP_REPOSITORY_IGNORE_LABEL_SELECTOR")),
+		MetricsPath:                    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
+		SchedulerTick:                  schedulerTick,
+		RepoRunTimeout:                 repoRunTimeout,
+		RetryMaxAttempts:               retryMaxAttempts,
+		RetryInitialBackoff:            retryInitialBackoff,
+		RetryMaxBackoff:                retryMaxBackoff,
 	}
 
 	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
@@ -135,6 +140,31 @@ func parseCSVList(input string) []string {
 		items = append(items, value)
 	}
 	return items
+}
+
+func parseLabelSelectors(input string) []string {
+	values := parseCSVList(input)
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	selectors := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		selectors = append(selectors, normalized)
+	}
+	if len(selectors) == 0 {
+		return nil
+	}
+	return selectors
 }
 
 func parseBoolEnv(key string) bool {

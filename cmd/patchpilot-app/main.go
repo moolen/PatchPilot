@@ -30,7 +30,7 @@ func main() {
 func execute(args []string, stdout, stderr io.Writer) error {
 	root := newRootCommand(stdout, stderr)
 	if len(args) == 0 {
-		args = []string{"serve"}
+		args = []string{"run"}
 	}
 	root.SetArgs(args)
 	return root.Execute()
@@ -44,21 +44,28 @@ func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.AddCommand(
-		newServeCommand(),
+		newRunCommand(),
 		newDoctorCommand(stdout, stderr),
 		newManifestCommand(stdout, stderr),
 	)
 	return root
 }
 
-func newServeCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "serve",
+type runOptions struct {
+	requirePolicyFile bool
+}
+
+func newRunCommand() *cobra.Command {
+	options := runOptions{}
+	command := &cobra.Command{
+		Use:   "run",
 		Short: "Run the PatchPilot scheduler service",
 		RunE: func(command *cobra.Command, args []string) error {
-			return serve()
+			return run(options)
 		},
 	}
+	command.Flags().BoolVar(&options.requirePolicyFile, "require-policy-file", false, "Skip repositories that do not contain .patchpilot.yaml")
+	return command
 }
 
 func newDoctorCommand(stdout, stderr io.Writer) *cobra.Command {
@@ -87,11 +94,12 @@ func newManifestCommand(stdout, stderr io.Writer) *cobra.Command {
 	}
 }
 
-func serve() error {
+func run(options runOptions) error {
 	cfg, err := githubapp.LoadConfigFromEnv()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	cfg.RequirePolicyFile = options.requirePolicyFile
 
 	logger := log.New(os.Stdout, "[patchpilot-app] ", log.LstdFlags)
 	service, err := githubapp.NewService(cfg, logger)

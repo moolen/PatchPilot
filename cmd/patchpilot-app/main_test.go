@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,5 +106,14 @@ func TestRunDoctorContainerMode(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "doctor: job container runtime: OK") {
 		t.Fatalf("doctor output did not validate container runtime: %s", stdout.String())
+	}
+}
+
+func TestRunCommandDefinesRequirePolicyFileFlag(t *testing.T) {
+	command := newRootCommand(io.Discard, io.Discard)
+	command.SetArgs([]string{"run", "--require-policy-file", "--help"})
+
+	if err := command.Execute(); err != nil {
+		t.Fatalf("execute returned error: %v", err)
 	}
 }
