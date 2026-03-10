@@ -231,12 +231,36 @@ func TestFixScenarios(t *testing.T) {
 			expectedExitCode: 22,
 			expectSummary: &summarySnapshot{
 				Before: 1,
-				Fixed:  1,
-				After:  0,
+				Fixed:  0,
+				After:  1,
 				Verification: &struct {
 					Mode        string `json:"mode"`
 					Regressions int    `json:"regressions"`
 				}{Mode: "standard", Regressions: 3},
+			},
+			extraAssertions: func(t *testing.T, repo string) {
+				assertSummaryFindingReason(t, repo, "GHSA-go-lib", false, "verification regressed after patch")
+			},
+		},
+		{
+			name: "go mod vendor regression does not count fix",
+			files: map[string]string{
+				"go.mod":                                 "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.0.0\n",
+				".scenario/fail-vendor-when-lib-updated": "1\n",
+			},
+			policy:           "version: 1\nverification:\n  commands:\n    - name: vendor\n      run: go mod vendor\n",
+			expectedExitCode: 22,
+			expectSummary: &summarySnapshot{
+				Before: 1,
+				Fixed:  0,
+				After:  1,
+				Verification: &struct {
+					Mode        string `json:"mode"`
+					Regressions int    `json:"regressions"`
+				}{Mode: "standard+custom", Regressions: 1},
+			},
+			extraAssertions: func(t *testing.T, repo string) {
+				assertSummaryFindingReason(t, repo, "GHSA-go-lib", false, "verification regressed after patch")
 			},
 		},
 		{
@@ -531,6 +555,34 @@ func readSummary(t *testing.T, repo string) summarySnapshot {
 		t.Fatalf("decode summary: %v", err)
 	}
 	return summary
+}
+
+func assertSummaryFindingReason(t *testing.T, repo, vulnerabilityID string, fixed bool, reason string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repo, ".patchpilot", "summary.json"))
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	var summary struct {
+		Findings []struct {
+			VulnerabilityID string `json:"vulnerability_id"`
+			Fixed           bool   `json:"fixed"`
+			Reason          string `json:"reason"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary findings: %v", err)
+	}
+	for _, finding := range summary.Findings {
+		if finding.VulnerabilityID != vulnerabilityID {
+			continue
+		}
+		if finding.Fixed != fixed || finding.Reason != reason {
+			t.Fatalf("unexpected finding result for %s: %#v", vulnerabilityID, finding)
+		}
+		return
+	}
+	t.Fatalf("missing finding result for %s in summary", vulnerabilityID)
 }
 
 func readFindingsCount(t *testing.T, repo string) int {
@@ -850,6 +902,19 @@ should_fail_build_checks() {
   return 1
 }
 
+should_fail_vendor() {
+  if [ -f "$repo_root/.scenario/fail-vendor" ]; then
+    return 0
+  fi
+  if [ -f "$repo_root/.scenario/fail-vendor-when-lib-updated" ] && [ -f "go.mod" ]; then
+    version=$(module_version_from_gomod "go.mod" "github.com/example/lib")
+    if version_gte "$version" "v1.2.3"; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 emit_module_list() {
   if [ ! -f "go.mod" ]; then
     echo "go.mod not found" >&2
@@ -931,7 +996,7 @@ case "$1" in
         exit 0
         ;;
       vendor)
-        if [ -f "$repo_root/.scenario/fail-vendor" ]; then
+        if should_fail_vendor; then
           echo "simulated go mod vendor failure" >&2
           exit 1
         fi

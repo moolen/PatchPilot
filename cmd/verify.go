@@ -51,22 +51,21 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	}
 	tracker.endStageSuccess(stage, map[string]any{"path": ".patchpilot/findings.sarif"})
 
-	stage = tracker.beginStage("build_summary")
-	summary := report.BuildSummary(baseline, after, nil)
-	report.PrintSummary(os.Stdout, summary)
-	tracker.endStageSuccess(stage, map[string]any{
-		"before": summary.Before,
-		"fixed":  summary.Fixed,
-		"after":  summary.After,
-	})
-	tracker.addCounter("findings_before", summary.Before)
-	tracker.addCounter("findings_fixed", summary.Fixed)
-
 	stage = tracker.beginStage("load_verification_baseline")
 	verificationBaseline, err := report.ReadVerificationBaseline(repo)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			tracker.endStageSuccess(stage, map[string]any{"verification_baseline": "missing"})
+			stage = tracker.beginStage("build_summary")
+			summary := report.BuildSummary(baseline, after, nil)
+			report.PrintSummary(os.Stdout, summary)
+			tracker.endStageSuccess(stage, map[string]any{
+				"before": summary.Before,
+				"fixed":  summary.Fixed,
+				"after":  summary.After,
+			})
+			tracker.addCounter("findings_before", summary.Before)
+			tracker.addCounter("findings_fixed", summary.Fixed)
 			_, _ = fmt.Fprintln(os.Stdout, "Verification mode: standard (skipped: no baseline available)")
 			if summary.After > 0 {
 				return vulnsRemainError(summary.After)
@@ -95,6 +94,22 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 		"regressions": len(verificationAfter.Regressions),
 	})
 	tracker.addCounter("verification_regressions", len(verificationAfter.Regressions))
+
+	stage = tracker.beginStage("build_summary")
+	summary := report.BuildSummary(baseline, after, nil)
+	verificationSummary := report.SummarizeVerification(verificationAfter)
+	if verificationSummary != nil {
+		summary.Verification = verificationSummary
+		summary = report.ApplyVerificationRegressions(summary, baseline, after, verificationSummary)
+	}
+	report.PrintSummary(os.Stdout, summary)
+	tracker.endStageSuccess(stage, map[string]any{
+		"before": summary.Before,
+		"fixed":  summary.Fixed,
+		"after":  summary.After,
+	})
+	tracker.addCounter("findings_before", summary.Before)
+	tracker.addCounter("findings_fixed", summary.Fixed)
 
 	if len(verificationAfter.Regressions) > 0 {
 		return verificationRegressedError(len(verificationAfter.Regressions))

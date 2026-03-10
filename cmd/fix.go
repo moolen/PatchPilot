@@ -220,8 +220,10 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	stage = tracker.beginStage("build_summary")
 	summary := report.BuildSummary(before, finalValidation.After, allPatches)
-	if len(finalValidation.Verification.Modules) > 0 {
-		summary.Verification = report.SummarizeVerification(finalValidation.Verification)
+	verificationSummary := report.SummarizeVerification(finalValidation.Verification)
+	if verificationSummary != nil {
+		summary.Verification = verificationSummary
+		summary = report.ApplyVerificationRegressions(summary, before, finalValidation.After, verificationSummary)
 	}
 	summary.Explanations = report.BuildFixExplanations(before, finalValidation.After, allPatches, summary.Verification)
 	tracker.endStageSuccess(stage, map[string]any{

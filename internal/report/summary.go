@@ -3,6 +3,7 @@ package report
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/moolen/patchpilot/internal/fixer"
 	"github.com/moolen/patchpilot/internal/verifycheck"
@@ -111,6 +112,68 @@ func BuildSummary(before, after *vuln.Report, patches []fixer.Patch) Summary {
 		Findings:    results,
 		Unsupported: unsupported,
 	}
+}
+
+func ApplyVerificationRegressions(summary Summary, before, after *vuln.Report, verification *VerificationSummary) Summary {
+	if verification == nil || verification.Regressions == 0 {
+		return summary
+	}
+
+	summary.Verification = verification
+	for index := range summary.Findings {
+		if summary.Findings[index].Fixed {
+			summary.Findings[index].Fixed = false
+			summary.Findings[index].Reason = "verification regressed after patch"
+		}
+	}
+	summary.Fixed = 0
+	summary.After = verificationAdjustedAfterCount(before, after)
+	return summary
+}
+
+func verificationAdjustedAfterCount(before, after *vuln.Report) int {
+	if before == nil {
+		if after == nil {
+			return 0
+		}
+		return len(after.Findings)
+	}
+
+	beforeKeys := findingKeys(before.Findings)
+	afterKeys := findingKeys(nil)
+	if after != nil {
+		afterKeys = findingKeys(after.Findings)
+	}
+
+	newAfter := 0
+	for key := range afterKeys {
+		if _, ok := beforeKeys[key]; ok {
+			continue
+		}
+		newAfter++
+	}
+
+	return len(before.Findings) + newAfter
+}
+
+func findingKeys(findings []vuln.Finding) map[string]struct{} {
+	keys := map[string]struct{}{}
+	for _, finding := range findings {
+		keys[findingIdentityKey(finding)] = struct{}{}
+	}
+	return keys
+}
+
+func findingIdentityKey(finding vuln.Finding) string {
+	locations := findingLocationSet(finding.Locations)
+	return finding.VulnerabilityID + "|" + finding.Package + "|" + finding.Ecosystem + "|" + joinLocations(locations)
+}
+
+func joinLocations(locations []string) string {
+	if len(locations) == 0 {
+		return ""
+	}
+	return strings.Join(locations, "\x1f")
 }
 
 func buildFindingResults(beforeFindings, afterFindings []vuln.Finding, patches []fixer.Patch) []FindingResult {
@@ -290,7 +353,9 @@ func BuildFixExplanations(before, after *vuln.Report, patches []fixer.Patch, ver
 	}
 
 	verificationImpact := "no verification regressions detected"
+	verificationRegressed := false
 	if verification != nil && verification.Regressions > 0 {
+		verificationRegressed = true
 		verificationImpact = fmt.Sprintf("%d verification regression(s) detected", verification.Regressions)
 	}
 
@@ -300,7 +365,7 @@ func BuildFixExplanations(before, after *vuln.Report, patches []fixer.Patch, ver
 		key := findingRowKey(row)
 		_, stillPresent := afterKeys[key]
 		decision := "fixed"
-		if stillPresent {
+		if stillPresent || verificationRegressed {
 			decision = "not fixed"
 		}
 

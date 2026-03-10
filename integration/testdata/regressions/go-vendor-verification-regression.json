@@ -1,0 +1,9 @@
+{
+  "exit_code": 22,
+  "summary": {
+    "before": 1,
+    "fixed": 0,
+    "after": 1
+  },
+  "failure_code": "verification_regressed"
+}

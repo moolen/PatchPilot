@@ -73,6 +73,15 @@ func TestRegressionSnapshots(t *testing.T) {
 				"pom.xml": "<project><dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-io</artifactId><version>2.14.0</version></dependency></dependencies></project>\n",
 			},
 		},
+		{
+			name:     "go-vendor-verification-regression",
+			snapshot: "go-vendor-verification-regression.json",
+			files: map[string]string{
+				"go.mod":                                 "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.0.0\n",
+				".scenario/fail-vendor-when-lib-updated": "1\n",
+			},
+			policy: "version: 1\nverification:\n  commands:\n    - name: vendor\n      run: go mod vendor\n",
+		},
 	}
 
 	for _, testCase := range testCases {

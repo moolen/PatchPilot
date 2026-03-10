@@ -237,6 +237,72 @@ func TestBuildFixExplanationsIncludesPatchAndVerificationImpact(t *testing.T) {
 	}
 }
 
+func TestApplyVerificationRegressionsInvalidatesFixedFindings(t *testing.T) {
+	before := &vuln.Report{Findings: []vuln.Finding{{
+		VulnerabilityID: "CVE-fixed",
+		Package:         "github.com/example/lib",
+		Installed:       "v1.0.0",
+		FixedVersion:    "v1.2.3",
+		Ecosystem:       "golang",
+		Locations:       []string{"/repo/go.mod"},
+	}}}
+	after := &vuln.Report{}
+
+	summary := BuildSummary(before, after, []fixer.Patch{{
+		Manager: "gomod",
+		Target:  "/repo/go.mod",
+		Package: "github.com/example/lib",
+		From:    "v1.0.0",
+		To:      "v1.2.3",
+	}})
+	verification := &VerificationSummary{Mode: "standard+custom", Regressions: 1}
+
+	summary = ApplyVerificationRegressions(summary, before, after, verification)
+
+	if summary.Fixed != 0 || summary.After != 1 {
+		t.Fatalf("unexpected summary counts after verification regression: %#v", summary)
+	}
+	if summary.Verification == nil || summary.Verification.Regressions != 1 {
+		t.Fatalf("expected verification summary to be attached, got %#v", summary.Verification)
+	}
+	if len(summary.Findings) != 1 || summary.Findings[0].Fixed {
+		t.Fatalf("expected fixed finding to be invalidated, got %#v", summary.Findings)
+	}
+	if summary.Findings[0].Reason != "verification regressed after patch" {
+		t.Fatalf("unexpected invalidation reason: %#v", summary.Findings[0])
+	}
+}
+
+func TestBuildFixExplanationsMarksVerificationRegressionAsNotFixed(t *testing.T) {
+	before := &vuln.Report{Findings: []vuln.Finding{{
+		VulnerabilityID: "CVE-fixed",
+		Package:         "github.com/example/lib",
+		FixedVersion:    "v1.2.3",
+		Ecosystem:       "golang",
+		Locations:       []string{"/repo/go.mod"},
+	}}}
+	after := &vuln.Report{}
+	verification := &VerificationSummary{Regressions: 1}
+	patches := []fixer.Patch{{
+		Manager: "gomod",
+		Target:  "/repo/go.mod",
+		Package: "github.com/example/lib",
+		From:    "v1.0.0",
+		To:      "v1.2.3",
+	}}
+
+	explanations := BuildFixExplanations(before, after, patches, verification)
+	if len(explanations) != 1 {
+		t.Fatalf("expected 1 explanation, got %#v", explanations)
+	}
+	if explanations[0].Decision != "not fixed" {
+		t.Fatalf("expected verification regression to invalidate fix decision, got %#v", explanations[0])
+	}
+	if !strings.Contains(explanations[0].VerificationImpact, "1 verification regression") {
+		t.Fatalf("unexpected verification impact: %#v", explanations[0])
+	}
+}
+
 func containsCompactedLine(text, expected string) bool {
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
