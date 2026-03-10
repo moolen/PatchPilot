@@ -70,6 +70,41 @@ jobs:
           payload=$(printf '{"text":"PatchPilot CI failed on %s (%s)"}' "${GITHUB_REF_NAME}" "${RUN_URL}")
           curl -sS -H 'Content-Type: application/json' -d "$payload" "$WEBHOOK_URL"
 
+  docker-patchpilot-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build patchpilot-app image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.patchpilot-app
+          load: true
+          tags: patchpilot-app:test
+
+      - name: Smoke test patchpilot-app image
+        run: |
+          docker run --rm \
+            -e PP_APP_ID=1 \
+            -e PP_PRIVATE_KEY_PEM='-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----' \
+            patchpilot-app:test doctor
+
+      - name: Smoke test patchpilot-app container runner dependencies
+        run: |
+          docker run --rm \
+            -e PP_APP_ID=1 \
+            -e PP_PRIVATE_KEY_PEM='-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----' \
+            -e PP_JOB_RUNNER=container \
+            -e PP_JOB_CONTAINER_IMAGE=ghcr.io/example/patchpilot-job:test \
+            patchpilot-app:test doctor
+
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 20

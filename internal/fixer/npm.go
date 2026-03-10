@@ -90,7 +90,7 @@ func ApplyNPMFixesWithOptions(ctx context.Context, repo string, findings []vuln.
 	sort.Strings(dirs)
 
 	for _, dir := range dirs {
-		lockfilePatches, err := syncJSLockfiles(ctx, dir, manifestDirsToSync[dir])
+		lockfilePatches, err := syncJSLockfiles(ctx, dir, manifestDirsToSync[dir], options.UntrustedRepo)
 		if err != nil {
 			return nil, err
 		}
@@ -402,7 +402,7 @@ func isNPMEcosystem(ecosystem string) bool {
 	}
 }
 
-func syncJSLockfiles(ctx context.Context, dir string, requirements map[string]string) ([]Patch, error) {
+func syncJSLockfiles(ctx context.Context, dir string, requirements map[string]string, untrustedRepo bool) ([]Patch, error) {
 	lockfiles := []string{
 		filepath.Join(dir, npmPackageLockFile),
 		filepath.Join(dir, npmShrinkwrapFile),
@@ -439,7 +439,9 @@ func syncJSLockfiles(ctx context.Context, dir string, requirements map[string]st
 		}
 	}
 	if kinds.Yarn {
-		if err := runYarnLockfileSyncFunc(ctx, dir); err != nil {
+		if untrustedRepo {
+			fmt.Fprintf(os.Stderr, "patchpilot: warn: skipping yarn lockfile sync in %s: untrusted repo mode disables yarn execution\n", dir)
+		} else if err := runYarnLockfileSyncFunc(ctx, dir); err != nil {
 			fmt.Fprintf(os.Stderr, "patchpilot: warn: skipping yarn lockfile sync in %s: %v\n", dir, err)
 		}
 	}

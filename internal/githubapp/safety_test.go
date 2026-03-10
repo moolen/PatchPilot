@@ -30,7 +30,7 @@ func TestEvaluateSafetyBlocksOnVerificationRegression(t *testing.T) {
 		t.Fatalf("write verification: %v", err)
 	}
 
-	service := &Service{cfg: Config{MaxRiskScore: 10}}
+	service := &Service{cfg: Config{}}
 	assessment, err := service.evaluateSafety(repo, []string{"go.mod"})
 	if err != nil {
 		t.Fatalf("evaluateSafety: %v", err)
@@ -43,7 +43,7 @@ func TestEvaluateSafetyBlocksOnVerificationRegression(t *testing.T) {
 	}
 }
 
-func TestEvaluateSafetyBlocksOnRiskThreshold(t *testing.T) {
+func TestEvaluateSafetyDoesNotBlockOnRiskScore(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, ".patchpilot"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -52,12 +52,15 @@ func TestEvaluateSafetyBlocksOnRiskThreshold(t *testing.T) {
 		t.Fatalf("write summary: %v", err)
 	}
 
-	service := &Service{cfg: Config{MaxRiskScore: 5}}
+	service := &Service{cfg: Config{}}
 	assessment, err := service.evaluateSafety(repo, []string{"go.mod", "go.sum"})
 	if err != nil {
 		t.Fatalf("evaluateSafety: %v", err)
 	}
-	if !assessment.Blocked {
-		t.Fatalf("expected risk threshold to block")
+	if assessment.Blocked {
+		t.Fatalf("expected risk score to be informational only")
+	}
+	if assessment.RiskScore == 0 {
+		t.Fatalf("expected non-zero risk score")
 	}
 }

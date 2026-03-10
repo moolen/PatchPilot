@@ -11,38 +11,35 @@ import (
 
 type Config struct {
 	AppID               int64
-	WebhookSecret       string
 	PrivateKeyPath      string
 	PrivateKeyPEM       string
 	ListenAddr          string
 	WorkDir             string
 	PatchPilotBinary    string
-	EnablePushAutofix   bool
-	AllowedRepos        map[string]struct{}
+	JobRunner           string
+	JobContainerRuntime string
+	JobContainerImage   string
+	JobContainerBinary  string
+	JobContainerNetwork string
 	GitHubBaseWebURL    string
 	GitHubAPIBaseURL    string
 	GitHubUploadAPIURL  string
 	EnableAutoMerge     bool
-	DeliveryDedupTTL    time.Duration
-	RunDedupTTL         time.Duration
-	MaxRiskScore        int
 	DisallowedPaths     []string
 	MetricsPath         string
+	SchedulerTick       time.Duration
+	RepoRunTimeout      time.Duration
 	RetryMaxAttempts    int
 	RetryInitialBackoff time.Duration
 	RetryMaxBackoff     time.Duration
 }
 
 func LoadConfigFromEnv() (Config, error) {
-	deliveryTTL, err := parseDurationWithDefault("PP_DELIVERY_DEDUP_TTL", 24*time.Hour)
+	schedulerTick, err := parseDurationWithDefault("PP_SCHEDULER_TICK", time.Hour)
 	if err != nil {
 		return Config{}, err
 	}
-	runDedupTTL, err := parseDurationWithDefault("PP_RUN_DEDUP_TTL", 15*time.Minute)
-	if err != nil {
-		return Config{}, err
-	}
-	maxRiskScore, err := parseIntWithDefault("PP_MAX_RISK_SCORE", 25)
+	repoRunTimeout, err := parseDurationWithDefault("PP_REPO_RUN_TIMEOUT", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
@@ -69,14 +66,17 @@ func LoadConfigFromEnv() (Config, error) {
 		ListenAddr:          firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
 		WorkDir:             firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
 		PatchPilotBinary:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_PATCHPILOT_BINARY")), "patchpilot"),
-		EnablePushAutofix:   parseBoolEnv("PP_ENABLE_PUSH_AUTOFIX"),
+		JobRunner:           firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_RUNNER")), "local"),
+		JobContainerRuntime: firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_RUNTIME")), "docker"),
+		JobContainerImage:   strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_IMAGE")),
+		JobContainerBinary:  firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_BINARY")), "patchpilot"),
+		JobContainerNetwork: firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_NETWORK")), "bridge"),
 		GitHubBaseWebURL:    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
-		EnableAutoMerge:     parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", true),
-		DeliveryDedupTTL:    deliveryTTL,
-		RunDedupTTL:         runDedupTTL,
-		MaxRiskScore:        maxRiskScore,
+		EnableAutoMerge:     parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", false),
 		DisallowedPaths:     parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
 		MetricsPath:         firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
+		SchedulerTick:       schedulerTick,
+		RepoRunTimeout:      repoRunTimeout,
 		RetryMaxAttempts:    retryMaxAttempts,
 		RetryInitialBackoff: retryInitialBackoff,
 		RetryMaxBackoff:     retryMaxBackoff,
@@ -92,11 +92,6 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 	cfg.AppID = appID
 
-	cfg.WebhookSecret = strings.TrimSpace(os.Getenv("PP_WEBHOOK_SECRET"))
-	if cfg.WebhookSecret == "" {
-		return Config{}, fmt.Errorf("PP_WEBHOOK_SECRET is required")
-	}
-
 	cfg.PrivateKeyPath = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PATH"))
 	cfg.PrivateKeyPEM = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PEM"))
 	if cfg.PrivateKeyPath == "" && cfg.PrivateKeyPEM == "" {
@@ -106,12 +101,21 @@ func LoadConfigFromEnv() (Config, error) {
 		cfg.PrivateKeyPath = filepath.Clean(cfg.PrivateKeyPath)
 	}
 
-	cfg.AllowedRepos = parseAllowedRepos(os.Getenv("PP_ALLOWED_REPOS"))
-
 	cfg.GitHubAPIBaseURL = strings.TrimSpace(os.Getenv("PP_GITHUB_API_BASE_URL"))
 	cfg.GitHubUploadAPIURL = strings.TrimSpace(os.Getenv("PP_GITHUB_UPLOAD_API_URL"))
 	if (cfg.GitHubAPIBaseURL == "") != (cfg.GitHubUploadAPIURL == "") {
 		return Config{}, fmt.Errorf("PP_GITHUB_API_BASE_URL and PP_GITHUB_UPLOAD_API_URL must be set together")
+	}
+	cfg.JobRunner = strings.ToLower(strings.TrimSpace(cfg.JobRunner))
+	switch cfg.JobRunner {
+	case "", "local":
+		cfg.JobRunner = "local"
+	case "container":
+		if cfg.JobContainerImage == "" {
+			return Config{}, fmt.Errorf("PP_JOB_CONTAINER_IMAGE is required when PP_JOB_RUNNER=container")
+		}
+	default:
+		return Config{}, fmt.Errorf("PP_JOB_RUNNER must be one of: local, container")
 	}
 
 	return cfg, nil
@@ -131,37 +135,6 @@ func parseCSVList(input string) []string {
 		items = append(items, value)
 	}
 	return items
-}
-
-func parseAllowedRepos(input string) map[string]struct{} {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return nil
-	}
-	allowed := map[string]struct{}{}
-	for _, item := range strings.Split(input, ",") {
-		repo := normalizeRepoName(item)
-		if repo == "" {
-			continue
-		}
-		allowed[repo] = struct{}{}
-	}
-	if len(allowed) == 0 {
-		return nil
-	}
-	return allowed
-}
-
-func normalizeRepoName(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return ""
-	}
-	parts := strings.Split(value, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return ""
-	}
-	return parts[0] + "/" + parts[1]
 }
 
 func parseBoolEnv(key string) bool {

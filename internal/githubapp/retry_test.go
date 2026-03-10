@@ -106,37 +106,6 @@ func TestWithGitHubRetryRetriesHttpStatusError(t *testing.T) {
 	}
 }
 
-func TestIssueCommentRunKeyUsesCommentID(t *testing.T) {
-	event := &github.IssueCommentEvent{
-		Comment: &github.IssueComment{
-			ID:   github.Ptr(int64(77)),
-			Body: github.Ptr("/patchpilot fix"),
-		},
-		Issue: &github.Issue{Number: github.Ptr(9)},
-		Repo:  &github.Repository{FullName: github.Ptr("Acme/Demo")},
-	}
-	command := FixCommand{}
-	key := issueCommentRunKey(event, command, "delivery-1")
-	if key != "issue_comment:acme/demo:9:77" {
-		t.Fatalf("unexpected run key: %q", key)
-	}
-}
-
-func TestIssueCommentRunKeyFallbackDiffersByDelivery(t *testing.T) {
-	event := &github.IssueCommentEvent{
-		Comment: &github.IssueComment{Body: github.Ptr("/patchpilot fix")},
-		Issue:   &github.Issue{Number: github.Ptr(9)},
-		Repo:    &github.Repository{FullName: github.Ptr("acme/demo")},
-		Sender:  &github.User{Login: github.Ptr("alice")},
-	}
-	command := FixCommand{PolicyPath: ".patchpilot.yaml", AutoMerge: true}
-	left := issueCommentRunKey(event, command, "delivery-1")
-	right := issueCommentRunKey(event, command, "delivery-2")
-	if left == right {
-		t.Fatalf("expected fallback run keys to differ by delivery")
-	}
-}
-
 func newRetryTestService() *Service {
 	logger := log.New(io.Discard, "", 0)
 	return &Service{

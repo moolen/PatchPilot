@@ -86,7 +86,7 @@ type checkDefinition struct {
 
 var standardChecks = []standardCheck{
 	{Name: "build", Args: []string{"build", "./..."}},
-	{Name: "compile-tests", Args: []string{"test", "-run", "^$", "./..."}},
+	{Name: "compile-tests", Args: []string{"test", "-exec=true", "-run", "^$", "./..."}},
 	{Name: "vet", Args: []string{"vet", "./..."}},
 }
 

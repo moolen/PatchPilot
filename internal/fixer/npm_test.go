@@ -364,6 +364,52 @@ func TestApplyNPMFixesWithOptionsYarnLockSyncFailureIsNonFatal(t *testing.T) {
 	}
 }
 
+func TestApplyNPMFixesWithOptionsUntrustedRepoSkipsYarnLockSync(t *testing.T) {
+	restore := stubNpmSyncRunners()
+	defer restore()
+
+	repo := t.TempDir()
+	manifestPath := filepath.Join(repo, "package.json")
+	content := `{
+  "name": "demo",
+  "version": "1.0.0"
+}
+`
+	if err := os.WriteFile(manifestPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	lockPath := filepath.Join(repo, "yarn.lock")
+	if err := os.WriteFile(lockPath, []byte("# yarn lock\n"), 0o644); err != nil {
+		t.Fatalf("write yarn.lock: %v", err)
+	}
+
+	called := false
+	runYarnLockfileSyncFunc = func(ctx context.Context, dir string) error {
+		called = true
+		return os.WriteFile(lockPath, []byte("# yarn lock\nsynced true\n"), 0o644)
+	}
+
+	findings := []vuln.Finding{{
+		Package:      "js-yaml",
+		FixedVersion: "3.14.2",
+		Ecosystem:    "npm",
+		Locations:    nil,
+	}}
+	patches, err := ApplyNPMFixesWithOptions(context.Background(), repo, findings, FileOptions{UntrustedRepo: true})
+	if err != nil {
+		t.Fatalf("ApplyNPMFixesWithOptions: %v", err)
+	}
+	if called {
+		t.Fatal("expected yarn lockfile sync to be skipped in untrusted repo mode")
+	}
+	if !containsManager(patches, yarnResolutionPatch) {
+		t.Fatalf("expected yarn resolution patch, got %#v", patches)
+	}
+	if containsManager(patches, yarnLockfilePatch) {
+		t.Fatalf("did not expect yarn lockfile patch when sync is skipped, got %#v", patches)
+	}
+}
+
 func TestCollectNPMRequirementsFallsBackToRootManifestForUnknownLocation(t *testing.T) {
 	repo := t.TempDir()
 	rootManifest := filepath.Join(repo, "package.json")

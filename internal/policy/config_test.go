@@ -25,6 +25,12 @@ func TestLoadMissingPolicyReturnsDefaults(t *testing.T) {
 	if cfg.Go.Patching.Runtime != GoRuntimePatchMinimum {
 		t.Fatalf("expected go runtime patch mode %q, got %q", GoRuntimePatchMinimum, cfg.Go.Patching.Runtime)
 	}
+	if cfg.Scan.Cron != DefaultScanCron {
+		t.Fatalf("expected default scan cron %q, got %q", DefaultScanCron, cfg.Scan.Cron)
+	}
+	if cfg.Scan.Timezone != DefaultScanTimezone {
+		t.Fatalf("expected default scan timezone %q, got %q", DefaultScanTimezone, cfg.Scan.Timezone)
+	}
 }
 
 func TestLoadRejectsUnknownField(t *testing.T) {
@@ -63,6 +69,8 @@ exclude:
       ecosystem: deb
       path: ./images/Dockerfile
 scan:
+  cron: "0 3 * * *"
+  timezone: Europe/Berlin
   skip_paths: ["vendor", "./vendor", "  "]
 registry:
   cache:
@@ -100,6 +108,12 @@ go:
 	}
 	if len(cfg.Scan.SkipPaths) != 1 || cfg.Scan.SkipPaths[0] != "vendor" {
 		t.Fatalf("unexpected skip paths: %#v", cfg.Scan.SkipPaths)
+	}
+	if cfg.Scan.Cron != "0 3 * * *" {
+		t.Fatalf("unexpected scan cron: %q", cfg.Scan.Cron)
+	}
+	if cfg.Scan.Timezone != "Europe/Berlin" {
+		t.Fatalf("unexpected scan timezone: %q", cfg.Scan.Timezone)
 	}
 	if cfg.Docker.Patching.BaseImages != DockerPatchDisabled {
 		t.Fatalf("unexpected docker base patch mode: %q", cfg.Docker.Patching.BaseImages)
@@ -181,6 +195,8 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"PatchPilot Policy"`,
 		`"post_execution"`,
 		`"skip_paths"`,
+		`"cron"`,
+		`"timezone"`,
 		`"expires_at"`,
 		`"cve_rules"`,
 		`"go"`,
@@ -213,6 +229,66 @@ exclude:
 	}
 	if !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidScanCron(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+scan:
+  cron: tomorrow
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected invalid scan cron error")
+	}
+	if !strings.Contains(err.Error(), "scan.cron") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidScanTimezone(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+scan:
+  cron: "0 3 * * *"
+  timezone: Mars/Olympus
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected invalid scan timezone error")
+	}
+	if !strings.Contains(err.Error(), "scan.timezone") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestConfigResolveScanScheduleSupportsDisabled(t *testing.T) {
+	cfg := Default()
+	cfg.Scan.Cron = ScanCronDisabled
+
+	schedule, location, enabled, err := cfg.ResolveScanSchedule()
+	if err != nil {
+		t.Fatalf("ResolveScanSchedule returned error: %v", err)
+	}
+	if enabled {
+		t.Fatal("expected disabled schedule")
+	}
+	if schedule != nil {
+		t.Fatal("expected nil schedule for disabled cron")
+	}
+	if location != nil {
+		t.Fatal("expected nil location for disabled cron")
 	}
 }
 
@@ -389,5 +465,113 @@ func TestLoadWithOptionsRejectsInvalidMode(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid policy load mode") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseYAMLWithOptionsUntrustedRepoSanitizesExecutableSections(t *testing.T) {
+	content := `version: 1
+verification:
+  mode: replace
+  commands:
+    - run: make verify
+post_execution:
+  commands:
+    - run: echo done
+registry:
+  auth:
+    mode: bearer
+    token_env: REGISTRY_TOKEN
+scan:
+  cron: "0 3 * * *"
+  timezone: Europe/Berlin
+exclude:
+  cves:
+    - CVE-123
+`
+
+	cfg, err := ParseYAMLWithOptions([]byte(content), ParseOptions{UntrustedRepo: true})
+	if err != nil {
+		t.Fatalf("ParseYAMLWithOptions returned error: %v", err)
+	}
+	if len(cfg.Verification.Commands) != 0 {
+		t.Fatalf("expected verification commands to be stripped, got %#v", cfg.Verification.Commands)
+	}
+	if len(cfg.PostExecution.Commands) != 0 {
+		t.Fatalf("expected post execution hooks to be stripped, got %#v", cfg.PostExecution.Commands)
+	}
+	if cfg.Registry.Auth.Mode != RegistryAuthAuto {
+		t.Fatalf("expected registry auth to fall back to default auto mode, got %q", cfg.Registry.Auth.Mode)
+	}
+	if cfg.Scan.Cron != "0 3 * * *" || cfg.Scan.Timezone != "Europe/Berlin" {
+		t.Fatalf("expected declarative scan policy to remain, got %#v", cfg.Scan)
+	}
+	if len(cfg.Exclude.CVEs) != 1 || cfg.Exclude.CVEs[0] != "CVE-123" {
+		t.Fatalf("expected exclude settings to remain, got %#v", cfg.Exclude.CVEs)
+	}
+}
+
+func TestLoadWithOptionsUntrustedRepoDoesNotOverrideTrustedCentralExecutionPolicy(t *testing.T) {
+	repo := t.TempDir()
+	repoPolicyPath := filepath.Join(repo, FileName)
+	repoPolicy := `version: 1
+verification:
+  mode: replace
+  commands:
+    - name: repo-check
+      run: make verify-repo
+post_execution:
+  commands:
+    - run: echo repo
+registry:
+  auth:
+    mode: none
+scan:
+  skip_paths:
+    - repo/**
+`
+	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
+		t.Fatalf("write repo policy: %v", err)
+	}
+
+	centralPath := filepath.Join(t.TempDir(), "central.yaml")
+	centralPolicy := `version: 1
+verification:
+  commands:
+    - name: central-check
+      run: make verify-central
+post_execution:
+  commands:
+    - run: echo central
+registry:
+  auth:
+    mode: bearer
+    token_env: CENTRAL_TOKEN
+scan:
+  skip_paths:
+    - central/**
+`
+	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
+		t.Fatalf("write central policy: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(repo, LoadOptions{
+		CentralPath:   centralPath,
+		Mode:          LoadModeMerge,
+		UntrustedRepo: true,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions returned error: %v", err)
+	}
+	if len(cfg.Verification.Commands) != 1 || cfg.Verification.Commands[0].Name != "central-check" {
+		t.Fatalf("expected trusted central verification command to remain, got %#v", cfg.Verification.Commands)
+	}
+	if len(cfg.PostExecution.Commands) != 1 || cfg.PostExecution.Commands[0].Run != "echo central" {
+		t.Fatalf("expected trusted central post hook to remain, got %#v", cfg.PostExecution.Commands)
+	}
+	if cfg.Registry.Auth.Mode != RegistryAuthBearer || cfg.Registry.Auth.TokenEnv != "CENTRAL_TOKEN" {
+		t.Fatalf("expected trusted central registry auth to remain, got %#v", cfg.Registry.Auth)
+	}
+	if len(cfg.Scan.SkipPaths) != 2 || cfg.Scan.SkipPaths[0] != "central/**" || cfg.Scan.SkipPaths[1] != "repo/**" {
+		t.Fatalf("expected safe declarative repo settings to still merge, got %#v", cfg.Scan.SkipPaths)
 	}
 }

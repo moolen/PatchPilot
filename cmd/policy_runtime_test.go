@@ -54,7 +54,7 @@ func TestOptionsFromPolicy(t *testing.T) {
 		t.Fatalf("unexpected vuln skip paths: %#v", vulnOptions.SkipPaths)
 	}
 
-	fileOptions := fileOptionsFromPolicy(cfg)
+	fileOptions := fileOptionsFromPolicy(cfg, false)
 	if !reflect.DeepEqual(fileOptions.SkipPaths, []string{"vendor/**", "examples/**"}) {
 		t.Fatalf("unexpected file skip paths: %#v", fileOptions.SkipPaths)
 	}

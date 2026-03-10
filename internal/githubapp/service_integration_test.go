@@ -1,14 +1,11 @@
 package githubapp
 
 import (
-	"bytes"
-	"crypto/hmac"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
@@ -25,398 +22,139 @@ import (
 	"time"
 )
 
-func TestHandleWebhookIssueCommentE2E_DedupAndUpsert(t *testing.T) {
+func TestSchedulerCycleCreatesPRAndSkipsUntilNextDueRun(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
 
-	fakeAPI := newFakeGitHubAPI(owner, repo)
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
 	server := httptest.NewServer(fakeAPI)
 	defer server.Close()
 
-	cfg := Config{
-		AppID:              1,
-		WebhookSecret:      "secret",
-		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
-		ListenAddr:         ":0",
-		WorkDir:            filepath.Join(temp, "work"),
-		PatchPilotBinary:   patchpilotPath,
-		GitHubBaseWebURL:   "file://" + remoteRoot,
-		GitHubAPIBaseURL:   server.URL + "/api/v3/",
-		GitHubUploadAPIURL: server.URL + "/api/uploads/",
-		EnableAutoMerge:    true,
-		DeliveryDedupTTL:   24 * time.Hour,
-		MaxRiskScore:       30,
-	}
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
 
-	service, err := NewService(cfg, log.New(io.Discard, "", 0))
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-	service.async = false
-
-	payload := []byte(`{
-		"action":"created",
-		"comment":{"id":101,"body":"/patchpilot fix --auto-merge"},
-		"issue":{"number":1},
-		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
-		"sender":{"login":"alice"},
-		"installation":{"id":99}
-	}`)
-
-	nextCommentPayload := []byte(`{
-		"action":"created",
-		"comment":{"id":102,"body":"/patchpilot fix --auto-merge"},
-		"issue":{"number":1},
-		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
-		"sender":{"login":"alice"},
-		"installation":{"id":99}
-	}`)
-
-	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "delivery-1"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-
-	created, edited, autoMergeCalls := fakeAPI.counts()
-	if created != 1 {
-		t.Fatalf("created PRs = %d, want 1", created)
-	}
-	if edited != 0 {
-		t.Fatalf("edited PRs = %d, want 0", edited)
-	}
-	if autoMergeCalls != 1 {
-		t.Fatalf("auto-merge calls = %d, want 1", autoMergeCalls)
-	}
-
-	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "delivery-1"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-	created, edited, autoMergeCalls = fakeAPI.counts()
-	if created != 1 || edited != 0 || autoMergeCalls != 1 {
-		t.Fatalf("duplicate delivery should not process again: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
-	}
-
-	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "delivery-2"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-	created, edited, autoMergeCalls = fakeAPI.counts()
-	if created != 1 || edited != 0 || autoMergeCalls != 1 {
-		t.Fatalf("duplicate run key should not process again: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
-	}
-
-	if code := sendWebhook(t, service, "issue_comment", nextCommentPayload, cfg.WebhookSecret, "delivery-3"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-	created, edited, autoMergeCalls = fakeAPI.counts()
-	if created != 1 {
-		t.Fatalf("expected PR upsert, created PRs = %d, want 1", created)
-	}
-	if edited != 1 {
-		t.Fatalf("expected PR upsert edit, edited PRs = %d, want 1", edited)
-	}
-	if autoMergeCalls != 2 {
-		t.Fatalf("auto-merge calls = %d, want 2", autoMergeCalls)
-	}
-}
-
-func TestHandleWebhookPushE2E_RunIdempotencyKey(t *testing.T) {
-	temp := t.TempDir()
-	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
-
-	fakeAPI := newFakeGitHubAPI(owner, repo)
-	server := httptest.NewServer(fakeAPI)
-	defer server.Close()
-
-	cfg := Config{
-		AppID:              1,
-		WebhookSecret:      "secret",
-		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
-		ListenAddr:         ":0",
-		WorkDir:            filepath.Join(temp, "work"),
-		PatchPilotBinary:   patchpilotPath,
-		EnablePushAutofix:  true,
-		GitHubBaseWebURL:   "file://" + remoteRoot,
-		GitHubAPIBaseURL:   server.URL + "/api/v3/",
-		GitHubUploadAPIURL: server.URL + "/api/uploads/",
-		RunDedupTTL:        time.Hour,
-		DeliveryDedupTTL:   24 * time.Hour,
-		MaxRiskScore:       30,
-	}
-
-	service, err := NewService(cfg, log.New(io.Discard, "", 0))
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-	service.async = false
-
-	payload := []byte(`{
-		"deleted":false,
-		"ref":"refs/heads/master",
-		"after":"abc123",
-		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
-		"sender":{"login":"alice"},
-		"installation":{"id":99}
-	}`)
-
-	if code := sendWebhook(t, service, "push", payload, cfg.WebhookSecret, "push-1"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-	if code := sendWebhook(t, service, "push", payload, cfg.WebhookSecret, "push-2"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-
-	created, edited, _ := fakeAPI.counts()
+	service.runSchedulerCycle(context.Background())
+	created, edited := fakeAPI.counts()
 	if created != 1 || edited != 0 {
-		t.Fatalf("expected single PR creation due to run idempotency, created=%d edited=%d", created, edited)
+		t.Fatalf("unexpected PR counts after first cycle: created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 1 {
+		t.Fatalf("scan count after first cycle = %d, want 1", count)
+	}
+
+	service.runSchedulerCycle(context.Background())
+	created, edited = fakeAPI.counts()
+	if created != 1 || edited != 0 {
+		t.Fatalf("unexpected PR counts after second cycle: created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 1 {
+		t.Fatalf("scan count after second cycle = %d, want 1", count)
 	}
 }
 
-func TestHandleWebhookIssueCommentE2E_RetriesTransientGitHubFailures(t *testing.T) {
+func TestSchedulerCycleRespectsDisabledSchedule(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
 
-	fakeAPI := newFakeGitHubAPI(owner, repo)
-	fakeAPI.setFailures("token",
-		fakeHTTPFailure{
-			StatusCode: http.StatusTooManyRequests,
-			Headers:    map[string]string{"Retry-After": "1"},
-			Body:       `{"message":"rate limit exceeded"}`,
-		},
-	)
-	fakeAPI.setFailures("issue_comment",
-		fakeHTTPFailure{
-			StatusCode: http.StatusForbidden,
-			Body:       `{"message":"You have exceeded a secondary rate limit. Please wait."}`,
-		},
-	)
-	fakeAPI.setFailures("create_pr",
-		fakeHTTPFailure{
-			StatusCode: http.StatusServiceUnavailable,
-			Body:       `{"message":"backend unavailable"}`,
-		},
-	)
-	fakeAPI.setFailures("graphql",
-		fakeHTTPFailure{
-			StatusCode: http.StatusBadGateway,
-			Body:       `{"message":"temporary gateway error"}`,
-		},
-	)
-
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: disabled\n"
 	server := httptest.NewServer(fakeAPI)
 	defer server.Close()
 
-	cfg := Config{
-		AppID:               1,
-		WebhookSecret:       "secret",
-		PrivateKeyPEM:       generateTestPrivateKeyPEM(t),
-		ListenAddr:          ":0",
-		WorkDir:             filepath.Join(temp, "work"),
-		PatchPilotBinary:    patchpilotPath,
-		GitHubBaseWebURL:    "file://" + remoteRoot,
-		GitHubAPIBaseURL:    server.URL + "/api/v3/",
-		GitHubUploadAPIURL:  server.URL + "/api/uploads/",
-		EnableAutoMerge:     true,
-		DeliveryDedupTTL:    24 * time.Hour,
-		MaxRiskScore:        30,
-		RetryMaxAttempts:    5,
-		RetryInitialBackoff: time.Millisecond,
-		RetryMaxBackoff:     10 * time.Millisecond,
-	}
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	service.runSchedulerCycle(context.Background())
 
-	service, err := NewService(cfg, log.New(io.Discard, "", 0))
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
+	created, edited := fakeAPI.counts()
+	if created != 0 || edited != 0 {
+		t.Fatalf("expected no PR activity, got created=%d edited=%d", created, edited)
 	}
-	service.async = false
-
-	payload := []byte(`{
-		"action":"created",
-		"comment":{"id":201,"body":"/patchpilot fix --auto-merge"},
-		"issue":{"number":1},
-		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
-		"sender":{"login":"alice"},
-		"installation":{"id":99}
-	}`)
-
-	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "retry-1"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-
-	created, edited, autoMergeCalls := fakeAPI.counts()
-	if created != 1 || edited != 0 || autoMergeCalls != 1 {
-		t.Fatalf("unexpected final state: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
-	}
-
-	if attempts := fakeAPI.endpointAttempts("token"); attempts != 2 {
-		t.Fatalf("token attempts = %d, want 2", attempts)
-	}
-	if attempts := fakeAPI.endpointAttempts("create_pr"); attempts != 2 {
-		t.Fatalf("create_pr attempts = %d, want 2", attempts)
-	}
-	if attempts := fakeAPI.endpointAttempts("graphql"); attempts != 2 {
-		t.Fatalf("graphql attempts = %d, want 2", attempts)
-	}
-	if retries := retryMetricCount(service.metrics); retries < 4 {
-		t.Fatalf("expected retry metric >= 4, got %d", retries)
+	if count := readInvocationCount(t, scanCountPath); count != 0 {
+		t.Fatalf("scan count = %d, want 0", count)
 	}
 }
 
-func TestHandleWebhookIssueCommentE2E_RetryExhaustionFailsCleanly(t *testing.T) {
+func TestSchedulerCycleIgnoresPatchpilotArtifacts(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, true)
 
-	fakeAPI := newFakeGitHubAPI(owner, repo)
-	fakeAPI.setFailures("create_pr",
-		fakeHTTPFailure{
-			StatusCode: http.StatusServiceUnavailable,
-			Body:       `{"message":"backend unavailable"}`,
-		},
-		fakeHTTPFailure{
-			StatusCode: http.StatusServiceUnavailable,
-			Body:       `{"message":"backend unavailable"}`,
-		},
-	)
-
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
 	server := httptest.NewServer(fakeAPI)
 	defer server.Close()
 
-	cfg := Config{
-		AppID:               1,
-		WebhookSecret:       "secret",
-		PrivateKeyPEM:       generateTestPrivateKeyPEM(t),
-		ListenAddr:          ":0",
-		WorkDir:             filepath.Join(temp, "work"),
-		PatchPilotBinary:    patchpilotPath,
-		GitHubBaseWebURL:    "file://" + remoteRoot,
-		GitHubAPIBaseURL:    server.URL + "/api/v3/",
-		GitHubUploadAPIURL:  server.URL + "/api/uploads/",
-		EnableAutoMerge:     true,
-		DeliveryDedupTTL:    24 * time.Hour,
-		MaxRiskScore:        30,
-		RetryMaxAttempts:    2,
-		RetryInitialBackoff: time.Millisecond,
-		RetryMaxBackoff:     5 * time.Millisecond,
-	}
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	service.runSchedulerCycle(context.Background())
 
-	service, err := NewService(cfg, log.New(io.Discard, "", 0))
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
+	created, edited := fakeAPI.counts()
+	if created != 0 || edited != 0 {
+		t.Fatalf("artifact-only run should not create PRs: created=%d edited=%d", created, edited)
 	}
-	service.async = false
-
-	payload := []byte(`{
-		"action":"created",
-		"comment":{"id":301,"body":"/patchpilot fix"},
-		"issue":{"number":1},
-		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
-		"sender":{"login":"alice"},
-		"installation":{"id":99}
-	}`)
-
-	if code := sendWebhook(t, service, "issue_comment", payload, cfg.WebhookSecret, "retry-fail-1"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-
-	created, edited, autoMergeCalls := fakeAPI.counts()
-	if created != 0 || edited != 0 || autoMergeCalls != 0 {
-		t.Fatalf("expected no PR/merge on retry exhaustion: created=%d edited=%d auto_merge=%d", created, edited, autoMergeCalls)
-	}
-	if attempts := fakeAPI.endpointAttempts("create_pr"); attempts != 2 {
-		t.Fatalf("create_pr attempts = %d, want 2", attempts)
-	}
-	if retries := retryMetricCount(service.metrics); retries < 1 {
-		t.Fatalf("expected retry metric to increment, got %d", retries)
-	}
-
-	comments := fakeAPI.commentBodies()
-	foundFailureComment := false
-	for _, comment := range comments {
-		if strings.Contains(comment, "failed to create PR") {
-			foundFailureComment = true
-			break
-		}
-	}
-	if !foundFailureComment {
-		t.Fatalf("expected failure comment in issue comments, got %#v", comments)
+	if count := readInvocationCount(t, scanCountPath); count != 1 {
+		t.Fatalf("scan count = %d, want 1", count)
 	}
 }
 
-func TestHandleWebhookPushE2EBlockedBySafety(t *testing.T) {
+func TestSchedulerCycleReconcilesMergedPullRequestMetrics(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
-	patchpilotPath := setupFakePatchPilot(t, temp, "README.md")
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
 
-	fakeAPI := newFakeGitHubAPI(owner, repo)
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
 	server := httptest.NewServer(fakeAPI)
 	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+
+	service.runSchedulerCycle(context.Background())
+
+	state := service.state.Get(normalizeRepoName(owner + "/" + repo))
+	if state.OpenPR == nil || state.OpenPR.Number != 1 {
+		t.Fatalf("expected tracked remediation PR, got %#v", state.OpenPR)
+	}
+	assertGaugeValue(t, service.metrics, "patchpilot_open_remediation_pull_requests", nil, 1)
+	assertGaugeValue(t, service.metrics, "patchpilot_fixable_findings_total", nil, 1)
+
+	fakeAPI.closeMergedPR(1, time.Now().UTC())
+
+	service.runSchedulerCycle(context.Background())
+
+	state = service.state.Get(normalizeRepoName(owner + "/" + repo))
+	if state.OpenPR != nil {
+		t.Fatalf("expected tracked remediation PR to be cleared, got %#v", state.OpenPR)
+	}
+	assertGaugeValue(t, service.metrics, "patchpilot_open_remediation_pull_requests", nil, 0)
+	assertHistogramCount(t, service.metrics, "patchpilot_remediation_time_to_merge_seconds", nil, 1)
+}
+
+func newSchedulerTestService(t *testing.T, temp, remoteRoot, patchpilotPath, serverURL string) *Service {
+	t.Helper()
 
 	cfg := Config{
 		AppID:              1,
-		WebhookSecret:      "secret",
 		PrivateKeyPEM:      generateTestPrivateKeyPEM(t),
 		ListenAddr:         ":0",
 		WorkDir:            filepath.Join(temp, "work"),
 		PatchPilotBinary:   patchpilotPath,
-		EnablePushAutofix:  true,
 		GitHubBaseWebURL:   "file://" + remoteRoot,
-		GitHubAPIBaseURL:   server.URL + "/api/v3/",
-		GitHubUploadAPIURL: server.URL + "/api/uploads/",
-		DisallowedPaths:    []string{"README.md"},
-		DeliveryDedupTTL:   24 * time.Hour,
-		MaxRiskScore:       30,
+		GitHubAPIBaseURL:   serverURL + "/api/v3/",
+		GitHubUploadAPIURL: serverURL + "/api/uploads/",
+		SchedulerTick:      time.Hour,
+		RepoRunTimeout:     20 * time.Minute,
 	}
 
 	service, err := NewService(cfg, log.New(io.Discard, "", 0))
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
-	service.async = false
-
-	payload := []byte(`{
-		"deleted":false,
-		"ref":"refs/heads/master",
-		"repository":{"name":"demo","full_name":"acme/demo","default_branch":"master","owner":{"login":"acme","name":"Acme"}},
-		"sender":{"login":"alice"},
-		"installation":{"id":99}
-	}`)
-
-	if code := sendWebhook(t, service, "push", payload, cfg.WebhookSecret, "push-1"); code != http.StatusAccepted {
-		t.Fatalf("status = %d, want %d", code, http.StatusAccepted)
-	}
-
-	created, _, _ := fakeAPI.counts()
-	if created != 0 {
-		t.Fatalf("expected no PRs due to safety gate, created=%d", created)
-	}
-}
-
-func sendWebhook(t *testing.T, service *Service, event string, payload []byte, secret, deliveryID string) int {
-	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(payload))
-	request.Header.Set("X-GitHub-Event", event)
-	request.Header.Set("X-GitHub-Delivery", deliveryID)
-	request.Header.Set("X-Hub-Signature-256", signedPayload(secret, payload))
-	request.Header.Set("X-Hub-Signature", signedPayloadSHA1(secret, payload))
-	request.Header.Set("Content-Type", "application/json")
-
-	writer := httptest.NewRecorder()
-	service.HandleWebhook(writer, request)
-	return writer.Code
-}
-
-func signedPayload(secret string, payload []byte) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
-}
-
-func signedPayloadSHA1(secret string, payload []byte) string {
-	mac := hmac.New(sha1.New, []byte(secret))
-	_, _ = mac.Write(payload)
-	return "sha1=" + hex.EncodeToString(mac.Sum(nil))
+	return service
 }
 
 func generateTestPrivateKeyPEM(t *testing.T) string {
@@ -432,14 +170,21 @@ func generateTestPrivateKeyPEM(t *testing.T) string {
 	return string(encoded)
 }
 
-func setupFakePatchPilot(t *testing.T, root, targetFile string) string {
+func setupSchedulerFakePatchPilot(t *testing.T, root, scanCountPath string, artifactOnly bool) string {
 	t.Helper()
 	binDir := filepath.Join(root, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
 	}
+
 	path := filepath.Join(binDir, "patchpilot")
+	fixBody := "echo \"patched $(date +%s)\" >> \"$dir/README.md\"\n"
+	if artifactOnly {
+		fixBody = "mkdir -p \"$dir/.patchpilot\"\necho \"artifact-only\" > \"$dir/.patchpilot/generated.txt\"\n"
+	}
+
 	script := "#!/bin/sh\nset -eu\n" +
+		"command=\"$1\"\nshift\n" +
 		"dir=\"\"\n" +
 		"while [ \"$#\" -gt 0 ]; do\n" +
 		"  case \"$1\" in\n" +
@@ -447,15 +192,27 @@ func setupFakePatchPilot(t *testing.T, root, targetFile string) string {
 		"    *) shift ;;\n" +
 		"  esac\n" +
 		"done\n" +
-		"echo \"patched $(date +%s)\" >> \"$dir/" + targetFile + "\"\n" +
-		"mkdir -p \"$dir/.patchpilot\"\n" +
-		"cat <<'EOF' > \"$dir/.patchpilot/summary.json\"\n" +
-		"{\"before\":1,\"fixed\":1,\"after\":0}\n" +
-		"EOF\n" +
-		"cat <<'EOF' > \"$dir/.patchpilot/verification.json\"\n" +
-		"{\"mode\":\"standard\",\"modules\":[],\"regressions\":[]}\n" +
-		"EOF\n" +
-		"exit 0\n"
+		"case \"$command\" in\n" +
+		"  scan)\n" +
+		"    count=$(cat \"" + scanCountPath + "\" 2>/dev/null || echo 0)\n" +
+		"    count=$((count + 1))\n" +
+		"    echo \"$count\" > \"" + scanCountPath + "\"\n" +
+		"    mkdir -p \"$dir/.patchpilot\"\n" +
+		"    echo '{\"findings\":[{\"vulnerability_id\":\"GHSA-1\"}]}' > \"$dir/.patchpilot/findings.json\"\n" +
+		"    exit 23\n" +
+		"    ;;\n" +
+		"  fix)\n" +
+		fixBody +
+		"    mkdir -p \"$dir/.patchpilot\"\n" +
+		"    echo '{\"before\":1,\"fixed\":1,\"after\":0}' > \"$dir/.patchpilot/summary.json\"\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    echo \"unsupported command: $command\" >&2\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"esac\n"
+
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake patchpilot: %v", err)
 	}
@@ -500,94 +257,126 @@ func runCommandOrFail(t *testing.T, dir string, name string, args ...string) {
 	}
 }
 
-type fakeGitHubAPI struct {
-	mu sync.Mutex
-
-	owner string
-	repo  string
-
-	createdPRs     int
-	editedPRs      int
-	autoMergeCalls int
-	comments       []string
-	prs            map[int]fakePR
-	nextPRNumber   int
-	requestCounts  map[string]int
-	failures       map[string][]fakeHTTPFailure
+func readInvocationCount(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		t.Fatalf("read invocation count: %v", err)
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("parse invocation count: %v", err)
+	}
+	return count
 }
 
-type fakeHTTPFailure struct {
-	StatusCode int
-	Headers    map[string]string
-	Body       string
+type fakeSchedulerGitHubAPI struct {
+	mu sync.Mutex
+
+	owner         string
+	repo          string
+	policyContent string
+	prs           map[int]fakePR
+	nextPRNumber  int
+	createdPRs    int
+	editedPRs     int
 }
 
 type fakePR struct {
-	Number  int
-	Title   string
-	Head    string
-	Base    string
-	Body    string
-	NodeID  string
-	HTMLURL string
-	State   string
+	Number    int
+	Title     string
+	Head      string
+	Base      string
+	Body      string
+	NodeID    string
+	HTMLURL   string
+	State     string
+	CreatedAt time.Time
+	MergedAt  time.Time
 }
 
-func newFakeGitHubAPI(owner, repo string) *fakeGitHubAPI {
-	return &fakeGitHubAPI{
-		owner:         owner,
-		repo:          repo,
-		prs:           map[int]fakePR{},
-		nextPRNumber:  1,
-		requestCounts: map[string]int{},
-		failures:      map[string][]fakeHTTPFailure{},
+func newFakeSchedulerGitHubAPI(owner, repo string) *fakeSchedulerGitHubAPI {
+	return &fakeSchedulerGitHubAPI{
+		owner:        owner,
+		repo:         repo,
+		prs:          map[int]fakePR{},
+		nextPRNumber: 1,
 	}
 }
 
-func (api *fakeGitHubAPI) counts() (int, int, int) {
+func (api *fakeSchedulerGitHubAPI) counts() (int, int) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	return api.createdPRs, api.editedPRs, api.autoMergeCalls
+	return api.createdPRs, api.editedPRs
 }
 
-func (api *fakeGitHubAPI) endpointAttempts(endpoint string) int {
+func (api *fakeSchedulerGitHubAPI) closeMergedPR(number int, mergedAt time.Time) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
-	return api.requestCounts[endpoint]
+
+	pr := api.prs[number]
+	pr.State = "closed"
+	pr.MergedAt = mergedAt.UTC()
+	api.prs[number] = pr
 }
 
-func (api *fakeGitHubAPI) setFailures(endpoint string, failures ...fakeHTTPFailure) {
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	copyFailures := make([]fakeHTTPFailure, 0, len(failures))
-	copyFailures = append(copyFailures, failures...)
-	api.failures[endpoint] = copyFailures
-}
-
-func (api *fakeGitHubAPI) commentBodies() []string {
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	result := make([]string, 0, len(api.comments))
-	result = append(result, api.comments...)
-	return result
-}
-
-func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	path := request.URL.Path
 
-	if request.Method == http.MethodPost && strings.HasPrefix(path, "/api/v3/app/installations/") && strings.HasSuffix(path, "/access_tokens") {
-		if api.respondFailure("token", writer) {
+	if path == "/api/v3/app/installations" && request.Method == http.MethodGet {
+		writeJSON(writer, []map[string]interface{}{
+			{
+				"id": 99,
+				"account": map[string]interface{}{
+					"login": api.owner,
+				},
+			},
+		})
+		return
+	}
+
+	if path == "/api/v3/app/installations/99/access_tokens" && request.Method == http.MethodPost {
+		writeJSON(writer, map[string]interface{}{"token": "fake-installation-token"})
+		return
+	}
+
+	if path == "/api/v3/installation/repositories" && request.Method == http.MethodGet {
+		writeJSON(writer, map[string]interface{}{
+			"total_count": 1,
+			"repositories": []map[string]interface{}{
+				{
+					"name":           api.repo,
+					"full_name":      api.owner + "/" + api.repo,
+					"default_branch": "master",
+					"owner": map[string]interface{}{
+						"login": api.owner,
+						"name":  api.owner,
+					},
+				},
+			},
+		})
+		return
+	}
+
+	if path == "/api/v3/repos/"+api.owner+"/"+api.repo+"/contents/.patchpilot.yaml" && request.Method == http.MethodGet {
+		if strings.TrimSpace(api.policyContent) == "" {
+			http.Error(writer, "not found", http.StatusNotFound)
 			return
 		}
-		writeJSON(writer, map[string]interface{}{"token": "fake-installation-token"})
+		writeJSON(writer, map[string]interface{}{
+			"type":     "file",
+			"encoding": "base64",
+			"path":     ".patchpilot.yaml",
+			"content":  base64.StdEncoding.EncodeToString([]byte(api.policyContent)),
+		})
 		return
 	}
 
 	basePullsPath := "/api/v3/repos/" + api.owner + "/" + api.repo + "/pulls"
 	if path == basePullsPath && request.Method == http.MethodGet {
-		if api.respondFailure("list_prs", writer) {
-			return
-		}
 		api.mu.Lock()
 		defer api.mu.Unlock()
 		response := make([]map[string]interface{}, 0, len(api.prs))
@@ -595,28 +384,33 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 			if pr.State != "open" {
 				continue
 			}
-			response = append(response, map[string]interface{}{
-				"number":   pr.Number,
-				"title":    pr.Title,
-				"body":     pr.Body,
-				"html_url": pr.HTMLURL,
-				"node_id":  pr.NodeID,
-				"head": map[string]interface{}{
-					"ref": pr.Head,
-				},
-				"base": map[string]interface{}{
-					"ref": pr.Base,
-				},
-			})
+			response = append(response, pullRequestPayload(pr))
 		}
 		writeJSON(writer, response)
 		return
 	}
 
-	if path == basePullsPath && request.Method == http.MethodPost {
-		if api.respondFailure("create_pr", writer) {
+	if strings.HasPrefix(path, basePullsPath+"/") && request.Method == http.MethodGet {
+		numberText := strings.TrimPrefix(path, basePullsPath+"/")
+		number, err := strconv.Atoi(numberText)
+		if err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
+
+		api.mu.Lock()
+		pr, ok := api.prs[number]
+		api.mu.Unlock()
+		if !ok {
+			http.Error(writer, "not found", http.StatusNotFound)
+			return
+		}
+
+		writeJSON(writer, pullRequestPayload(pr))
+		return
+	}
+
+	if path == basePullsPath && request.Method == http.MethodPost {
 		var payload struct {
 			Title string `json:"title"`
 			Head  string `json:"head"`
@@ -627,49 +421,38 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		api.mu.Lock()
 		prNumber := api.nextPRNumber
 		api.nextPRNumber++
+		createdAt := time.Now().UTC()
 		pr := fakePR{
-			Number:  prNumber,
-			Title:   payload.Title,
-			Head:    payload.Head,
-			Base:    payload.Base,
-			Body:    payload.Body,
-			NodeID:  "PR_node_" + strconv.Itoa(prNumber),
-			HTMLURL: "https://example.com/" + api.owner + "/" + api.repo + "/pull/" + strconv.Itoa(prNumber),
-			State:   "open",
+			Number:    prNumber,
+			Title:     payload.Title,
+			Head:      payload.Head,
+			Base:      payload.Base,
+			Body:      payload.Body,
+			NodeID:    "PR_node_" + strconv.Itoa(prNumber),
+			HTMLURL:   "https://example.com/" + api.owner + "/" + api.repo + "/pull/" + strconv.Itoa(prNumber),
+			State:     "open",
+			CreatedAt: createdAt,
 		}
 		api.prs[prNumber] = pr
 		api.createdPRs++
 		api.mu.Unlock()
 
-		writeJSON(writer, map[string]interface{}{
-			"number":   pr.Number,
-			"title":    pr.Title,
-			"body":     pr.Body,
-			"html_url": pr.HTMLURL,
-			"node_id":  pr.NodeID,
-			"head": map[string]interface{}{
-				"ref": pr.Head,
-			},
-			"base": map[string]interface{}{
-				"ref": pr.Base,
-			},
-		})
+		writeJSON(writer, pullRequestPayload(pr))
 		return
 	}
 
 	if strings.HasPrefix(path, basePullsPath+"/") && request.Method == http.MethodPatch {
-		if api.respondFailure("edit_pr", writer) {
-			return
-		}
 		numberText := strings.TrimPrefix(path, basePullsPath+"/")
 		number, err := strconv.Atoi(numberText)
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		var payload struct {
 			Title *string `json:"title"`
 			Body  *string `json:"body"`
@@ -678,6 +461,7 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 			http.Error(writer, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		api.mu.Lock()
 		pr := api.prs[number]
 		if payload.Title != nil {
@@ -690,99 +474,36 @@ func (api *fakeGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Re
 		api.editedPRs++
 		api.mu.Unlock()
 
-		writeJSON(writer, map[string]interface{}{
-			"number":   pr.Number,
-			"title":    pr.Title,
-			"body":     pr.Body,
-			"html_url": pr.HTMLURL,
-			"node_id":  pr.NodeID,
-			"head": map[string]interface{}{
-				"ref": pr.Head,
-			},
-			"base": map[string]interface{}{
-				"ref": pr.Base,
-			},
-		})
-		return
-	}
-
-	issueCommentPath := "/api/v3/repos/" + api.owner + "/" + api.repo + "/issues/1/comments"
-	if path == issueCommentPath && request.Method == http.MethodPost {
-		if api.respondFailure("issue_comment", writer) {
-			return
-		}
-		var payload struct {
-			Body string `json:"body"`
-		}
-		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-			http.Error(writer, err.Error(), http.StatusBadRequest)
-			return
-		}
-		api.mu.Lock()
-		api.comments = append(api.comments, payload.Body)
-		api.mu.Unlock()
-		writeJSON(writer, map[string]interface{}{"id": 1, "body": payload.Body})
-		return
-	}
-
-	if path == "/api/graphql" && request.Method == http.MethodPost {
-		if api.respondFailure("graphql", writer) {
-			return
-		}
-		api.mu.Lock()
-		api.autoMergeCalls++
-		api.mu.Unlock()
-		writeJSON(writer, map[string]interface{}{
-			"data": map[string]interface{}{
-				"enablePullRequestAutoMerge": map[string]interface{}{
-					"pullRequest": map[string]interface{}{
-						"id": "ok",
-					},
-				},
-			},
-		})
+		writeJSON(writer, pullRequestPayload(pr))
 		return
 	}
 
 	http.Error(writer, "not found", http.StatusNotFound)
 }
 
-func (api *fakeGitHubAPI) respondFailure(endpoint string, writer http.ResponseWriter) bool {
-	api.mu.Lock()
-	api.requestCounts[endpoint]++
-	failures := api.failures[endpoint]
-	if len(failures) == 0 {
-		api.mu.Unlock()
-		return false
+func pullRequestPayload(pr fakePR) map[string]interface{} {
+	payload := map[string]interface{}{
+		"number":     pr.Number,
+		"title":      pr.Title,
+		"body":       pr.Body,
+		"html_url":   pr.HTMLURL,
+		"node_id":    pr.NodeID,
+		"state":      pr.State,
+		"created_at": pr.CreatedAt.Format(time.RFC3339),
+		"head": map[string]interface{}{
+			"ref": pr.Head,
+		},
+		"base": map[string]interface{}{
+			"ref": pr.Base,
+		},
 	}
-	failure := failures[0]
-	api.failures[endpoint] = failures[1:]
-	api.mu.Unlock()
-
-	for key, value := range failure.Headers {
-		writer.Header().Set(key, value)
+	if !pr.MergedAt.IsZero() {
+		payload["merged_at"] = pr.MergedAt.Format(time.RFC3339)
 	}
-	if strings.HasPrefix(strings.TrimSpace(failure.Body), "{") {
-		writer.Header().Set("Content-Type", "application/json")
-	}
-	status := failure.StatusCode
-	if status == 0 {
-		status = http.StatusServiceUnavailable
-	}
-	writer.WriteHeader(status)
-	if strings.TrimSpace(failure.Body) != "" {
-		_, _ = writer.Write([]byte(failure.Body))
-	}
-	return true
+	return payload
 }
 
 func writeJSON(writer http.ResponseWriter, payload interface{}) {
 	writer.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(writer).Encode(payload)
-}
-
-func retryMetricCount(metrics *Metrics) int64 {
-	metrics.mu.Lock()
-	defer metrics.mu.Unlock()
-	return metrics.runsTotal[labelKey("github_api", "retry")]
 }

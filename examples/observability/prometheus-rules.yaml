@@ -1,0 +1,115 @@
+groups:
+  - name: patchpilot-availability
+    interval: 1m
+    rules:
+      - alert: PatchPilotSchedulerStalled
+        expr: sum by (job, instance) (increase(patchpilot_scheduler_cycles_total{status="completed"}[2h])) == 0
+        for: 30m
+        labels:
+          severity: critical
+          service: patchpilot
+        annotations:
+          summary: PatchPilot scheduler has not completed a cycle
+          description: |
+            No completed scheduler cycle has been observed for this PatchPilot instance in the last 2 hours.
+            Tune the lookback to roughly 2x PP_SCHEDULER_TICK if your deployment uses a different scheduler tick.
+
+      - alert: PatchPilotSchedulerBacklog
+        expr: patchpilot_scheduler_due_repositories > 25
+        for: 30m
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot backlog is building
+          description: |
+            More than 25 repositories are currently due for scanning or remediation on this instance.
+            For single-replica deployments, this usually means the worker is falling behind.
+
+      - alert: PatchPilotOldestDueRepositoryTooOld
+        expr: patchpilot_scheduler_oldest_due_age_seconds > 7200
+        for: 30m
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot oldest due repository is too old
+          description: |
+            The oldest due repository has been waiting for more than 2 hours.
+            This is a direct signal that scheduled execution is missing its intended window.
+
+      - alert: PatchPilotSchedulerLagHigh
+        expr: histogram_quantile(0.95, sum by (job, instance, le) (rate(patchpilot_scheduler_run_lag_seconds_bucket[30m]))) > 1800
+        for: 30m
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot scheduler run lag p95 is high
+          description: |
+            The p95 time between scheduled run time and actual processing start is above 30 minutes.
+            This is often the earliest signal that the replica count or scan budget is insufficient.
+
+  - name: patchpilot-execution
+    interval: 1m
+    rules:
+      - alert: PatchPilotJobFailures
+        expr: sum by (job, instance, stage) (increase(patchpilot_failures_total[30m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot job failures detected at stage {{ $labels.stage }}
+          description: |
+            PatchPilot recorded one or more failures in stage {{ $labels.stage }} over the last 30 minutes.
+
+      - alert: PatchPilotGitHubRateLimited
+        expr: sum by (job, instance, kind) (increase(patchpilot_github_api_rate_limit_total[15m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot is hitting GitHub rate limits ({{ $labels.kind }})
+          description: |
+            PatchPilot observed GitHub rate-limit related retries of kind {{ $labels.kind }} in the last 15 minutes.
+            If this persists, scheduler lag and backlog will usually follow.
+
+      - alert: PatchPilotFixBlockedFrequently
+        expr: sum by (job, instance) (increase(patchpilot_fixes_total{outcome="blocked"}[24h])) > 5
+        for: 1h
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot fixes are frequently blocked by policy
+          description: |
+            More than 5 remediation attempts were blocked by safety policy in the last 24 hours.
+            Inspect risk score distributions and changed-file scope before relaxing policy.
+
+  - name: patchpilot-security
+    interval: 1m
+    rules:
+      - alert: PatchPilotCriticalFindingsPresent
+        expr: patchpilot_fixable_findings_by_severity{severity="critical"} > 0
+        for: 1h
+        labels:
+          severity: critical
+          service: patchpilot
+        annotations:
+          summary: PatchPilot is tracking critical fixable findings
+          description: |
+            At least one repository currently has critical fixable findings in its latest successful scan state.
+
+      - alert: PatchPilotOpenRemediationPRStuck
+        expr: patchpilot_oldest_open_remediation_pull_request_age_seconds > 604800
+        for: 1h
+        labels:
+          severity: warning
+          service: patchpilot
+        annotations:
+          summary: PatchPilot remediation PR has been open for more than 7 days
+          description: |
+            The oldest tracked open remediation pull request is older than 7 days.
+            This usually points to review or merge-process bottlenecks rather than scheduler throughput.
