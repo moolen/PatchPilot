@@ -186,6 +186,7 @@ func runDoctor(stdout, stderr io.Writer) int {
 		check("go binary", ensureBinary("go"))
 		check("node binary", ensureBinary("node"))
 		check("npm binary", ensureBinary("npm"))
+		check("cargo binary", ensureBinary("cargo"))
 	}
 
 	if cfg.PrivateKeyPath != "" {

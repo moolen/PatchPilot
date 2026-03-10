@@ -18,7 +18,7 @@ SHELL ["/bin/sh", "-euxo", "pipefail", "-c"]
 ARG SYFT_VERSION=v1.34.2
 ARG GRYPE_VERSION=v0.104.0
 
-RUN apk add --no-cache ca-certificates git bash curl tar nodejs npm docker-cli
+RUN apk add --no-cache ca-certificates git bash curl tar nodejs npm cargo docker-cli
 
 RUN arch="$(uname -m)"; \
 	case "$arch" in \
@@ -45,4 +45,4 @@ RUN mkdir -p "${PP_WORKDIR}" && \
 EXPOSE 8080
 
 ENTRYPOINT ["/usr/local/bin/patchpilot-app"]
-CMD ["serve"]
+CMD ["run"]

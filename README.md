@@ -100,7 +100,7 @@ docker run --rm \
   patchpilot-app:dev
 ```
 
-The app image includes `patchpilot-app`, `patchpilot`, `git`, `syft`, `grype`, `go`, `node`, and `npm` so the default local job runner can scan and remediate repositories without additional sidecar tooling.
+The app image includes `patchpilot-app`, `patchpilot`, `git`, `syft`, `grype`, `go`, `node`, `npm`, and `cargo` so the default local job runner can scan and remediate repositories without additional sidecar tooling.
 
 GitHub App utility commands:
 

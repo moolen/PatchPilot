@@ -123,6 +123,19 @@ func TestFixScenarios(t *testing.T) {
 			},
 		},
 		{
+			name: "cargo dependency patch",
+			files: map[string]string{
+				"Cargo.toml": "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nserde = \"1.0.190\"\n",
+				"Cargo.lock": "version = 3\n\n[[package]]\nname = \"serde\"\nversion = \"1.0.190\"\n",
+			},
+			expectedExitCode: 0,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
+			expectContains: map[string]string{
+				"Cargo.toml": "serde = \"1.0.197\"",
+				"Cargo.lock": "version = \"1.0.197\"",
+			},
+		},
+		{
 			name: "already fixed no changes",
 			files: map[string]string{
 				"go.mod": "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.2.3\n",
@@ -542,6 +555,7 @@ func installFakeTools(t *testing.T) string {
 		"syft":  fakeSyftScript,
 		"grype": fakeGrypeScript,
 		"go":    fakeGoScript,
+		"cargo": fakeCargoScript,
 	} {
 		path := filepath.Join(binDir, name)
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
@@ -709,6 +723,32 @@ while IFS= read -r pom; do
   fi
 done <<EOF
 $(find "$repo" -type f -name pom.xml | sort)
+EOF
+
+cargo_version_from_manifest() {
+  manifest="$1"
+  package="$2"
+  awk -v pkg="$package" '
+    $0 ~ "^" pkg "[[:space:]]*=" {
+      line=$0
+      sub(/.*=[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      print line
+      exit
+    }
+  ' "$manifest"
+}
+
+while IFS= read -r manifest; do
+  [ -n "$manifest" ] || continue
+  rel="${manifest#$repo/}"
+  version=$(cargo_version_from_manifest "$manifest" "serde")
+  if version_lt "$version" "1.0.197"; then
+    [ -n "$version" ] || version="0.0.0"
+    append_match "{\"artifact\":{\"name\":\"serde\",\"version\":\"$version\",\"type\":\"rust-crate\",\"language\":\"rust\",\"purl\":\"pkg:cargo/serde@$version\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"GHSA-cargo-serde\",\"namespace\":\"github:language:rust\",\"fix\":{\"versions\":[\"1.0.197\"],\"state\":\"fixed\"}}}"
+  fi
+done <<EOF
+$(find "$repo" -type f -name Cargo.toml | sort)
 EOF
 
 while IFS= read -r dockerfile; do
@@ -902,4 +942,143 @@ case "$1" in
 esac
 
 exit 0
+`
+
+const fakeCargoScript = `#!/bin/sh
+set -eu
+
+command="$1"
+shift
+
+manifest_path=""
+package_name=""
+precise_version=""
+locked=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --manifest-path)
+      manifest_path="$2"
+      shift 2
+      ;;
+    -p)
+      package_name="$2"
+      shift 2
+      ;;
+    --precise)
+      precise_version="$2"
+      shift 2
+      ;;
+    --locked)
+      locked=1
+      shift
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$manifest_path" ]; then
+  manifest_path="$(pwd)/Cargo.toml"
+fi
+
+manifest_dir=$(dirname "$manifest_path")
+
+find_lockfile() {
+  dir="$1"
+  while :; do
+    if [ -f "$dir/Cargo.lock" ]; then
+      printf '%s\n' "$dir/Cargo.lock"
+      return 0
+    fi
+    parent=$(dirname "$dir")
+    if [ "$parent" = "$dir" ]; then
+      break
+    fi
+    dir="$parent"
+  done
+  return 1
+}
+
+crate_version_from_manifest() {
+  manifest="$1"
+  package="$2"
+  awk -v pkg="$package" '
+    $0 ~ "^" pkg "[[:space:]]*=" {
+      line=$0
+      sub(/.*=[[:space:]]*"/, "", line)
+      sub(/".*/, "", line)
+      print line
+      exit
+    }
+  ' "$manifest"
+}
+
+crate_version_from_lockfile() {
+  lockfile="$1"
+  package="$2"
+  awk -v pkg="$package" '
+    /^\[\[package\]\]/ { in_pkg = 1; name = "" }
+    in_pkg && /^name = / {
+      line=$0
+      sub(/^name = "/, "", line)
+      sub(/".*/, "", line)
+      name = line
+    }
+    in_pkg && /^version = / && name == pkg {
+      line=$0
+      sub(/^version = "/, "", line)
+      sub(/".*/, "", line)
+      print line
+      exit
+    }
+  ' "$lockfile"
+}
+
+replace_lockfile_version() {
+  lockfile="$1"
+  package="$2"
+  version="$3"
+  awk -v pkg="$package" -v version="$version" '
+    /^\[\[package\]\]/ { in_pkg = 1; name = "" }
+    in_pkg && /^name = / {
+      line=$0
+      sub(/^name = "/, "", line)
+      sub(/".*/, "", line)
+      name = line
+      print
+      next
+    }
+    in_pkg && /^version = / && name == pkg {
+      print "version = \"" version "\""
+      next
+    }
+    { print }
+  ' "$lockfile" >"$lockfile.tmp"
+  mv "$lockfile.tmp" "$lockfile"
+}
+
+case "$command" in
+  update)
+    if lockfile=$(find_lockfile "$manifest_dir"); then
+      replace_lockfile_version "$lockfile" "$package_name" "$precise_version"
+    fi
+    ;;
+  metadata)
+    if [ "$locked" -eq 1 ] && lockfile=$(find_lockfile "$manifest_dir"); then
+      manifest_version=$(crate_version_from_manifest "$manifest_path" "serde")
+      lock_version=$(crate_version_from_lockfile "$lockfile" "serde")
+      if [ -n "$manifest_version" ] && [ -n "$lock_version" ] && [ "$manifest_version" != "$lock_version" ]; then
+        echo "lockfile out of date for serde" >&2
+        exit 1
+      fi
+    fi
+    printf '{"packages":[],"workspace_members":[]}\n'
+    ;;
+  *)
+    echo "unsupported cargo command: $command" >&2
+    exit 1
+    ;;
+esac
 `

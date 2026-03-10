@@ -47,7 +47,7 @@ Common optional settings:
 - `PP_PATCHPILOT_BINARY`: path to the PatchPilot binary.
 - `PP_JOB_RUNNER`: `local` or `container`. Defaults to `local`.
 - `PP_JOB_CONTAINER_RUNTIME`: container runtime for repo jobs when `PP_JOB_RUNNER=container`. Defaults to `docker`.
-- `PP_JOB_CONTAINER_IMAGE`: container image that contains `patchpilot`, `syft`, `grype`, language toolchains, and package managers needed for remediation.
+- `PP_JOB_CONTAINER_IMAGE`: container image that contains `patchpilot`, `syft`, `grype`, language toolchains, and package managers needed for remediation, including `cargo` for Rust/Cargo repositories.
 - `PP_JOB_CONTAINER_BINARY`: PatchPilot binary path inside the job container. Defaults to `patchpilot`.
 - `PP_JOB_CONTAINER_NETWORK`: container network mode for repo jobs. Defaults to `bridge`.
 - `PP_GITHUB_WEB_BASE_URL`: GitHub web base URL for clone links. Defaults to `https://github.com`.

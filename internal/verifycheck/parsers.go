@@ -1,12 +1,14 @@
 package verifycheck
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -111,6 +113,38 @@ func verifyCargoManifest(path string) error {
 		return nil
 	}
 	return fmt.Errorf("%s missing [package] or [workspace] section", path)
+}
+
+func verifyCargoProject(ctx context.Context, dir string) error {
+	manifestPath := filepath.Join(dir, "Cargo.toml")
+	if err := verifyCargoManifest(manifestPath); err != nil {
+		return err
+	}
+	return runCargoMetadataCheckFunc(ctx, dir)
+}
+
+func runCargoMetadataCheck(ctx context.Context, dir string) error {
+	if _, err := exec.LookPath("cargo"); err != nil {
+		return fmt.Errorf("required tool %q not found in PATH", "cargo")
+	}
+
+	manifestPath := filepath.Join(dir, "Cargo.toml")
+	args := []string{"metadata", "--format-version", "1", "--manifest-path", manifestPath, "--no-deps"}
+	if fileExists(filepath.Join(dir, "Cargo.lock")) {
+		args = append(args, "--locked")
+	}
+
+	command := exec.CommandContext(ctx, "cargo", args...)
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	message := strings.TrimSpace(string(output))
+	if message == "" {
+		return fmt.Errorf("cargo %s: %w", strings.Join(args, " "), err)
+	}
+	return fmt.Errorf("cargo %s: %w: %s", strings.Join(args, " "), err, message)
 }
 
 func verifyCSProjFiles(dir string) error {

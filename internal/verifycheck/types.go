@@ -60,6 +60,7 @@ type Summary struct {
 
 var runGoCheckFunc = runGoCheck
 var runShellCheckFunc = runShellCheck
+var runCargoMetadataCheckFunc = runCargoMetadataCheck
 
 type DiscoverOptions struct {
 	SkipPaths []string

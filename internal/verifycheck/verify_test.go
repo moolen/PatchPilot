@@ -183,6 +183,43 @@ func TestRunStandardCapturesTimeoutFromContext(t *testing.T) {
 	}
 }
 
+func TestRunStandardRunsCargoMetadataCheck(t *testing.T) {
+	orig := runCargoMetadataCheckFunc
+	defer func() { runCargoMetadataCheckFunc = orig }()
+
+	repo := t.TempDir()
+	moduleDir := filepath.Join(repo, "rust")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatalf("mkdir module: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"), 0o644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+
+	calls := 0
+	runCargoMetadataCheckFunc = func(ctx context.Context, dir string) error {
+		calls++
+		if dir != moduleDir {
+			t.Fatalf("unexpected cargo dir: %s", dir)
+		}
+		return nil
+	}
+
+	report := RunStandard(context.Background(), repo, nil)
+	if len(report.Modules) != 1 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	if report.Modules[0].Dir != filepath.Clean("rust") {
+		t.Fatalf("unexpected module dir: %#v", report.Modules[0])
+	}
+	if len(report.Modules[0].Checks) != 1 || report.Modules[0].Checks[0].Name != "cargo-manifest-parse" || report.Modules[0].Checks[0].Status != StatusOK {
+		t.Fatalf("unexpected cargo checks: %#v", report.Modules[0].Checks)
+	}
+	if calls != 1 {
+		t.Fatalf("expected one cargo metadata call, got %d", calls)
+	}
+}
+
 func TestRunGoCheckCompileTestsDoesNotExecuteTestMain(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
