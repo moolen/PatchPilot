@@ -807,7 +807,7 @@ func (service *Service) trackOpenRemediationPR(repoKey string, pr *github.PullRe
 		return nil
 	}
 	return service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
-		createdAt := pr.GetCreatedAt().Time.UTC()
+		createdAt := pr.GetCreatedAt().UTC()
 		state.OpenPR = &trackedRemediationPRState{
 			Number:     pr.GetNumber(),
 			URL:        pr.GetHTMLURL(),
@@ -848,7 +848,7 @@ func (service *Service) reconcileTrackedPullRequest(ctx context.Context, client 
 	}
 
 	return service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
-		createdAt := pr.GetCreatedAt().Time.UTC()
+		createdAt := pr.GetCreatedAt().UTC()
 		state.OpenPR = &trackedRemediationPRState{
 			Number:     pr.GetNumber(),
 			URL:        pr.GetHTMLURL(),
