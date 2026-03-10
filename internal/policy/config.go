@@ -35,6 +35,10 @@ const (
 	GoRuntimePatchToolchain = "toolchain"
 	GoRuntimePatchMinimum   = "minimum"
 
+	ArtifactsTargetsCommandModeReplace = "replace"
+	ArtifactsTargetsCommandModeAppend  = "append"
+	DefaultArtifactsTargetsTimeout     = "2m"
+
 	ScanCronDisabled    = "disabled"
 	DefaultScanCron     = "0 0 * * *"
 	DefaultScanTimezone = "UTC"
@@ -52,6 +56,7 @@ type Config struct {
 	Registry      RegistryPolicy      `yaml:"registry"`
 	Docker        DockerPolicy        `yaml:"docker"`
 	Go            GoPolicy            `yaml:"go"`
+	Artifacts     ArtifactsPolicy     `yaml:"artifacts"`
 }
 
 type GoPolicy struct {
@@ -132,6 +137,48 @@ type DockerPolicy struct {
 type DockerPatchingPolicy struct {
 	BaseImages string `yaml:"base_images"`
 	OSPackages string `yaml:"os_packages"`
+}
+
+type ArtifactsPolicy struct {
+	Targets        []ArtifactTargetPolicy        `yaml:"targets"`
+	TargetsCommand ArtifactsTargetsCommandPolicy `yaml:"targets_command"`
+}
+
+type ArtifactTargetPolicy struct {
+	ID         string              `yaml:"id"`
+	Dockerfile string              `yaml:"dockerfile"`
+	Context    string              `yaml:"context"`
+	Image      ArtifactImagePolicy `yaml:"image"`
+	Build      ArtifactBuildPolicy `yaml:"build"`
+	Scan       ArtifactScanPolicy  `yaml:"scan"`
+}
+
+type ArtifactImagePolicy struct {
+	Tag string `yaml:"tag"`
+}
+
+type ArtifactBuildPolicy struct {
+	Run     string `yaml:"run"`
+	Timeout string `yaml:"timeout"`
+}
+
+type ArtifactScanPolicy struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+func (policy ArtifactScanPolicy) EnabledOrDefault() bool {
+	return policy.Enabled == nil || *policy.Enabled
+}
+
+type ArtifactsTargetsCommandPolicy struct {
+	Run         string `yaml:"run"`
+	Timeout     string `yaml:"timeout"`
+	Mode        string `yaml:"mode"`
+	FailOnError *bool  `yaml:"fail_on_error"`
+}
+
+func (policy ArtifactsTargetsCommandPolicy) FailOnErrorOrDefault() bool {
+	return policy.FailOnError == nil || *policy.FailOnError
 }
 
 type LoadOptions struct {
@@ -452,6 +499,7 @@ func sanitizeUntrustedRepoPolicyMap(root map[string]any) map[string]any {
 	delete(sanitized, "verification")
 	delete(sanitized, "post_execution")
 	delete(sanitized, "registry")
+	delete(sanitized, "artifacts")
 
 	return sanitized
 }
@@ -701,6 +749,85 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("go.patching.runtime must be %q, %q, or %q", GoRuntimePatchDisabled, GoRuntimePatchToolchain, GoRuntimePatchMinimum)
 	}
 
+	if err := normalizeArtifactTargets(cfg.Artifacts.Targets, "artifacts.targets"); err != nil {
+		return err
+	}
+
+	cfg.Artifacts.TargetsCommand.Run = strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run)
+	cfg.Artifacts.TargetsCommand.Mode = normalizeLower(cfg.Artifacts.TargetsCommand.Mode)
+	if cfg.Artifacts.TargetsCommand.Mode == "" {
+		cfg.Artifacts.TargetsCommand.Mode = ArtifactsTargetsCommandModeReplace
+	}
+	if cfg.Artifacts.TargetsCommand.Mode != ArtifactsTargetsCommandModeReplace && cfg.Artifacts.TargetsCommand.Mode != ArtifactsTargetsCommandModeAppend {
+		return fmt.Errorf(
+			"artifacts.targets_command.mode must be %q or %q",
+			ArtifactsTargetsCommandModeReplace,
+			ArtifactsTargetsCommandModeAppend,
+		)
+	}
+
+	cfg.Artifacts.TargetsCommand.Timeout = strings.TrimSpace(cfg.Artifacts.TargetsCommand.Timeout)
+	if cfg.Artifacts.TargetsCommand.Timeout == "" {
+		cfg.Artifacts.TargetsCommand.Timeout = DefaultArtifactsTargetsTimeout
+	}
+	timeout, err := time.ParseDuration(cfg.Artifacts.TargetsCommand.Timeout)
+	if err != nil {
+		return fmt.Errorf("artifacts.targets_command.timeout is invalid: %w", err)
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("artifacts.targets_command.timeout must be > 0")
+	}
+
+	return nil
+}
+
+func NormalizeArtifactTargets(targets []ArtifactTargetPolicy) ([]ArtifactTargetPolicy, error) {
+	normalized := append([]ArtifactTargetPolicy(nil), targets...)
+	if err := normalizeArtifactTargets(normalized, "artifacts.targets"); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
+func normalizeArtifactTargets(targets []ArtifactTargetPolicy, field string) error {
+	for index := range targets {
+		target := &targets[index]
+		target.ID = strings.TrimSpace(target.ID)
+		if target.ID == "" {
+			target.ID = fmt.Sprintf("target-%d", index+1)
+		}
+
+		target.Dockerfile = cleanRelativePath(target.Dockerfile)
+		if target.Dockerfile == "" {
+			return fmt.Errorf("%s[%d].dockerfile must not be empty", field, index)
+		}
+
+		target.Context = cleanRelativePath(target.Context)
+		if target.Context == "" {
+			target.Context = cleanRelativePath(filepath.Dir(target.Dockerfile))
+		}
+
+		target.Image.Tag = strings.TrimSpace(target.Image.Tag)
+		if target.Image.Tag == "" {
+			return fmt.Errorf("%s[%d].image.tag must not be empty", field, index)
+		}
+
+		target.Build.Run = strings.TrimSpace(target.Build.Run)
+		if target.Build.Run == "" {
+			return fmt.Errorf("%s[%d].build.run must not be empty", field, index)
+		}
+		target.Build.Timeout = strings.TrimSpace(target.Build.Timeout)
+		if target.Build.Timeout == "" {
+			target.Build.Timeout = "30m"
+		}
+		timeout, err := time.ParseDuration(target.Build.Timeout)
+		if err != nil {
+			return fmt.Errorf("%s[%d].build.timeout is invalid: %w", field, index, err)
+		}
+		if timeout <= 0 {
+			return fmt.Errorf("%s[%d].build.timeout must be > 0", field, index)
+		}
+	}
 	return nil
 }
 

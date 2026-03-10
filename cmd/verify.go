@@ -36,7 +36,7 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	tracker.endStageSuccess(stage, nil)
 
 	stage = tracker.beginStage("scan_vulnerabilities")
-	after, err := scanVulnerabilities(ctx, repo, cfg)
+	after, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "verify", "verify")
 	if err != nil {
 		tracker.endStageFailure(stage, err, nil)
 		return err

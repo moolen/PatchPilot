@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"sort"
+	"strings"
 
 	"github.com/moolen/patchpilot/internal/policy"
 	"github.com/moolen/patchpilot/internal/sbom"
@@ -16,9 +18,73 @@ func generateSBOM(ctx context.Context, repo string, cfg *policy.Config) error {
 }
 
 func scanVulnerabilities(ctx context.Context, repo string, cfg *policy.Config) (*vuln.Report, error) {
+	return scanVulnerabilitiesForRun(ctx, repo, cfg, "", "", "")
+}
+
+func scanVulnerabilitiesForRun(ctx context.Context, repo string, cfg *policy.Config, runID, phase, command string) (*vuln.Report, error) {
 	report, err := vuln.ScanWithOptions(ctx, repo, vulnOptionsFromPolicy(cfg))
 	if err != nil {
 		return nil, wrapWithExitCode(ExitCodeScanFailed, err)
 	}
-	return report, nil
+	artifactReport, err := scanArtifactVulnerabilities(ctx, repo, cfg, artifactScanOptions{
+		RunID:   runID,
+		Phase:   phase,
+		Command: command,
+	})
+	if err != nil {
+		return nil, wrapWithExitCode(ExitCodeScanFailed, err)
+	}
+	return mergeVulnerabilityReports(report, artifactReport), nil
+}
+
+func mergeVulnerabilityReports(reports ...*vuln.Report) *vuln.Report {
+	merged := &vuln.Report{}
+	seen := map[string]struct{}{}
+	for _, report := range reports {
+		if report == nil {
+			continue
+		}
+		merged.RawMatches += report.RawMatches
+		merged.IgnoredWithoutFix += report.IgnoredWithoutFix
+		merged.IgnoredByPolicy += report.IgnoredByPolicy
+		if merged.RawPath == "" {
+			merged.RawPath = report.RawPath
+		}
+		for _, finding := range report.Findings {
+			key := findingMergeKey(finding)
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			merged.Findings = append(merged.Findings, finding)
+		}
+	}
+
+	sort.Slice(merged.Findings, func(i, j int) bool {
+		left := merged.Findings[i]
+		right := merged.Findings[j]
+		if left.Ecosystem != right.Ecosystem {
+			return left.Ecosystem < right.Ecosystem
+		}
+		if left.Package != right.Package {
+			return left.Package < right.Package
+		}
+		if left.VulnerabilityID != right.VulnerabilityID {
+			return left.VulnerabilityID < right.VulnerabilityID
+		}
+		return left.FixedVersion < right.FixedVersion
+	})
+	return merged
+}
+
+func findingMergeKey(finding vuln.Finding) string {
+	locations := append([]string(nil), finding.Locations...)
+	sort.Strings(locations)
+	return strings.Join([]string{
+		finding.VulnerabilityID,
+		finding.Package,
+		finding.FixedVersion,
+		finding.Ecosystem,
+		strings.Join(locations, "|"),
+	}, "::")
 }

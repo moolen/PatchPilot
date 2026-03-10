@@ -149,6 +149,60 @@ func SchemaJSON() []byte {
           }
         }
       }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "targets_command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["run"],
+          "properties": {
+            "run": { "type": "string", "minLength": 1 },
+            "timeout": { "type": "string" },
+            "mode": { "type": "string", "enum": ["replace", "append"] },
+            "fail_on_error": { "type": "boolean" }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["dockerfile", "image", "build"],
+            "properties": {
+              "id": { "type": "string" },
+              "dockerfile": { "type": "string", "minLength": 1 },
+              "context": { "type": "string" },
+              "image": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["tag"],
+                "properties": {
+                  "tag": { "type": "string", "minLength": 1 }
+                }
+              },
+              "build": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["run"],
+                "properties": {
+                  "run": { "type": "string", "minLength": 1 },
+                  "timeout": { "type": "string" }
+                }
+              },
+              "scan": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }`)

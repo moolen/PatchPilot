@@ -32,22 +32,34 @@ func Generate(ctx context.Context, repo string) (string, error) {
 }
 
 func GenerateWithOptions(ctx context.Context, repo string, options Options) (string, error) {
+	outputPath := filepath.Join(repo, ".patchpilot", fileName)
+	return GenerateForSourceWithOptions(ctx, repo, "dir:"+repo, outputPath, options)
+}
+
+func GenerateForSourceWithOptions(ctx context.Context, repo, source, outputPath string, options Options) (string, error) {
 	if err := ensureTool("syft"); err != nil {
 		return "", err
 	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return "", fmt.Errorf("syft source must not be empty")
+	}
 
-	stateDir := filepath.Join(repo, ".patchpilot")
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+	if strings.TrimSpace(outputPath) == "" {
+		outputPath = filepath.Join(repo, ".patchpilot", fileName)
+	}
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return "", fmt.Errorf("create state dir: %w", err)
 	}
 
-	outputPath := filepath.Join(stateDir, fileName)
 	var stdoutBuffer bytes.Buffer
 	var stderrBuffer bytes.Buffer
 
-	args := []string{"dir:" + repo, "-o", "cyclonedx-json"}
-	for _, exclude := range buildExcludes(options.Exclude) {
-		args = append(args, "--exclude", exclude)
+	args := []string{source, "-o", "cyclonedx-json"}
+	if strings.HasPrefix(strings.ToLower(source), "dir:") {
+		for _, exclude := range buildExcludes(options.Exclude) {
+			args = append(args, "--exclude", exclude)
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, "syft", args...)

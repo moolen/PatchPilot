@@ -40,8 +40,9 @@ type IgnoreRule struct {
 }
 
 type ScanOptions struct {
-	IgnoreRules []IgnoreRule
-	SkipPaths   []string
+	IgnoreRules  []IgnoreRule
+	SkipPaths    []string
+	OutputPrefix string
 }
 
 type Finding struct {
@@ -97,20 +98,27 @@ func Scan(ctx context.Context, repo string) (*Report, error) {
 }
 
 func ScanWithOptions(ctx context.Context, repo string, options ScanOptions) (*Report, error) {
+	return ScanSBOMWithOptions(ctx, repo, sbom.Path(repo), options)
+}
+
+func ScanSBOMWithOptions(ctx context.Context, repo, sbomPath string, options ScanOptions) (*Report, error) {
 	if err := ensureTool("grype"); err != nil {
 		return nil, err
+	}
+	sbomPath = strings.TrimSpace(sbomPath)
+	if sbomPath == "" {
+		return nil, errors.New("sbom path is empty")
 	}
 
 	stateDir := filepath.Join(repo, ".patchpilot")
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create state dir: %w", err)
 	}
-
-	rawPath := filepath.Join(stateDir, rawFileName)
+	rawPath, normalizedPath := scanOutputPaths(stateDir, options.OutputPrefix)
 	var rawBuffer bytes.Buffer
 	var stderrBuffer bytes.Buffer
 
-	cmd := exec.CommandContext(ctx, "grype", "sbom:"+sbom.Path(repo), "-o", "json")
+	cmd := exec.CommandContext(ctx, "grype", "sbom:"+sbomPath, "-o", "json")
 	cmd.Stdout = &rawBuffer
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuffer)
 	if err := cmd.Run(); err != nil {
@@ -133,11 +141,44 @@ func ScanWithOptions(ctx context.Context, repo string, options ScanOptions) (*Re
 	result := normalizeReport(repo, decoded, options)
 	result.RawPath = rawPath
 
-	if err := writeNormalized(repo, result); err != nil {
+	if err := writeNormalized(normalizedPath, result); err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+func scanOutputPaths(stateDir, prefix string) (string, string) {
+	prefix = sanitizeOutputPrefix(prefix)
+	if prefix == "" {
+		return filepath.Join(stateDir, rawFileName), filepath.Join(stateDir, normalizedFileName)
+	}
+	rawName := fmt.Sprintf("%s-%s", prefix, rawFileName)
+	normalizedName := fmt.Sprintf("%s-%s", prefix, normalizedFileName)
+	return filepath.Join(stateDir, rawName), filepath.Join(stateDir, normalizedName)
+}
+
+func sanitizeOutputPrefix(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var builder strings.Builder
+	for _, char := range value {
+		switch {
+		case char >= 'a' && char <= 'z':
+			builder.WriteRune(char)
+		case char >= 'A' && char <= 'Z':
+			builder.WriteRune(char)
+		case char >= '0' && char <= '9':
+			builder.WriteRune(char)
+		case char == '-' || char == '_' || char == '.':
+			builder.WriteRune(char)
+		default:
+			builder.WriteRune('-')
+		}
+	}
+	return strings.Trim(builder.String(), "-")
 }
 
 func parseRawReport(path string) (*rawReport, error) {
@@ -272,14 +313,13 @@ func shouldIgnoreFinding(repo string, finding Finding, rules []IgnoreRule) bool 
 	return false
 }
 
-func writeNormalized(repo string, report *Report) error {
+func writeNormalized(path string, report *Report) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal normalized findings: %w", err)
 	}
 
-	outputPath := filepath.Join(repo, ".patchpilot", normalizedFileName)
-	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write normalized findings: %w", err)
 	}
 	return nil

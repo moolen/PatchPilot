@@ -16,11 +16,16 @@ import (
 )
 
 func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
+	return applyFixEngines(ctx, repo, findings, fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions), allowFailures)
+}
+
+func applyFixEngines(ctx context.Context, repo string, findings []vuln.Finding, engines []fixer.Engine, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
 	patches := make([]fixer.Patch, 0)
 	issues := make([]string, 0)
 	engineDetails := map[string]any{}
 
-	for _, engine := range fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions) {
+	for _, engine := range engines {
+		logProgress("running %s fixer", engine.Name())
 		enginePatches, applyErr := engine.Apply(ctx, repo, findings)
 		if applyErr != nil {
 			if !allowFailures {
@@ -36,11 +41,19 @@ func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.F
 			continue
 		}
 		patches = append(patches, enginePatches...)
+		if len(enginePatches) == 0 {
+			engineDetails[engine.Name()] = map[string]any{
+				"status":  "no_changes",
+				"patches": 0,
+			}
+			logProgress("%s fixer made no changes", engine.Name())
+			continue
+		}
 		engineDetails[engine.Name()] = map[string]any{
 			"status":  "applied",
 			"patches": len(enginePatches),
 		}
-		logProgress("applied %d patch(es) via %s", len(enginePatches), engine.Name())
+		logProgress("%s fixer applied %d patch(es)", engine.Name(), len(enginePatches))
 	}
 
 	return patches, issues, engineDetails, nil
@@ -67,6 +80,7 @@ func runAgentRepairLoop(
 	validationErr error,
 	verificationBaseline verifycheck.Report,
 	verificationDirs []string,
+	runID string,
 ) (validationCycle, bool, int, error) {
 	logProgress("deterministic phase incomplete, starting agent repair loop")
 
@@ -105,7 +119,8 @@ func runAgentRepairLoop(
 		PreviousAttemptSummaries:        deterministicIssues,
 		ValidationCommands:              validationCommandsForPrompt(cfg),
 		Validate: func(validateCtx context.Context, attemptNumber int) (agentpkg.ValidationResult, error) {
-			next, err := runValidationCycle(validateCtx, repo, cfg, verificationBaseline, verificationDirs)
+			phase := fmt.Sprintf("agent-attempt-%d", attemptNumber)
+			next, err := runValidationCycle(validateCtx, repo, cfg, verificationBaseline, verificationDirs, runID, phase)
 			if err != nil {
 				lastValidationErr = err
 			}
@@ -154,7 +169,7 @@ func runAgentRepairLoop(
 	return validation, false, loopResult.Attempts, nil
 }
 
-func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, verificationBaseline verifycheck.Report, verificationDirs []string) (validationCycle, error) {
+func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, verificationBaseline verifycheck.Report, verificationDirs []string, runID, phase string) (validationCycle, error) {
 	result := validationCycle{}
 	var logs strings.Builder
 
@@ -165,7 +180,7 @@ func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, ve
 	}
 
 	logs.WriteString("scan vulnerabilities\n")
-	after, err := scanVulnerabilities(ctx, repo, cfg)
+	after, err := scanVulnerabilitiesForRun(ctx, repo, cfg, runID, phase, "fix")
 	if err != nil {
 		result.Logs = logs.String()
 		return result, err

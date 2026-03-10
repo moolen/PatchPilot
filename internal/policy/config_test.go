@@ -201,6 +201,11 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"cve_rules"`,
 		`"go"`,
 		`"runtime"`,
+		`"artifacts"`,
+		`"targets_command"`,
+		`"dockerfile"`,
+		`"image"`,
+		`"build"`,
 	} {
 		if !strings.Contains(schema, expected) {
 			t.Fatalf("expected schema to contain %q, got:\n%s", expected, schema)
@@ -481,6 +486,13 @@ registry:
   auth:
     mode: bearer
     token_env: REGISTRY_TOKEN
+artifacts:
+  targets:
+    - dockerfile: Dockerfile
+      image:
+        tag: patchpilot/demo:${PP_RUN_ID}
+      build:
+        run: make image
 scan:
   cron: "0 3 * * *"
   timezone: Europe/Berlin
@@ -501,6 +513,9 @@ exclude:
 	}
 	if cfg.Registry.Auth.Mode != RegistryAuthAuto {
 		t.Fatalf("expected registry auth to fall back to default auto mode, got %q", cfg.Registry.Auth.Mode)
+	}
+	if len(cfg.Artifacts.Targets) != 0 {
+		t.Fatalf("expected artifacts to be stripped, got %#v", cfg.Artifacts.Targets)
 	}
 	if cfg.Scan.Cron != "0 3 * * *" || cfg.Scan.Timezone != "Europe/Berlin" {
 		t.Fatalf("expected declarative scan policy to remain, got %#v", cfg.Scan)
@@ -573,5 +588,79 @@ scan:
 	}
 	if len(cfg.Scan.SkipPaths) != 2 || cfg.Scan.SkipPaths[0] != "central/**" || cfg.Scan.SkipPaths[1] != "repo/**" {
 		t.Fatalf("expected safe declarative repo settings to still merge, got %#v", cfg.Scan.SkipPaths)
+	}
+}
+
+func TestLoadNormalizesArtifactTargets(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+artifacts:
+  targets_command:
+    run: make patchpilot-targets
+  targets:
+    - dockerfile: ./images/backend/Dockerfile
+      image:
+        tag: patchpilot/backend:${PP_RUN_ID}
+      build:
+        run: APP=backend make container-image
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	cfg, err := Load(repo, "")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Artifacts.Targets) != 1 {
+		t.Fatalf("expected one artifact target, got %#v", cfg.Artifacts.Targets)
+	}
+	if cfg.Artifacts.TargetsCommand.Mode != ArtifactsTargetsCommandModeReplace {
+		t.Fatalf("expected default targets command mode %q, got %q", ArtifactsTargetsCommandModeReplace, cfg.Artifacts.TargetsCommand.Mode)
+	}
+	if cfg.Artifacts.TargetsCommand.Timeout != DefaultArtifactsTargetsTimeout {
+		t.Fatalf("expected default targets command timeout %q, got %q", DefaultArtifactsTargetsTimeout, cfg.Artifacts.TargetsCommand.Timeout)
+	}
+	if !cfg.Artifacts.TargetsCommand.FailOnErrorOrDefault() {
+		t.Fatalf("expected default fail_on_error=true")
+	}
+	target := cfg.Artifacts.Targets[0]
+	if target.ID == "" {
+		t.Fatalf("expected default id to be set, got %#v", target)
+	}
+	if target.Dockerfile != "images/backend/Dockerfile" {
+		t.Fatalf("unexpected dockerfile path: %q", target.Dockerfile)
+	}
+	if target.Context != "images/backend" {
+		t.Fatalf("expected context to default from dockerfile dir, got %q", target.Context)
+	}
+	if target.Build.Timeout != "30m" {
+		t.Fatalf("expected default build timeout 30m, got %q", target.Build.Timeout)
+	}
+	if !target.Scan.EnabledOrDefault() {
+		t.Fatalf("expected scan to default to enabled")
+	}
+}
+
+func TestLoadRejectsInvalidArtifactTargetsCommandMode(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+artifacts:
+  targets_command:
+    run: 'echo "targets: []"'
+    mode: nope
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected validation error for invalid mode")
+	}
+	if !strings.Contains(err.Error(), "artifacts.targets_command.mode") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

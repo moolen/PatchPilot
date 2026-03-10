@@ -84,7 +84,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	logProgress("scanning baseline vulnerabilities")
 	stage = tracker.beginStage("scan_baseline")
-	before, err := scanVulnerabilities(ctx, repo, cfg)
+	before, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "baseline", "fix")
 	if err != nil {
 		tracker.endStageFailure(stage, err, nil)
 		return err
@@ -159,7 +159,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	logProgress("validating post-fix state")
 	stage = tracker.beginStage("validate_post_fix")
-	finalValidation, validationErr := runValidationCycle(ctx, repo, cfg, verificationBaseline, verificationDirs)
+	finalValidation, validationErr := runValidationCycle(ctx, repo, cfg, verificationBaseline, verificationDirs, tracker.record.RunID, "post-fix")
 	if validationErr != nil {
 		if !options.EnableAgent {
 			tracker.endStageFailure(stage, validationErr, nil)
@@ -197,6 +197,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 			validationErr,
 			verificationBaseline,
 			verificationDirs,
+			tracker.record.RunID,
 		)
 		if err != nil {
 			tracker.endStageFailure(stage, err, nil)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/moolen/patchpilot/internal/fixer"
 	"github.com/moolen/patchpilot/internal/policy"
+	"github.com/moolen/patchpilot/internal/vuln"
 )
 
 func TestOptionsFromPolicy(t *testing.T) {
@@ -220,5 +221,147 @@ func TestRunVerificationChecksInvalidTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "parse verification command timeout") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveArtifactTemplate(t *testing.T) {
+	resolved := resolveArtifactTemplate(
+		"patchpilot/$PP_TARGET_ID:${PP_RUN_ID}",
+		map[string]string{
+			"PP_TARGET_ID": "backend",
+			"PP_RUN_ID":    "run-1",
+		},
+	)
+	if resolved != "patchpilot/backend:run-1" {
+		t.Fatalf("unexpected resolved template: %q", resolved)
+	}
+}
+
+func TestMergeVulnerabilityReportsDeduplicatesFindings(t *testing.T) {
+	left := &vuln.Report{
+		RawMatches: 2,
+		Findings: []vuln.Finding{
+			{
+				VulnerabilityID: "CVE-1",
+				Package:         "openssl",
+				FixedVersion:    "1.2.3",
+				Ecosystem:       "deb",
+				Locations:       []string{"/tmp/repo/Dockerfile"},
+			},
+		},
+	}
+	right := &vuln.Report{
+		RawMatches: 1,
+		Findings: []vuln.Finding{
+			{
+				VulnerabilityID: "CVE-1",
+				Package:         "openssl",
+				FixedVersion:    "1.2.3",
+				Ecosystem:       "deb",
+				Locations:       []string{"/tmp/repo/Dockerfile"},
+			},
+			{
+				VulnerabilityID: "CVE-2",
+				Package:         "busybox",
+				FixedVersion:    "1.0.1",
+				Ecosystem:       "apk",
+				Locations:       []string{"/tmp/repo/Dockerfile"},
+			},
+		},
+	}
+
+	merged := mergeVulnerabilityReports(left, right)
+	if merged.RawMatches != 3 {
+		t.Fatalf("unexpected raw match count: %d", merged.RawMatches)
+	}
+	if len(merged.Findings) != 2 {
+		t.Fatalf("unexpected merged findings: %#v", merged.Findings)
+	}
+}
+
+func TestParseArtifactTargetsCommandOutputNormalizesTargets(t *testing.T) {
+	targets, err := parseArtifactTargetsCommandOutput(`
+targets:
+  - dockerfile: ./images/backend/Dockerfile
+    image:
+      tag: patchpilot/backend:${PP_RUN_ID}
+    build:
+      run: make image
+`)
+	if err != nil {
+		t.Fatalf("parseArtifactTargetsCommandOutput returned error: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Context != "images/backend" {
+		t.Fatalf("expected context defaulted from dockerfile dir, got %q", targets[0].Context)
+	}
+}
+
+func TestParseArtifactTargetsCommandOutputRequiresTopLevelTargets(t *testing.T) {
+	_, err := parseArtifactTargetsCommandOutput(`{}`)
+	if err == nil {
+		t.Fatal("expected error for missing targets key")
+	}
+	if !strings.Contains(err.Error(), "top-level targets key") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseArtifactTargetsCommandOutputRejectsUnknownFields(t *testing.T) {
+	_, err := parseArtifactTargetsCommandOutput(`
+targets:
+  - dockerfile: Dockerfile
+    image:
+      tag: example:latest
+    build:
+      run: make image
+    no_such_field: true
+`)
+	if err == nil {
+		t.Fatal("expected error for unknown field")
+	}
+	if !strings.Contains(err.Error(), "field no_such_field not found") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMergeArtifactTargetPoliciesOverlayWinsByID(t *testing.T) {
+	base := []policy.ArtifactTargetPolicy{
+		{
+			ID:         "backend",
+			Dockerfile: "old/Dockerfile",
+			Context:    "old",
+			Image:      policy.ArtifactImagePolicy{Tag: "example/backend:old"},
+			Build:      policy.ArtifactBuildPolicy{Run: "make old", Timeout: "30m"},
+		},
+	}
+	overlay := []policy.ArtifactTargetPolicy{
+		{
+			ID:         "backend",
+			Dockerfile: "new/Dockerfile",
+			Context:    "new",
+			Image:      policy.ArtifactImagePolicy{Tag: "example/backend:new"},
+			Build:      policy.ArtifactBuildPolicy{Run: "make new", Timeout: "30m"},
+		},
+		{
+			ID:         "worker",
+			Dockerfile: "worker/Dockerfile",
+			Context:    "worker",
+			Image:      policy.ArtifactImagePolicy{Tag: "example/worker:new"},
+			Build:      policy.ArtifactBuildPolicy{Run: "make worker", Timeout: "30m"},
+		},
+	}
+
+	merged := mergeArtifactTargetPolicies(base, overlay)
+	if len(merged) != 2 {
+		t.Fatalf("expected two merged targets, got %#v", merged)
+	}
+	if merged[0].Dockerfile != "new/Dockerfile" {
+		t.Fatalf("expected overlay target to replace by id, got %#v", merged[0])
+	}
+	if merged[1].ID != "worker" {
+		t.Fatalf("expected new overlay target appended, got %#v", merged[1])
 	}
 }
