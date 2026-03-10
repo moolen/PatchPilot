@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/moolen/patchpilot/internal/githubapp"
@@ -51,7 +54,7 @@ func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 func newServeCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "serve",
-		Short: "Run the PatchPilot webhook service",
+		Short: "Run the PatchPilot scheduler service",
 		RunE: func(command *cobra.Command, args []string) error {
 			return serve()
 		},
@@ -96,12 +99,14 @@ func serve() error {
 		return fmt.Errorf("initialize app service: %w", err)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) {
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte("ok\n"))
 	})
-	mux.HandleFunc("/webhook", service.HandleWebhook)
 	mux.HandleFunc(cfg.MetricsPath, service.MetricsHandler)
 
 	server := &http.Server{
@@ -113,9 +118,29 @@ func serve() error {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	logger.Printf("listening on %s", cfg.ListenAddr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("listen: %w", err)
+	errCh := make(chan error, 2)
+	go func() {
+		errCh <- service.Run(ctx)
+	}()
+	go func() {
+		logger.Printf("listening on %s", cfg.ListenAddr)
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, context.Canceled) {
+			_ = server.Shutdown(context.Background())
+			return fmt.Errorf("run service: %w", err)
+		}
+		stop()
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("shutdown server: %w", err)
 	}
 	return nil
 }
@@ -138,9 +163,22 @@ func runDoctor(stdout, stderr io.Writer) int {
 	}
 
 	check("workdir writable", ensureWritableDir(cfg.WorkDir))
-	check("PatchPilot binary", ensureBinary(cfg.PatchPilotBinary))
-	check("syft binary", ensureBinary("syft"))
-	check("grype binary", ensureBinary("grype"))
+	check("git binary", ensureBinary("git"))
+	if cfg.JobRunner == "container" {
+		check("job container runtime", ensureBinary(cfg.JobContainerRuntime))
+		if strings.TrimSpace(cfg.JobContainerImage) == "" {
+			check("job container image", fmt.Errorf("PP_JOB_CONTAINER_IMAGE is required"))
+		} else {
+			check("job container image", nil)
+		}
+	} else {
+		check("PatchPilot binary", ensureBinary(cfg.PatchPilotBinary))
+		check("syft binary", ensureBinary("syft"))
+		check("grype binary", ensureBinary("grype"))
+		check("go binary", ensureBinary("go"))
+		check("node binary", ensureBinary("node"))
+		check("npm binary", ensureBinary("npm"))
+	}
 
 	if cfg.PrivateKeyPath != "" {
 		_, err := os.ReadFile(cfg.PrivateKeyPath)
@@ -168,20 +206,18 @@ func runManifest(stdout, stderr io.Writer) int {
 	}
 
 	appURL := envOrDefault("PP_APP_URL", "https://example.com")
-	webhookURL := envOrDefault("PP_WEBHOOK_URL", "https://example.com/webhook")
 	manifest := appManifest{
 		Name:        envOrDefault("PP_APP_NAME", "PatchPilot"),
 		URL:         appURL,
-		HookAttrs:   map[string]string{"url": webhookURL},
+		HookAttrs:   map[string]string{"url": appURL},
 		RedirectURL: appURL,
 		Public:      false,
 		DefaultPerm: map[string]string{
 			"contents":      "write",
 			"pull_requests": "write",
-			"issues":        "write",
 			"metadata":      "read",
 		},
-		DefaultEvts: []string{"issue_comment", "push"},
+		DefaultEvts: []string{},
 	}
 
 	encoder := json.NewEncoder(stdout)

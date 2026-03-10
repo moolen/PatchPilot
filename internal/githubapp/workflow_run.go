@@ -9,13 +9,20 @@ import (
 	"time"
 )
 
-func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, defaultBranch, token string, command FixCommand, preferredBranch string) (fixRunResult, error) {
+func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, defaultBranch, token, preferredBranch string) (fixRunResult, error) {
 	if strings.TrimSpace(owner) == "" || strings.TrimSpace(repo) == "" {
 		return fixRunResult{}, fmt.Errorf("owner and repo must not be empty")
 	}
 	if strings.TrimSpace(defaultBranch) == "" {
 		defaultBranch = "master"
 	}
+
+	service.log("info", "starting fix workflow", map[string]interface{}{
+		"owner":            owner,
+		"repo":             repo,
+		"default_branch":   defaultBranch,
+		"preferred_branch": preferredBranch,
+	})
 
 	tempRoot, err := os.MkdirTemp(service.cfg.WorkDir, "patchpilot-repo-")
 	if err != nil {
@@ -31,6 +38,12 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 		return fixRunResult{}, err
 	}
 
+	service.log("info", "cloning repository", map[string]interface{}{
+		"owner":  owner,
+		"repo":   repo,
+		"branch": defaultBranch,
+	})
+
 	if _, _, err := runCommand(ctx, tempRoot, nil, "git", "clone", "--depth", "1", "--branch", defaultBranch, cloneURL, repoPath); err != nil {
 		return fixRunResult{}, fmt.Errorf("clone repository: %w", err)
 	}
@@ -38,21 +51,31 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 	if err != nil {
 		return fixRunResult{}, err
 	}
+	service.log("info", "repository cloned", map[string]interface{}{
+		"owner":    owner,
+		"repo":     repo,
+		"head_sha": headSHA,
+	})
 
-	args := []string{"fix", "--dir", repoPath, "--enable-agent=false"}
-	if strings.TrimSpace(command.PolicyPath) != "" {
-		policyPath := command.PolicyPath
-		if !filepath.IsAbs(policyPath) {
-			policyPath = filepath.Join(repoPath, filepath.FromSlash(policyPath))
-		}
-		args = append(args, "--policy", policyPath)
-		if strings.TrimSpace(command.PolicyMode) != "" {
-			args = append(args, "--policy-mode", strings.TrimSpace(command.PolicyMode))
-		}
-	}
+	args := []string{"fix", "--dir", repoPath, "--enable-agent=false", "--untrusted-repo-policy"}
 
-	stdout, stderr, runErr := runCommand(ctx, repoPath, nil, service.cfg.PatchPilotBinary, args...)
+	service.log("info", "running patchpilot fix", map[string]interface{}{
+		"owner": owner,
+		"repo":  repo,
+		"args":  args,
+	})
+
+	stdout, stderr, runErr := service.jobRunner.Run(ctx, repoPath, args)
 	exitCode := commandExitCode(runErr)
+	service.log("info", "patchpilot fix finished", map[string]interface{}{
+		"owner":          owner,
+		"repo":           repo,
+		"exit_code":      exitCode,
+		"stdout_bytes":   len(stdout),
+		"stderr_bytes":   len(stderr),
+		"stdout_preview": previewLogText(stdout),
+		"stderr_preview": previewLogText(stderr),
+	})
 	if runErr != nil && exitCode != 23 {
 		return fixRunResult{}, fmt.Errorf("run PatchPilot (exit %d): %w\nstderr:\n%s", exitCode, runErr, truncateForComment(stderr))
 	}
@@ -62,6 +85,12 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 		return fixRunResult{}, err
 	}
 	if !changed {
+		service.log("info", "fix workflow detected no repository changes", map[string]interface{}{
+			"owner":     owner,
+			"repo":      repo,
+			"head_sha":  headSHA,
+			"exit_code": exitCode,
+		})
 		return fixRunResult{ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Changed: false, HeadSHA: headSHA}, nil
 	}
 
@@ -75,15 +104,42 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 	if _, _, err := runCommand(ctx, repoPath, nil, "git", "add", "-A"); err != nil {
 		return fixRunResult{}, fmt.Errorf("git add: %w", err)
 	}
+	if err := unstagePath(ctx, repoPath, ".patchpilot"); err != nil {
+		return fixRunResult{}, err
+	}
 	changedFiles, err := stagedChangedFiles(ctx, repoPath)
 	if err != nil {
 		return fixRunResult{}, err
 	}
+	if len(changedFiles) == 0 {
+		service.log("info", "fix workflow excluded artifact-only changes", map[string]interface{}{
+			"owner":     owner,
+			"repo":      repo,
+			"branch":    branch,
+			"exit_code": exitCode,
+		})
+		return fixRunResult{ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Changed: false, HeadSHA: headSHA}, nil
+	}
+	service.log("info", "staged remediation changes", map[string]interface{}{
+		"owner":         owner,
+		"repo":          repo,
+		"branch":        branch,
+		"changed_files": len(changedFiles),
+		"files":         changedFiles,
+	})
 	safety, err := service.evaluateSafety(repoPath, changedFiles)
 	if err != nil {
 		return fixRunResult{}, fmt.Errorf("evaluate safety: %w", err)
 	}
 	if safety.Blocked {
+		service.log("warn", "safety policy blocked remediation changes", map[string]interface{}{
+			"owner":                    owner,
+			"repo":                     repo,
+			"branch":                   branch,
+			"reason":                   safety.Reason,
+			"risk_score":               safety.RiskScore,
+			"verification_regressions": safety.VerificationRegressions,
+		})
 		return fixRunResult{
 			ExitCode:        exitCode,
 			Stdout:          stdout,
@@ -109,6 +165,11 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 			return fixRunResult{}, fmt.Errorf("git commit: %w", err)
 		}
 	}
+	service.log("info", "committed remediation changes", map[string]interface{}{
+		"owner":  owner,
+		"repo":   repo,
+		"branch": branch,
+	})
 
 	pushArgs := []string{"push", "origin", branch}
 	if strings.TrimSpace(preferredBranch) != "" {
@@ -135,6 +196,12 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 			pushArgs = []string{"push", "origin", branch}
 		}
 	}
+	service.log("info", "pushing remediation branch", map[string]interface{}{
+		"owner":     owner,
+		"repo":      repo,
+		"branch":    branch,
+		"push_args": pushArgs,
+	})
 	pushStdout, pushStderr, pushErr := runCommand(ctx, repoPath, nil, "git", pushArgs...)
 	if pushErr != nil {
 		return fixRunResult{}, fmt.Errorf(
@@ -148,6 +215,16 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 	if err != nil {
 		return fixRunResult{}, err
 	}
+	service.log("info", "pushed remediation branch", map[string]interface{}{
+		"owner":         owner,
+		"repo":          repo,
+		"branch":        branch,
+		"head_sha":      headSHA,
+		"push_stdout":   previewLogText(pushStdout),
+		"push_stderr":   previewLogText(pushStderr),
+		"risk_score":    safety.RiskScore,
+		"changed_files": len(changedFiles),
+	})
 
 	return fixRunResult{
 		ExitCode:        exitCode,
@@ -160,6 +237,18 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, default
 		ChangedFiles:    changedFiles,
 		RegressionCount: safety.VerificationRegressions,
 	}, nil
+}
+
+func previewLogText(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+	const max = 400
+	if len(trimmed) <= max {
+		return trimmed
+	}
+	return trimmed[:max] + "... (truncated)"
 }
 
 func remoteBranchHeadFromLSRemote(lsRemoteOutput, remoteRef string) string {

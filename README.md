@@ -75,6 +75,7 @@ Policy controls include:
 ## GitHub Integrations
 
 - GitHub App service docs: `docs/github-app.md`
+- Observability docs: `docs/observability.md`
 - Reusable GitHub Action docs: `docs/github-action.md`
 - Action tag sync workflow: `.github/workflows/action-tags.yml`
 
@@ -85,7 +86,21 @@ make build
 ```
 
 - `bin/patchpilot`: PatchPilot CLI binary
-- `bin/patchpilot-app`: webhook service for GitHub App automation
+- `bin/patchpilot-app`: scheduler service for GitHub App automation
+
+Build the GitHub App container image locally:
+
+```bash
+docker build -f Dockerfile.patchpilot-app -t patchpilot-app:dev .
+docker run --rm \
+  -p 8080:8080 \
+  -e PP_APP_ID=123 \
+  -e PP_PRIVATE_KEY_PATH=/run/secrets/patchpilot.pem \
+  -v "$PWD/private-key.pem:/run/secrets/patchpilot.pem:ro" \
+  patchpilot-app:dev
+```
+
+The app image includes `patchpilot-app`, `patchpilot`, `git`, `syft`, `grype`, `go`, `node`, and `npm` so the default local job runner can scan and remediate repositories without additional sidecar tooling.
 
 GitHub App utility commands:
 
@@ -171,6 +186,8 @@ exclude:
       expires_at: 2026-06-30
 
 scan:
+  cron: "0 3 * * *"
+  timezone: Europe/Berlin
   skip_paths:
     - vendor/**
     - examples/legacy/**

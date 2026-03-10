@@ -58,11 +58,14 @@ func vulnOptionsFromPolicy(cfg *policy.Config) vuln.ScanOptions {
 	}
 }
 
-func fileOptionsFromPolicy(cfg *policy.Config) fixer.FileOptions {
+func fileOptionsFromPolicy(cfg *policy.Config, untrustedRepo bool) fixer.FileOptions {
 	if cfg == nil {
-		return fixer.FileOptions{}
+		return fixer.FileOptions{UntrustedRepo: untrustedRepo}
 	}
-	return fixer.FileOptions{SkipPaths: append([]string(nil), cfg.Scan.SkipPaths...)}
+	return fixer.FileOptions{
+		SkipPaths:     append([]string(nil), cfg.Scan.SkipPaths...),
+		UntrustedRepo: untrustedRepo,
+	}
 }
 
 func dockerOptionsFromPolicy(cfg *policy.Config) fixer.DockerfileOptions {

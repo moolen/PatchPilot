@@ -49,6 +49,7 @@ type Finding struct {
 	Package         string   `json:"package"`
 	Installed       string   `json:"installed"`
 	FixedVersion    string   `json:"fixed_version"`
+	Severity        string   `json:"severity,omitempty"`
 	Ecosystem       string   `json:"ecosystem"`
 	Locations       []string `json:"locations,omitempty"`
 	PURL            string   `json:"purl,omitempty"`
@@ -82,6 +83,7 @@ type rawLocation struct {
 type rawVulnerability struct {
 	ID        string `json:"id"`
 	Namespace string `json:"namespace"`
+	Severity  string `json:"severity"`
 	Fix       rawFix `json:"fix"`
 }
 
@@ -190,6 +192,7 @@ func normalizeReport(repo string, decoded *rawReport, options ScanOptions) *Repo
 			Package:         match.Artifact.Name,
 			Installed:       match.Artifact.Version,
 			FixedVersion:    fixed,
+			Severity:        normalizeSeverity(match.Vulnerability.Severity),
 			Ecosystem:       ecosystem,
 			Locations:       normalizeLocations(repo, match.Artifact.Locations),
 			PURL:            match.Artifact.PURL,
@@ -418,6 +421,18 @@ func canonicalSemver(version string) string {
 		return version
 	}
 	return ""
+}
+
+func normalizeSeverity(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "critical", "high", "medium", "low", "negligible":
+		return normalized
+	case "":
+		return "unknown"
+	default:
+		return "unknown"
+	}
 }
 
 func normalizeLocations(repo string, locations []rawLocation) []string {

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -91,6 +92,51 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Release $tag"
           git push origin "$tag"
+
+      - name: Derive image version
+        if: steps.semver.outputs.created == 'true'
+        id: image-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.semver.outputs.tag }}"
+          version="${tag#v}"
+          major="${version%%.*}"
+          minor_patch="${version#*.}"
+          minor="${minor_patch%%.*}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major=$major" >> "$GITHUB_OUTPUT"
+          echo "major_minor=$major.$minor" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        if: steps.semver.outputs.created == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.semver.outputs.created == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.semver.outputs.created == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push patchpilot-app image
+        if: steps.semver.outputs.created == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.patchpilot-app
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/patchpilot-app:latest
+            ghcr.io/${{ github.repository_owner }}/patchpilot-app:${{ steps.image-version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/patchpilot-app:${{ steps.image-version.outputs.major_minor }}
+            ghcr.io/${{ github.repository_owner }}/patchpilot-app:${{ steps.image-version.outputs.major }}
 
       - name: Publish release artifacts
         if: steps.semver.outputs.created == 'true'

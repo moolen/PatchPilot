@@ -34,7 +34,8 @@ var (
 )
 
 type FileOptions struct {
-	SkipPaths []string
+	SkipPaths     []string
+	UntrustedRepo bool
 }
 
 func ApplyGoModuleFixes(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {

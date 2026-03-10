@@ -94,7 +94,9 @@ func SchemaJSON() []byte {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "skip_paths": { "type": "array", "items": { "type": "string" } }
+        "skip_paths": { "type": "array", "items": { "type": "string" } },
+        "cron": { "type": "string" },
+        "timezone": { "type": "string" }
       }
     },
     "registry": {

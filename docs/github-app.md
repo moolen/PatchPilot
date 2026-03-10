@@ -1,69 +1,84 @@
 # PatchPilot GitHub App
 
-`patchpilot-app` is a webhook service that runs `PatchPilot` on repositories where your GitHub App is installed and opens remediation pull requests.
+`patchpilot-app` runs as a scheduler-first GitHub App worker. It authenticates as the app, discovers every repository where the app is installed, and runs scans/remediation automatically without webhook triggers or slash commands.
 
-## Supported triggers
+## How it works
 
-- `issue_comment`: run when a user comments a slash command.
-- `push`: optional automatic remediation on default-branch pushes.
+1. PatchPilot lists the app installations and the repositories granted to each installation.
+2. Each repository is scanned on its own cadence from `.patchpilot.yaml`.
+3. When remediation is needed, PatchPilot opens a pull request with the proposed fix.
 
-Slash command format:
+Per-repository cadence comes from `.patchpilot.yaml`:
 
-```text
-/patchpilot fix [--policy <path>] [--policy-mode <merge|override>] [--auto-merge]
+```yaml
+scan:
+  cron: "0 0 * * *"
+  timezone: UTC
 ```
 
-## App permissions and events
+- `scan.cron` defaults to `"0 0 * * *"` if omitted.
+- `scan.timezone` defaults to `UTC` if omitted.
+- Newly discovered repositories run once immediately, then continue on the configured cron schedule.
+- Set `scan.cron: disabled` to opt a repository out of scheduled scans.
+
+## GitHub App setup
 
 Use these minimum GitHub App permissions:
 
 - Repository permissions:
   - `Contents`: Read & write
   - `Pull requests`: Read & write
-  - `Issues`: Read & write
-  - `Checks`: Read & write (recommended for remediation check-runs)
   - `Metadata`: Read-only
-- Subscribe to events:
-  - `Issue comment`
-  - `Push` (only if using push-based remediation)
 
-## Environment variables
+Install the app on the repositories you want PatchPilot to manage. Installed repositories are discovered automatically.
 
-- `PP_APP_ID` (required): GitHub App ID.
-- `PP_WEBHOOK_SECRET` (required): webhook secret configured in the app.
-- `PP_PRIVATE_KEY_PATH` or `PP_PRIVATE_KEY_PEM` (required): app private key.
-- `PP_LISTEN_ADDR` (optional, default `:8080`): HTTP listen address.
-- `PP_WORKDIR` (optional): temporary working directory root.
-- `PP_PATCHPILOT_BINARY` (optional, default `patchpilot`): path to the PatchPilot binary.
-- `PP_ALLOWED_REPOS` (optional): comma-separated allow-list (`org/repo,org/repo2`).
-- `PP_ENABLE_PUSH_AUTOFIX` (optional, default `false`): enable push-triggered remediation.
-- `PP_GITHUB_WEB_BASE_URL` (optional, default `https://github.com`): clone URL base.
-- `PP_GITHUB_API_BASE_URL` and `PP_GITHUB_UPLOAD_API_URL` (optional, set both for GitHub Enterprise).
-- `PP_ENABLE_AUTO_MERGE` (optional, default `true`): allow app-side auto-merge enablement when requested.
-- `PP_DELIVERY_DEDUP_TTL` (optional, default `24h`): retention window for webhook delivery dedupe state.
-- `PP_RUN_DEDUP_TTL` (optional, default `15m`): retention window for remediation run idempotency keys (prevents duplicate runs for redelivered events).
-- `PP_MAX_RISK_SCORE` (optional, default `25`): maximum allowed remediation risk score before PR creation is blocked.
-- `PP_DISALLOWED_PATHS` (optional): comma-separated blocked path patterns (supports `*` and `/**`).
-- `PP_METRICS_PATH` (optional, default `/metrics`): metrics endpoint path.
-- `PP_GITHUB_RETRY_MAX_ATTEMPTS` (optional, default `5`): max retries for GitHub API operations.
-- `PP_GITHUB_RETRY_INITIAL_BACKOFF` (optional, default `2s`): initial backoff between GitHub API retries.
-- `PP_GITHUB_RETRY_MAX_BACKOFF` (optional, default `30s`): max backoff between GitHub API retries.
+## Environment
 
-## Run locally
+Required:
+
+- `PP_APP_ID`: GitHub App ID.
+- `PP_PRIVATE_KEY_PATH` or `PP_PRIVATE_KEY_PEM`: app private key.
+
+Common optional settings:
+
+- `PP_WORKDIR`: temporary working directory root.
+- `PP_PATCHPILOT_BINARY`: path to the PatchPilot binary.
+- `PP_JOB_RUNNER`: `local` or `container`. Defaults to `local`.
+- `PP_JOB_CONTAINER_RUNTIME`: container runtime for repo jobs when `PP_JOB_RUNNER=container`. Defaults to `docker`.
+- `PP_JOB_CONTAINER_IMAGE`: container image that contains `patchpilot`, `syft`, `grype`, language toolchains, and package managers needed for remediation.
+- `PP_JOB_CONTAINER_BINARY`: PatchPilot binary path inside the job container. Defaults to `patchpilot`.
+- `PP_JOB_CONTAINER_NETWORK`: container network mode for repo jobs. Defaults to `bridge`.
+- `PP_GITHUB_WEB_BASE_URL`: GitHub web base URL for clone links. Defaults to `https://github.com`.
+- `PP_GITHUB_API_BASE_URL` and `PP_GITHUB_UPLOAD_API_URL`: set both for GitHub Enterprise.
+- `PP_ENABLE_AUTO_MERGE`: allow auto-merge enablement when PatchPilot requests it.
+- `PP_DISALLOWED_PATHS`: block PR creation for matching changed paths.
+- `PP_LISTEN_ADDR`: HTTP listen address if you expose health/metrics endpoints.
+- `PP_METRICS_PATH`: metrics endpoint path. Defaults to `/metrics`.
+- `PP_GITHUB_RETRY_MAX_ATTEMPTS`, `PP_GITHUB_RETRY_INITIAL_BACKOFF`, `PP_GITHUB_RETRY_MAX_BACKOFF`: GitHub API retry controls.
+
+## Run
 
 ```bash
 make build
 PP_APP_ID=123 \
-PP_WEBHOOK_SECRET=... \
 PP_PRIVATE_KEY_PATH=./private-key.pem \
 ./bin/patchpilot-app
 ```
 
-Health endpoint: `GET /healthz`  
-Webhook endpoint: `POST /webhook`  
-Metrics endpoint: `GET /metrics`
+Container image:
 
-## Doctor and Manifest UX
+```bash
+docker build -f Dockerfile.patchpilot-app -t patchpilot-app:dev .
+docker run --rm \
+  -p 8080:8080 \
+  -e PP_APP_ID=123 \
+  -e PP_PRIVATE_KEY_PATH=/run/secrets/patchpilot.pem \
+  -v "$PWD/private-key.pem:/run/secrets/patchpilot.pem:ro" \
+  patchpilot-app:dev
+```
+
+Published releases push a multi-arch image to `ghcr.io/<owner>/patchpilot-app`.
+If you enable `PP_JOB_RUNNER=container`, mount access to a Docker-compatible daemon or socket because the app invokes `docker run` for repo jobs.
 
 Run environment diagnostics:
 
@@ -71,40 +86,31 @@ Run environment diagnostics:
 ./bin/patchpilot-app doctor
 ```
 
-Generate a starter GitHub App manifest JSON:
+## Observability
 
-```bash
-PP_APP_NAME=PatchPilot \
-PP_APP_URL=https://patchpilot.example.com \
-PP_WEBHOOK_URL=https://patchpilot.example.com/webhook \
-./bin/patchpilot-app manifest
-```
+`patchpilot-app` exposes Prometheus metrics on `PP_METRICS_PATH` (default: `/metrics`) on the same listener as `/healthz`.
 
-## Typical flow
+Bundled observability assets:
 
-1. User comments `/patchpilot fix` on an issue/PR.
-2. App clones the repository default branch with an installation token.
-3. App runs `patchpilot fix --enable-agent=false`.
-4. If files changed, app commits on `patchpilot/auto-fix-<timestamp>` and opens a PR.
-5. If no change is needed, app posts a status comment.
+- Dashboard guide: `docs/observability.md`
+- Grafana dashboard: `examples/observability/grafana-dashboard.json`
+- Prometheus alert rules: `examples/observability/prometheus-rules.yaml`
 
-Safety gates block PR creation when:
+The most important scheduler-capacity metrics for a single replica are:
 
-- verification regressions are detected,
-- changed files match `PP_DISALLOWED_PATHS`,
-- computed risk score exceeds `PP_MAX_RISK_SCORE`.
+- `patchpilot_scheduler_due_repositories`
+- `patchpilot_scheduler_oldest_due_age_seconds`
+- `patchpilot_scheduler_run_lag_seconds`
+- `patchpilot_repository_job_duration_seconds`
+- `patchpilot_github_api_rate_limit_total`
 
-Webhook idempotency:
+Security note:
 
-- The app stores `X-GitHub-Delivery` IDs in `<PP_WORKDIR>/deliveries.json`.
-- Duplicate or retried deliveries are ignored within `PP_DELIVERY_DEDUP_TTL`.
+- In GitHub App mode, repo-local `.patchpilot.yaml` is treated as untrusted input.
+- Repo-local `verification`, `post_execution`, and `registry` sections are ignored.
+- This prevents repository owners from using policy to execute arbitrary host commands or read operator-managed environment secrets.
+- For stronger isolation, set `PP_JOB_RUNNER=container` so `scan` and `fix` run inside a short-lived container with a read-only root filesystem, dropped capabilities, and only the cloned repository mounted in.
 
-Run idempotency:
+## Manifest note
 
-- The app stores run keys in `<PP_WORKDIR>/run-keys.json`.
-- Re-delivered events that map to the same logical run key (for example same comment id or same push SHA/ref) are skipped within `PP_RUN_DEDUP_TTL`.
-
-GitHub API resilience:
-
-- Installation token creation, issue comments, PR list/create/edit, and auto-merge GraphQL calls are retried with exponential backoff.
-- Secondary rate limits (`403`), explicit `Retry-After`, `429`, and transient `5xx` errors trigger retries.
+`./bin/patchpilot-app manifest` prints a starter GitHub App manifest. GitHub’s app setup still exposes webhook configuration fields, but scheduler-first PatchPilot does not depend on inbound webhook delivery at runtime.

@@ -4,5 +4,5 @@
 .validation-*/
 bin/
 coverage*.out
-
+.env*
 .tmp/

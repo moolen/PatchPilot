@@ -18,6 +18,7 @@ type fixOptions struct {
 	AgentCommand     string
 	AgentMaxAttempts int
 	AgentArtifactDir string
+	UntrustedRepo    bool
 	JSONOutput       bool
 }
 
@@ -131,7 +132,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		"modules": len(verificationBaseline.Modules),
 	})
 
-	fileOptions := fileOptionsFromPolicy(cfg)
+	fileOptions := fileOptionsFromPolicy(cfg, options.UntrustedRepo)
 	dockerOptions := dockerOptionsFromPolicy(cfg)
 	goRuntimeOptions := goRuntimeOptionsFromPolicy(cfg)
 

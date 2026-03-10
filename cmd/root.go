@@ -15,15 +15,16 @@ import (
 )
 
 type cliOptions struct {
-	dir              string
-	repoURL          string
-	policyPath       string
-	policyMode       string
-	jsonOutput       bool
-	enableAgent      bool
-	agentCommand     string
-	agentMaxAttempts int
-	agentArtifactDir string
+	dir                 string
+	repoURL             string
+	policyPath          string
+	policyMode          string
+	untrustedRepoPolicy bool
+	jsonOutput          bool
+	enableAgent         bool
+	agentCommand        string
+	agentMaxAttempts    int
+	agentArtifactDir    string
 }
 
 var (
@@ -50,7 +51,9 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&options.repoURL, "repo-url", "", "Git URL to clone into a temporary directory and use as the working repository")
 	root.PersistentFlags().StringVar(&options.policyPath, "policy", "", "Path to central policy file merged with in-repo .patchpilot.yaml")
 	root.PersistentFlags().StringVar(&options.policyMode, "policy-mode", "merge", "Policy layering mode when --policy is set (merge|override)")
+	root.PersistentFlags().BoolVar(&options.untrustedRepoPolicy, "untrusted-repo-policy", false, "Treat repo-local .patchpilot.yaml as untrusted and ignore executable or secret-sensitive sections")
 	root.PersistentFlags().BoolVar(&options.jsonOutput, "json", false, "Emit structured JSON progress logs")
+	_ = root.PersistentFlags().MarkHidden("untrusted-repo-policy")
 
 	root.AddCommand(
 		newScanCommand(options),
@@ -100,6 +103,7 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 				AgentCommand:     options.agentCommand,
 				AgentMaxAttempts: options.agentMaxAttempts,
 				AgentArtifactDir: options.agentArtifactDir,
+				UntrustedRepo:    options.untrustedRepoPolicy,
 				JSONOutput:       options.jsonOutput,
 			})
 		},
@@ -193,7 +197,8 @@ func cloneRepo(ctx context.Context, writer io.Writer, repoURL, target string) er
 
 func loadPolicyConfig(repo string, options *cliOptions) (*policy.Config, error) {
 	return policy.LoadWithOptions(repo, policy.LoadOptions{
-		CentralPath: options.policyPath,
-		Mode:        options.policyMode,
+		CentralPath:   options.policyPath,
+		Mode:          options.policyMode,
+		UntrustedRepo: options.untrustedRepoPolicy,
 	})
 }

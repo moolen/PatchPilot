@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	cron "github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,6 +34,10 @@ const (
 	GoRuntimePatchDisabled  = "disabled"
 	GoRuntimePatchToolchain = "toolchain"
 	GoRuntimePatchMinimum   = "minimum"
+
+	ScanCronDisabled    = "disabled"
+	DefaultScanCron     = "0 0 * * *"
+	DefaultScanTimezone = "UTC"
 
 	LoadModeMerge    = "merge"
 	LoadModeOverride = "override"
@@ -99,6 +104,8 @@ var policyNowFunc = time.Now
 
 type ScanPolicy struct {
 	SkipPaths []string `yaml:"skip_paths"`
+	Cron      string   `yaml:"cron"`
+	Timezone  string   `yaml:"timezone"`
 }
 
 type RegistryPolicy struct {
@@ -128,8 +135,13 @@ type DockerPatchingPolicy struct {
 }
 
 type LoadOptions struct {
-	CentralPath string
-	Mode        string
+	CentralPath   string
+	Mode          string
+	UntrustedRepo bool
+}
+
+type ParseOptions struct {
+	UntrustedRepo bool
 }
 
 func Default() *Config {
@@ -137,6 +149,10 @@ func Default() *Config {
 		Version: 1,
 		Verification: VerificationPolicy{
 			Mode: VerificationModeAppend,
+		},
+		Scan: ScanPolicy{
+			Cron:     DefaultScanCron,
+			Timezone: DefaultScanTimezone,
 		},
 		Registry: RegistryPolicy{
 			Auth: RegistryAuthPolicy{
@@ -164,6 +180,24 @@ func Load(repo, overridePath string) (*Config, error) {
 	})
 }
 
+func ParseYAML(data []byte) (*Config, error) {
+	return ParseYAMLWithOptions(data, ParseOptions{})
+}
+
+func ParseYAMLWithOptions(data []byte, options ParseOptions) (*Config, error) {
+	if len(data) == 0 {
+		return Default(), nil
+	}
+	if options.UntrustedRepo {
+		sanitized, err := sanitizeUntrustedRepoPolicyBytes(FileName, data)
+		if err != nil {
+			return nil, err
+		}
+		data = sanitized
+	}
+	return decodePolicyBytes(FileName, data)
+}
+
 func LoadWithOptions(repo string, options LoadOptions) (*Config, error) {
 	repoPath, err := filepath.Abs(repo)
 	if err != nil {
@@ -181,7 +215,7 @@ func LoadWithOptions(repo string, options LoadOptions) (*Config, error) {
 
 	centralPath := strings.TrimSpace(options.CentralPath)
 	if centralPath == "" {
-		return loadSingle(repoPolicyPath, false)
+		return loadSingle(repoPolicyPath, false, options.UntrustedRepo)
 	}
 	centralPath, err = normalizePolicyPath(centralPath)
 	if err != nil {
@@ -190,7 +224,7 @@ func LoadWithOptions(repo string, options LoadOptions) (*Config, error) {
 
 	// Avoid double-loading when the supplied central file points to the same in-repo policy path.
 	if cleanComparablePath(centralPath) == cleanComparablePath(repoPolicyPath) {
-		return loadSingle(repoPolicyPath, true)
+		return loadSingle(repoPolicyPath, true, options.UntrustedRepo)
 	}
 
 	centralData, err := readPolicyBytes(centralPath, true)
@@ -204,6 +238,12 @@ func LoadWithOptions(repo string, options LoadOptions) (*Config, error) {
 
 	if mode == LoadModeOverride {
 		if repoExists {
+			if options.UntrustedRepo {
+				repoData, err = sanitizeUntrustedRepoPolicyBytes(repoPolicyPath, repoData)
+				if err != nil {
+					return nil, err
+				}
+			}
 			return decodePolicyBytes(repoPolicyPath, repoData)
 		}
 		return decodePolicyBytes(centralPath, centralData)
@@ -212,20 +252,26 @@ func LoadWithOptions(repo string, options LoadOptions) (*Config, error) {
 		return decodePolicyBytes(centralPath, centralData)
 	}
 
-	mergedBytes, err := mergePolicyBytes(centralPath, centralData, repoPolicyPath, repoData)
+	mergedBytes, err := mergePolicyBytes(centralPath, centralData, repoPolicyPath, repoData, options.UntrustedRepo)
 	if err != nil {
 		return nil, err
 	}
 	return decodePolicyBytes(centralPath+" + "+repoPolicyPath, mergedBytes)
 }
 
-func loadSingle(path string, required bool) (*Config, error) {
+func loadSingle(path string, required bool, untrustedRepo bool) (*Config, error) {
 	data, err := readPolicyBytes(path, required)
 	if err != nil {
 		return nil, err
 	}
 	if len(data) == 0 {
 		return Default(), nil
+	}
+	if untrustedRepo {
+		data, err = sanitizeUntrustedRepoPolicyBytes(path, data)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return decodePolicyBytes(path, data)
 }
@@ -285,7 +331,7 @@ func decodePolicyBytes(path string, data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-func mergePolicyBytes(centralPath string, centralData []byte, repoPath string, repoData []byte) ([]byte, error) {
+func mergePolicyBytes(centralPath string, centralData []byte, repoPath string, repoData []byte, untrustedRepo bool) ([]byte, error) {
 	centralMap, err := decodePolicyMap(centralPath, centralData)
 	if err != nil {
 		return nil, err
@@ -293,6 +339,9 @@ func mergePolicyBytes(centralPath string, centralData []byte, repoPath string, r
 	repoMap, err := decodePolicyMap(repoPath, repoData)
 	if err != nil {
 		return nil, err
+	}
+	if untrustedRepo {
+		repoMap = sanitizeUntrustedRepoPolicyMap(repoMap)
 	}
 	merged := mergePolicyMap(centralMap, repoMap)
 	data, err := yaml.Marshal(merged)
@@ -374,6 +423,37 @@ func clonePolicyValue(value any) any {
 	default:
 		return typed
 	}
+}
+
+func sanitizeUntrustedRepoPolicyBytes(path string, data []byte) ([]byte, error) {
+	root, err := decodePolicyMap(path, data)
+	if err != nil {
+		return nil, err
+	}
+	root = sanitizeUntrustedRepoPolicyMap(root)
+	sanitized, err := yaml.Marshal(root)
+	if err != nil {
+		return nil, fmt.Errorf("sanitize policy file %s: %w", path, err)
+	}
+	return sanitized, nil
+}
+
+func sanitizeUntrustedRepoPolicyMap(root map[string]any) map[string]any {
+	if root == nil {
+		return map[string]any{}
+	}
+	sanitized, ok := clonePolicyValue(root).(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+
+	// Repo-local policy is treated as untrusted in GitHub App mode. Keep only declarative
+	// controls and strip any sections that can execute commands or read operator secrets.
+	delete(sanitized, "verification")
+	delete(sanitized, "post_execution")
+	delete(sanitized, "registry")
+
+	return sanitized
 }
 
 func migrateLegacyPolicyYAML(data []byte) ([]byte, error) {
@@ -554,6 +634,24 @@ func normalizeAndValidate(cfg *Config) error {
 	cfg.Exclude.Vulnerabilities = dedupeSelectors(cfg.Exclude.Vulnerabilities)
 
 	cfg.Scan.SkipPaths = dedupeNonEmptyPaths(cfg.Scan.SkipPaths)
+	cfg.Scan.Cron = strings.TrimSpace(cfg.Scan.Cron)
+	if cfg.Scan.Cron == "" {
+		cfg.Scan.Cron = DefaultScanCron
+	}
+	cfg.Scan.Timezone = strings.TrimSpace(cfg.Scan.Timezone)
+	if cfg.Scan.Timezone == "" {
+		cfg.Scan.Timezone = DefaultScanTimezone
+	}
+	if !strings.EqualFold(cfg.Scan.Cron, ScanCronDisabled) {
+		if _, err := cron.ParseStandard(cfg.Scan.Cron); err != nil {
+			return fmt.Errorf("scan.cron is invalid: %w", err)
+		}
+		if _, err := time.LoadLocation(cfg.Scan.Timezone); err != nil {
+			return fmt.Errorf("scan.timezone is invalid: %w", err)
+		}
+	} else {
+		cfg.Scan.Cron = ScanCronDisabled
+	}
 
 	cfg.Registry.Auth.Mode = normalizeLower(cfg.Registry.Auth.Mode)
 	if cfg.Registry.Auth.Mode == "" {
@@ -604,6 +702,32 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func (cfg *Config) ResolveScanSchedule() (cron.Schedule, *time.Location, bool, error) {
+	if cfg == nil {
+		return nil, nil, false, errors.New("config is nil")
+	}
+	spec := strings.TrimSpace(cfg.Scan.Cron)
+	if spec == "" {
+		spec = DefaultScanCron
+	}
+	if strings.EqualFold(spec, ScanCronDisabled) {
+		return nil, nil, false, nil
+	}
+	locationName := strings.TrimSpace(cfg.Scan.Timezone)
+	if locationName == "" {
+		locationName = DefaultScanTimezone
+	}
+	location, err := time.LoadLocation(locationName)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("load scan timezone: %w", err)
+	}
+	schedule, err := cron.ParseStandard(spec)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("parse scan cron: %w", err)
+	}
+	return schedule, location, true, nil
 }
 
 func normalizeSelectors(selectors []VulnerabilitySelector, field string) error {

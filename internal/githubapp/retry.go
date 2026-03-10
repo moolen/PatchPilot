@@ -47,7 +47,16 @@ func (service *Service) withGitHubRetry(ctx context.Context, operation string, f
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		err := fn(ctx)
 		if err == nil {
+			if service.metrics != nil {
+				service.metrics.ObserveGitHubRequest(operation, "success")
+			}
 			return nil
+		}
+		if service.metrics != nil {
+			service.metrics.ObserveGitHubRequest(operation, "error")
+			if rateLimitKind := githubRateLimitKind(err); rateLimitKind != "" {
+				service.metrics.IncGitHubRateLimit(rateLimitKind)
+			}
 		}
 
 		delay, retryable := retryDelay(err, attempt, initial, maxBackoff)
@@ -70,7 +79,7 @@ func (service *Service) withGitHubRetry(ctx context.Context, operation string, f
 		})
 
 		if service.metrics != nil {
-			service.metrics.IncRun("github_api", "retry")
+			service.metrics.IncGitHubRetry(operation)
 		}
 
 		if sleepErr := sleepWithContextFunc(ctx, delay); sleepErr != nil {
@@ -78,6 +87,41 @@ func (service *Service) withGitHubRetry(ctx context.Context, operation string, f
 		}
 	}
 	return fmt.Errorf("github operation %q failed", operation)
+}
+
+func githubRateLimitKind(err error) string {
+	var abuseRateLimit *github.AbuseRateLimitError
+	if errors.As(err, &abuseRateLimit) {
+		return "abuse"
+	}
+
+	var rateLimit *github.RateLimitError
+	if errors.As(err, &rateLimit) {
+		return "primary"
+	}
+
+	var errorResponse *github.ErrorResponse
+	if errors.As(err, &errorResponse) {
+		status := statusCodeFromResponse(errorResponse.Response)
+		if status == http.StatusTooManyRequests {
+			return "http_429"
+		}
+		if status == http.StatusForbidden && containsSecondaryRateLimit(errorResponse.Message) {
+			return "secondary"
+		}
+	}
+
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		if statusErr.StatusCode == http.StatusTooManyRequests {
+			return "http_429"
+		}
+		if statusErr.StatusCode == http.StatusForbidden && containsSecondaryRateLimit(statusErr.Body) {
+			return "secondary"
+		}
+	}
+
+	return ""
 }
 
 func retryDelay(err error, attempt int, initial, maxBackoff time.Duration) (time.Duration, bool) {

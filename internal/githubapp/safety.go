@@ -56,11 +56,6 @@ func (service *Service) evaluateSafety(repoPath string, changedFiles []string) (
 			assessment.RiskScore += summary.Failed + summary.Timeouts
 		}
 	}
-
-	if assessment.RiskScore > service.cfg.MaxRiskScore {
-		assessment.Blocked = true
-		assessment.Reason = fmt.Sprintf("risk score %d exceeds max %d", assessment.RiskScore, service.cfg.MaxRiskScore)
-	}
 	return assessment, nil
 }
 

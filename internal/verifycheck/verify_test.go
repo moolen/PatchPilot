@@ -183,6 +183,34 @@ func TestRunStandardCapturesTimeoutFromContext(t *testing.T) {
 	}
 }
 
+func TestRunGoCheckCompileTestsDoesNotExecuteTestMain(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "main_test.go"), []byte(`package test
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	_ = os.WriteFile("ran-testmain", []byte("yes"), 0o644)
+	os.Exit(m.Run())
+}
+`), 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+
+	if err := runGoCheck(context.Background(), repo, "test", "-exec=true", "-run", "^$", "./..."); err != nil {
+		t.Fatalf("runGoCheck compile-tests: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "ran-testmain")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected TestMain not to execute, stat err=%v", err)
+	}
+}
+
 func TestRunWithCommandsAppendIncludesCustomChecks(t *testing.T) {
 	origGo := runGoCheckFunc
 	origShell := runShellCheckFunc
