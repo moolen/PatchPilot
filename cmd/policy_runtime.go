@@ -159,6 +159,42 @@ func configureRegistryFromPolicy(repo string, cfg *policy.Config) (func(), error
 	return restore, nil
 }
 
+func runPreExecutionHooks(ctx context.Context, repo string, cfg *policy.Config) error {
+	if cfg == nil || len(cfg.PreExecution.Commands) == 0 {
+		return nil
+	}
+
+	for _, hook := range cfg.PreExecution.Commands {
+		timeout, err := parseOptionalDuration(hook.Timeout)
+		if err != nil {
+			return fmt.Errorf("pre-execution hook %q timeout invalid: %w", hook.Name, err)
+		}
+		logProgress("pre-exec hook %q: starting", hook.Name)
+		result, err := execsafe.Run(ctx, execsafe.Spec{
+			Name:           "pre-exec-hook",
+			Dir:            repo,
+			ShellCommand:   hook.Run,
+			Timeout:        timeout,
+			ArtifactDir:    filepath.Join(repo, ".patchpilot"),
+			ArtifactPrefix: fmt.Sprintf("pre-hook-%s", sanitizeArtifactName(hook.Name)),
+		})
+		trimmed := strings.TrimSpace(result.Combined)
+		if trimmed != "" {
+			_, _ = fmt.Fprintf(os.Stderr, "[patchpilot] pre-exec %q output:\n%s\n", hook.Name, trimmed)
+		}
+		if err != nil {
+			if hook.FailOnError {
+				return fmt.Errorf("pre-execution hook %q failed: %w", hook.Name, err)
+			}
+			logProgress("pre-exec hook %q failed (ignored): %v", hook.Name, err)
+			continue
+		}
+		logProgress("pre-exec hook %q: completed", hook.Name)
+	}
+
+	return nil
+}
+
 func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config, success bool) error {
 	if cfg == nil || len(cfg.PostExecution.Commands) == 0 {
 		return nil
@@ -191,6 +227,21 @@ func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config,
 	}
 
 	return nil
+}
+
+func parseOptionalDuration(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, err
+	}
+	if parsed <= 0 {
+		return 0, fmt.Errorf("must be > 0")
+	}
+	return parsed, nil
 }
 
 func sanitizeArtifactName(name string) string {

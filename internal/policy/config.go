@@ -49,6 +49,7 @@ const (
 
 type Config struct {
 	Version       int                 `yaml:"version"`
+	PreExecution  PreExecutionPolicy  `yaml:"pre_execution"`
 	Verification  VerificationPolicy  `yaml:"verification"`
 	PostExecution PostExecutionPolicy `yaml:"post_execution"`
 	Exclude       ExcludePolicy       `yaml:"exclude"`
@@ -80,6 +81,17 @@ type CommandPolicy struct {
 
 type PostExecutionPolicy struct {
 	Commands []HookPolicy `yaml:"commands"`
+}
+
+type PreExecutionPolicy struct {
+	Commands []PreHookPolicy `yaml:"commands"`
+}
+
+type PreHookPolicy struct {
+	Name        string `yaml:"name"`
+	Run         string `yaml:"run"`
+	Timeout     string `yaml:"timeout"`
+	FailOnError bool   `yaml:"fail_on_error"`
 }
 
 type HookPolicy struct {
@@ -496,6 +508,7 @@ func sanitizeUntrustedRepoPolicyMap(root map[string]any) map[string]any {
 
 	// Repo-local policy is treated as untrusted in GitHub App mode. Keep only declarative
 	// controls and strip any sections that can execute commands or read operator secrets.
+	delete(sanitized, "pre_execution")
 	delete(sanitized, "verification")
 	delete(sanitized, "post_execution")
 	delete(sanitized, "registry")
@@ -621,6 +634,28 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 	if cfg.Version != 1 {
 		return fmt.Errorf("unsupported version %d (expected 1)", cfg.Version)
+	}
+
+	for index := range cfg.PreExecution.Commands {
+		hook := &cfg.PreExecution.Commands[index]
+		hook.Name = strings.TrimSpace(hook.Name)
+		hook.Run = strings.TrimSpace(hook.Run)
+		hook.Timeout = strings.TrimSpace(hook.Timeout)
+		if hook.Run == "" {
+			return fmt.Errorf("pre_execution.commands[%d].run must not be empty", index)
+		}
+		if hook.Name == "" {
+			hook.Name = fmt.Sprintf("pre-hook-%d", index+1)
+		}
+		if hook.Timeout != "" {
+			parsed, err := time.ParseDuration(hook.Timeout)
+			if err != nil {
+				return fmt.Errorf("pre_execution.commands[%d].timeout is invalid: %w", index, err)
+			}
+			if parsed <= 0 {
+				return fmt.Errorf("pre_execution.commands[%d].timeout must be > 0", index)
+			}
+		}
 	}
 
 	cfg.Verification.Mode = normalizeLower(cfg.Verification.Mode)

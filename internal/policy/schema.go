@@ -9,6 +9,26 @@ func SchemaJSON() []byte {
   "additionalProperties": false,
   "properties": {
     "version": { "type": "integer", "const": 1 },
+    "pre_execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["run"],
+            "properties": {
+              "name": { "type": "string" },
+              "run": { "type": "string", "minLength": 1 },
+              "timeout": { "type": "string" },
+              "fail_on_error": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
     "verification": {
       "type": "object",
       "additionalProperties": false,

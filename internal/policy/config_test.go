@@ -193,6 +193,7 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 	for _, expected := range []string{
 		`"$schema"`,
 		`"PatchPilot Policy"`,
+		`"pre_execution"`,
 		`"post_execution"`,
 		`"skip_paths"`,
 		`"cron"`,
@@ -475,6 +476,9 @@ func TestLoadWithOptionsRejectsInvalidMode(t *testing.T) {
 
 func TestParseYAMLWithOptionsUntrustedRepoSanitizesExecutableSections(t *testing.T) {
 	content := `version: 1
+pre_execution:
+  commands:
+    - run: echo pre
 verification:
   mode: replace
   commands:
@@ -508,6 +512,9 @@ exclude:
 	if len(cfg.Verification.Commands) != 0 {
 		t.Fatalf("expected verification commands to be stripped, got %#v", cfg.Verification.Commands)
 	}
+	if len(cfg.PreExecution.Commands) != 0 {
+		t.Fatalf("expected pre execution hooks to be stripped, got %#v", cfg.PreExecution.Commands)
+	}
 	if len(cfg.PostExecution.Commands) != 0 {
 		t.Fatalf("expected post execution hooks to be stripped, got %#v", cfg.PostExecution.Commands)
 	}
@@ -529,6 +536,9 @@ func TestLoadWithOptionsUntrustedRepoDoesNotOverrideTrustedCentralExecutionPolic
 	repo := t.TempDir()
 	repoPolicyPath := filepath.Join(repo, FileName)
 	repoPolicy := `version: 1
+pre_execution:
+  commands:
+    - run: echo repo-pre
 verification:
   mode: replace
   commands:
@@ -550,6 +560,9 @@ scan:
 
 	centralPath := filepath.Join(t.TempDir(), "central.yaml")
 	centralPolicy := `version: 1
+pre_execution:
+  commands:
+    - run: echo central-pre
 verification:
   commands:
     - name: central-check
@@ -579,6 +592,9 @@ scan:
 	}
 	if len(cfg.Verification.Commands) != 1 || cfg.Verification.Commands[0].Name != "central-check" {
 		t.Fatalf("expected trusted central verification command to remain, got %#v", cfg.Verification.Commands)
+	}
+	if len(cfg.PreExecution.Commands) != 1 || cfg.PreExecution.Commands[0].Run != "echo central-pre" {
+		t.Fatalf("expected trusted central pre hook to remain, got %#v", cfg.PreExecution.Commands)
 	}
 	if len(cfg.PostExecution.Commands) != 1 || cfg.PostExecution.Commands[0].Run != "echo central" {
 		t.Fatalf("expected trusted central post hook to remain, got %#v", cfg.PostExecution.Commands)

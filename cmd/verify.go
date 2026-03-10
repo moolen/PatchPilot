@@ -28,6 +28,13 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	}
 	tracker.endStageSuccess(stage, nil)
 
+	stage = tracker.beginStage("pre_execution_hooks")
+	if err := runPreExecutionHooks(ctx, repo, cfg); err != nil {
+		tracker.endStageFailure(stage, err, nil)
+		return wrapWithExitCode(ExitCodeScanFailed, err)
+	}
+	tracker.endStageSuccess(stage, nil)
+
 	stage = tracker.beginStage("generate_sbom")
 	if err := generateSBOM(ctx, repo, cfg); err != nil {
 		tracker.endStageFailure(stage, err, nil)

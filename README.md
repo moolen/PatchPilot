@@ -58,6 +58,7 @@ Repo-local policy always has precedence over central policy when both are consid
 
 Policy controls include:
 
+- pre-execution hooks before `scan` / `fix` / `verify`,
 - custom verification commands (append or replace mode),
 - post-execution hooks after `fix`,
 - vulnerability/CVE excludes,
@@ -144,6 +145,13 @@ Full example (`.patchpilot.yaml`, all supported top-level keys):
 
 ```yaml
 version: 1
+
+pre_execution:
+  commands:
+    - name: prepare-env
+      run: ./scripts/setup-scan-env.sh
+      timeout: 2m
+      fail_on_error: true
 
 verification:
   mode: append # append | replace

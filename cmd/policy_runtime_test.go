@@ -175,6 +175,41 @@ func TestRunPostExecutionHooks(t *testing.T) {
 	}
 }
 
+func TestRunPreExecutionHooks(t *testing.T) {
+	repo := t.TempDir()
+	cfg := &policy.Config{
+		PreExecution: policy.PreExecutionPolicy{
+			Commands: []policy.PreHookPolicy{
+				{Name: "write", Run: "echo pre > pre.txt", FailOnError: true},
+			},
+		},
+	}
+	if err := runPreExecutionHooks(context.Background(), repo, cfg); err != nil {
+		t.Fatalf("runPreExecutionHooks returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(repo, "pre.txt"))
+	if err != nil {
+		t.Fatalf("read pre hook output: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != "pre" {
+		t.Fatalf("unexpected pre hook output: %q", string(data))
+	}
+
+	cfg.PreExecution.Commands = []policy.PreHookPolicy{
+		{Name: "break", Run: "exit 5", FailOnError: false},
+	}
+	if err := runPreExecutionHooks(context.Background(), repo, cfg); err != nil {
+		t.Fatalf("expected ignored pre hook failure, got: %v", err)
+	}
+
+	cfg.PreExecution.Commands = []policy.PreHookPolicy{
+		{Name: "fatal", Run: "exit 6", FailOnError: true},
+	}
+	if err := runPreExecutionHooks(context.Background(), repo, cfg); err == nil {
+		t.Fatal("expected fatal pre hook failure")
+	}
+}
+
 func TestConfigureRegistryFromPolicy(t *testing.T) {
 	repo := t.TempDir()
 
