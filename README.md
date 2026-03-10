@@ -64,6 +64,7 @@ Policy controls include:
 - skip-paths for scanning/module discovery/fixers,
 - registry cache/auth configuration for Docker tag/digest resolution,
 - Docker base-image allow/deny policy and patch strategy toggles,
+- container image target mapping (static or command-discovered),
 - Go runtime remediation policy (`disabled`, `toolchain`, `minimum`).
 
 ## Requirements
@@ -219,6 +220,68 @@ go:
 Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a patched local toolchain without hard-raising the declared minimum Go version. Use `minimum` for applications or enterprise environments that want to require the patched Go version everywhere.
 
 Policy parsing is strict after applying built-in legacy migrations (for example `postExecution` -> `post_execution`, `verification.commands[].command` -> `run`, and top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
+
+## Container Image Targets
+
+PatchPilot can scan container images built during the run (ephemeral tags) and map container package findings back to a source Dockerfile.
+
+Use `artifacts.targets` for a static mapping:
+
+```yaml
+artifacts:
+  targets:
+    - id: backend-foo
+      dockerfile: services/backend-foo/Dockerfile
+      context: services/backend-foo
+      image:
+        tag: patchpilot/backend-foo:${PP_RUN_ID}
+      build:
+        run: APP=backend-foo IMAGE_TAG=${PP_IMAGE_TAG} make container-image
+        timeout: 30m
+      scan:
+        enabled: true
+```
+
+Use `artifacts.targets_command` for dynamic discovery. The command must print YAML/JSON to `stdout` with a top-level `targets:` key and the same target schema:
+
+```yaml
+artifacts:
+  targets_command:
+    run: make patchpilot-targets
+    timeout: 2m
+    mode: replace # replace | append
+    fail_on_error: true
+```
+
+Example command output:
+
+```yaml
+targets:
+  - id: backend-foo
+    dockerfile: services/backend-foo/Dockerfile
+    context: services/backend-foo
+    image:
+      tag: patchpilot/backend-foo:${PP_RUN_ID}
+    build:
+      run: APP=backend-foo IMAGE_TAG=${PP_IMAGE_TAG} make container-image
+      timeout: 30m
+```
+
+Behavior and defaults:
+
+- `targets_command.mode` defaults to `replace` (command output becomes the full target set).
+- `targets_command.mode: append` merges static + discovered targets by `id` (discovered target overrides static target on conflict).
+- `targets_command.timeout` defaults to `2m`.
+- `targets_command.fail_on_error` defaults to `true`. When set to `false`, PatchPilot logs and continues with static targets if the command fails.
+- Command output parsing is strict: unknown fields fail fast, and `targets` must exist at the top level.
+- Resolved targets are written to `.patchpilot/artifacts/targets.resolved.yaml`.
+
+Runtime environment variables:
+
+- For `targets_command.run`: `PP_RUN_ID`, `PP_REPO_ROOT`, `PP_COMMAND`, `PP_PHASE`.
+- For each `build.run`: `PP_RUN_ID`, `PP_TARGET_ID`, `PP_IMAGE_TAG`, `PP_DOCKERFILE`, `PP_CONTEXT`, `PP_REPO_ROOT`, `PP_COMMAND`, `PP_PHASE`.
+
+Container image scans currently feed OS/container ecosystems (`deb`, `apk`, `rpm`) and map findings to the configured `dockerfile` target.
 
 ## Output
 
