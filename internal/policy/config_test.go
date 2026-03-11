@@ -80,6 +80,12 @@ registry:
     mode: bearer
     token_env: REGISTRY_TOKEN
 docker:
+  base_image_rules:
+    - image: registry.internal/platform/go-base
+      deny: [".*-debug$", ".*-debug$"]
+      tag_sets:
+        - semver_range: ">=1.21.1 <1.22.0"
+          allow: ["^v?\\d+\\.\\d+\\.\\d+-alpine$", "^v?\\d+\\.\\d+\\.\\d+-alpine$"]
   patching:
     base_images: disabled
     os_packages: auto
@@ -130,6 +136,24 @@ agent:
 	}
 	if cfg.Scan.Timezone != "Europe/Berlin" {
 		t.Fatalf("unexpected scan timezone: %q", cfg.Scan.Timezone)
+	}
+	if len(cfg.Docker.BaseImageRules) != 1 {
+		t.Fatalf("unexpected base image rules: %#v", cfg.Docker.BaseImageRules)
+	}
+	if cfg.Docker.BaseImageRules[0].Image != "registry.internal/platform/go-base" {
+		t.Fatalf("unexpected base image rule image: %#v", cfg.Docker.BaseImageRules[0])
+	}
+	if len(cfg.Docker.BaseImageRules[0].Deny) != 1 || cfg.Docker.BaseImageRules[0].Deny[0] != ".*-debug$" {
+		t.Fatalf("unexpected base image rule deny patterns: %#v", cfg.Docker.BaseImageRules[0].Deny)
+	}
+	if len(cfg.Docker.BaseImageRules[0].TagSets) != 1 {
+		t.Fatalf("unexpected base image rule tag sets: %#v", cfg.Docker.BaseImageRules[0].TagSets)
+	}
+	if cfg.Docker.BaseImageRules[0].TagSets[0].SemverRange != ">=1.21.1 <1.22.0" {
+		t.Fatalf("unexpected base image rule semver range: %#v", cfg.Docker.BaseImageRules[0].TagSets[0])
+	}
+	if len(cfg.Docker.BaseImageRules[0].TagSets[0].Allow) != 1 || cfg.Docker.BaseImageRules[0].TagSets[0].Allow[0] != "^v?\\d+\\.\\d+\\.\\d+-alpine$" {
+		t.Fatalf("unexpected base image rule allow patterns: %#v", cfg.Docker.BaseImageRules[0].TagSets[0].Allow)
 	}
 	if cfg.Docker.Patching.BaseImages != DockerPatchDisabled {
 		t.Fatalf("unexpected docker base patch mode: %q", cfg.Docker.Patching.BaseImages)

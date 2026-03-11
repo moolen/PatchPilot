@@ -133,7 +133,7 @@ func TestMaybePatchFromUsesRegistryTagResolution(t *testing.T) {
 	defer server.Close()
 	registryBaseURL = func(host string) string { return server.URL }
 
-	updated, patch, ok := maybePatchFrom(context.Background(), "FROM localhost:5000/golang:1.21-alpine", filepath.Join(cacheDir, "Dockerfile"), map[string]string{"golang": "1.21.1"})
+	updated, patch, ok := maybePatchFrom(context.Background(), "FROM localhost:5000/golang:1.21-alpine", filepath.Join(cacheDir, "Dockerfile"), map[string]string{"golang": "1.21.1"}, nil)
 	if !ok {
 		t.Fatalf("expected patch")
 	}

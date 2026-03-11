@@ -26,8 +26,20 @@ type DockerfileOptions struct {
 	SkipPaths            []string
 	AllowedBaseImages    []string
 	DisallowedBaseImages []string
+	BaseImageRules       []BaseImageRule
 	BaseImagePatching    bool
 	OSPackagePatching    bool
+}
+
+type BaseImageRule struct {
+	Image   string
+	TagSets []BaseImageTagSet
+	Deny    []string
+}
+
+type BaseImageTagSet struct {
+	SemverRange string
+	Allow       []string
 }
 
 func ApplyDockerfileFixesWithOptions(ctx context.Context, repo string, findings []vuln.Finding, options DockerfileOptions) ([]Patch, error) {
@@ -43,10 +55,7 @@ func ApplyDockerfileFixesWithOptions(ctx context.Context, repo string, findings 
 	requirements := collectDockerRequirements(dockerfiles, findings)
 	patches := make([]Patch, 0)
 	for _, path := range dockerfiles {
-		need, ok := requirements[path]
-		if !ok {
-			continue
-		}
+		need := requirements[path]
 		filePatches, changed, err := patchDockerfileWithOptions(ctx, path, need, normalizedOptions)
 		if err != nil {
 			return nil, err
@@ -166,7 +175,7 @@ func patchDockerfileWithOptions(ctx context.Context, path string, need dockerNee
 
 	if options.BaseImagePatching {
 		for _, node := range fromNodes {
-			updatedLine, patch, ok := maybePatchFrom(ctx, node.Original, path, need.BasePackages)
+			updatedLine, patch, ok := maybePatchFrom(ctx, node.Original, path, need.BasePackages, options.BaseImageRules)
 			if !ok {
 				continue
 			}
@@ -267,7 +276,7 @@ func preferFixedVersion(current, candidate string) string {
 	return current
 }
 
-func maybePatchFrom(ctx context.Context, line, path string, versions map[string]string) (string, Patch, bool) {
+func maybePatchFrom(ctx context.Context, line, path string, versions map[string]string, rules []BaseImageRule) (string, Patch, bool) {
 	image, ok := extractFromImage(line)
 	if !ok {
 		return "", Patch{}, false
@@ -278,6 +287,14 @@ func maybePatchFrom(ctx context.Context, line, path string, versions map[string]
 		return "", Patch{}, false
 	}
 
+	if rule, ok := findMatchingBaseImageRule(repo, rules); ok {
+		updatedTag := resolveRuleDrivenImageTag(ctx, image, rule)
+		if updatedTag == "" || updatedTag == tag {
+			return "", Patch{}, false
+		}
+		return buildPatchedFromLine(ctx, line, path, image, imageWithoutDigest, repo, tag, currentDigest, updatedTag, repo)
+	}
+
 	for pkg, fixed := range versions {
 		if !imageMatchesPackage(repo, pkg) {
 			continue
@@ -286,29 +303,32 @@ func maybePatchFrom(ctx context.Context, line, path string, versions map[string]
 		if updatedTag == "" || updatedTag == tag {
 			continue
 		}
-
-		fromRef := tag
-		toRef := updatedTag
-		updatedImage := imageWithoutDigest
-		if colon := strings.LastIndex(updatedImage, ":"); colon != -1 && !strings.Contains(updatedImage[colon+1:], "/") {
-			updatedImage = updatedImage[:colon] + ":" + updatedTag
-		} else {
-			updatedImage = repo + ":" + updatedTag
-		}
-		if currentDigest != "" {
-			updatedDigest := resolveUpdatedImageDigest(ctx, image, updatedTag)
-			if updatedDigest == "" {
-				continue
-			}
-			updatedImage = updatedImage + "@" + updatedDigest
-			fromRef = tag + "@" + currentDigest
-			toRef = updatedTag + "@" + updatedDigest
-		}
-		updatedLine := strings.Replace(line, image, updatedImage, 1)
-		return updatedLine, Patch{Manager: "dockerfile", Target: path, Package: pkg, From: fromRef, To: toRef}, true
+		return buildPatchedFromLine(ctx, line, path, image, imageWithoutDigest, repo, tag, currentDigest, updatedTag, pkg)
 	}
 
 	return "", Patch{}, false
+}
+
+func buildPatchedFromLine(ctx context.Context, line, path, image, imageWithoutDigest, repo, currentTag, currentDigest, updatedTag, patchPackage string) (string, Patch, bool) {
+	fromRef := currentTag
+	toRef := updatedTag
+	updatedImage := imageWithoutDigest
+	if colon := strings.LastIndex(updatedImage, ":"); colon != -1 && !strings.Contains(updatedImage[colon+1:], "/") {
+		updatedImage = updatedImage[:colon] + ":" + updatedTag
+	} else {
+		updatedImage = repo + ":" + updatedTag
+	}
+	if currentDigest != "" {
+		updatedDigest := resolveUpdatedImageDigest(ctx, image, updatedTag)
+		if updatedDigest == "" {
+			return "", Patch{}, false
+		}
+		updatedImage = updatedImage + "@" + updatedDigest
+		fromRef = currentTag + "@" + currentDigest
+		toRef = updatedTag + "@" + updatedDigest
+	}
+	updatedLine := strings.Replace(line, image, updatedImage, 1)
+	return updatedLine, Patch{Manager: "dockerfile", Target: path, Package: patchPackage, From: fromRef, To: toRef}, true
 }
 
 func imageMatchesPackage(repo, pkg string) bool {

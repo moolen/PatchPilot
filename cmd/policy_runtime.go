@@ -72,10 +72,26 @@ func dockerOptionsFromPolicy(cfg *policy.Config) fixer.DockerfileOptions {
 	if cfg == nil {
 		return fixer.DockerfileOptions{BaseImagePatching: true, OSPackagePatching: true}
 	}
+	baseImageRules := make([]fixer.BaseImageRule, 0, len(cfg.Docker.BaseImageRules))
+	for _, rule := range cfg.Docker.BaseImageRules {
+		tagSets := make([]fixer.BaseImageTagSet, 0, len(rule.TagSets))
+		for _, tagSet := range rule.TagSets {
+			tagSets = append(tagSets, fixer.BaseImageTagSet{
+				SemverRange: tagSet.SemverRange,
+				Allow:       append([]string(nil), tagSet.Allow...),
+			})
+		}
+		baseImageRules = append(baseImageRules, fixer.BaseImageRule{
+			Image:   rule.Image,
+			TagSets: tagSets,
+			Deny:    append([]string(nil), rule.Deny...),
+		})
+	}
 	return fixer.DockerfileOptions{
 		SkipPaths:            append([]string(nil), cfg.Scan.SkipPaths...),
 		AllowedBaseImages:    append([]string(nil), cfg.Docker.AllowedBaseImages...),
 		DisallowedBaseImages: append([]string(nil), cfg.Docker.DisallowedBaseImages...),
+		BaseImageRules:       baseImageRules,
 		BaseImagePatching:    cfg.Docker.Patching.BaseImages != policy.DockerPatchDisabled,
 		OSPackagePatching:    cfg.Docker.Patching.OSPackages != policy.DockerPatchDisabled,
 	}

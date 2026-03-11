@@ -19,6 +19,7 @@ func TestMaybePatchFromUpdatesPatchTagWithSuffix(t *testing.T) {
 		"FROM golang:1.21-alpine",
 		"/tmp/Dockerfile",
 		map[string]string{"golang": "1.21.1"},
+		nil,
 	)
 	if !ok {
 		t.Fatalf("expected FROM line to be patched")
@@ -36,6 +37,7 @@ func TestMaybePatchFromSkipsWhenAlreadyFixed(t *testing.T) {
 		"FROM golang:1.21.2-alpine",
 		"/tmp/Dockerfile",
 		map[string]string{"golang": "1.21.1"},
+		nil,
 	)
 	if ok {
 		t.Fatalf("expected no patch, got updated=%q patch=%+v", updated, patch)
@@ -72,6 +74,7 @@ func TestMaybePatchFromUpdatesDigestPinnedBaseImage(t *testing.T) {
 		"FROM golang:1.21-alpine@sha256:olddigest",
 		"/tmp/Dockerfile",
 		map[string]string{"golang": "1.21.1"},
+		nil,
 	)
 	if !ok {
 		t.Fatalf("expected FROM line to be patched")

@@ -38,7 +38,7 @@ When multiple failure conditions apply, precedence is: scan/patch failures first
 4. Apply direct Go fixes with `golang.org/x/mod/modfile`.
 5. Apply transitive Go fixes with `go list -m all` plus `go get module@fixedVersion` when a vulnerable module is present in the module build list.
 6. Automatically bump each `go.mod` `go` directive to the latest supported patch release on the same Go major/minor line (or the oldest currently supported line if the current line is no longer supported).
-7. Parse Dockerfiles and add minimal package or base-image remediation only when OS-package findings exist.
+7. Parse Dockerfiles and add minimal OS package remediation from findings; when `docker.base_image_rules` are configured, also update matching `FROM` images to the highest newer registry tag allowed by policy.
 8. Patch `package.json` dependencies for npm findings and automatically sync `package-lock.json` / `npm-shrinkwrap.json` when present.
 9. Patch `requirements*.txt` entries for Python/PyPI findings.
 10. Patch `pom.xml` and `build.gradle*` dependency versions for Maven/Gradle findings.
@@ -64,7 +64,7 @@ Policy controls include:
 - vulnerability/CVE excludes,
 - skip-paths for scanning/module discovery/fixers,
 - registry cache/auth configuration for Docker tag/digest resolution,
-- Docker base-image allow/deny policy and patch strategy toggles,
+- Docker base-image allow/deny policy, patch toggles, and rule-driven tag selection for `FROM` images,
 - container image target mapping (static or command-discovered),
 - Go runtime remediation policy (`disabled`, `toolchain`, `minimum`),
 - custom prompt snippets for agent remediation loops and failure points.
@@ -217,6 +217,14 @@ docker:
     - cgr.dev/chainguard/*
   disallowed_base_images:
     - ubuntu:latest
+  base_image_rules:
+    - image: golang
+      tag_sets:
+        - semver_range: ">=1.24.3 <1.25.0"
+          allow:
+            - '^v?\d+\.\d+\.\d+-alpine$'
+      deny:
+        - '.*-debug$'
   patching:
     base_images: auto # auto | disabled
     os_packages: auto # auto | disabled
@@ -272,6 +280,43 @@ Remediation prompt templates receive the current prompt context, including field
 Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a patched local toolchain without hard-raising the declared minimum Go version. Use `minimum` for applications or enterprise environments that want to require the patched Go version everywhere.
 
 Policy parsing is strict after applying built-in legacy migrations (for example `postExecution` -> `post_execution`, `verification.commands[].command` -> `run`, and top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
+
+## Docker Base Image Rules
+
+`docker.base_image_rules` provides rule-driven updates for `FROM` images. Rules are matched by image repository, PatchPilot lists tags from that same registry/repository, filters candidates by `tag_sets` and `deny`, and rewrites the tag to the highest newer match. This path is independent of vulnerability package-name matching.
+
+Example:
+
+```yaml
+docker:
+  base_image_rules:
+    - image: registry.internal/platform/go-base
+      tag_sets:
+        - semver_range: ">=1.21.1 <1.22.0"
+          allow:
+            - '^v?\d+\.\d+\.\d+-alpine$'
+        - semver_range: ">=1.21.1-0 <1.22.0"
+          allow:
+            - '^v?\d+\.\d+\.\d+-rc\.\d+-alpine$'
+      deny:
+        - '.*-debug$'
+```
+
+Rule behavior:
+
+- `image` matches the repository in the Dockerfile `FROM` reference. Matching is exact in the current implementation.
+- `tag_sets` are OR-ed. A tag is eligible when it matches at least one tag set.
+- `tag_sets[].semver_range` constrains the parsed version. Supported operators are `>`, `>=`, `<`, `<=`, and `=`.
+- `tag_sets[].allow` applies regex matching to the full raw tag.
+- `deny` applies regex matching to the full raw tag after allow/range evaluation and excludes matching tags.
+- PatchPilot only considers tags newer than the current tag and always selects the highest matching candidate.
+- If the `FROM` reference is digest-pinned, PatchPilot also resolves the digest for the selected tag and rewrites `@sha256:...`.
+
+Tag parsing:
+
+- PatchPilot extracts a semver-like version from common Docker tags such as `1.21`, `1.21.3`, `v1.21.3`, and prerelease tags like `1.21.3-rc.1`.
+- Extra flavor suffixes such as `-alpine` are not part of the semver comparison. Keep those families stable with `allow` regexes.
+- If a tag cannot be parsed into a version, it is ignored for `base_image_rules`.
 
 ## Container Image Targets
 

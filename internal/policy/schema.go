@@ -147,6 +147,30 @@ func SchemaJSON() []byte {
       "properties": {
         "allowed_base_images": { "type": "array", "items": { "type": "string" } },
         "disallowed_base_images": { "type": "array", "items": { "type": "string" } },
+        "base_image_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["image", "tag_sets"],
+            "properties": {
+              "image": { "type": "string", "minLength": 1 },
+              "deny": { "type": "array", "items": { "type": "string" } },
+              "tag_sets": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "semver_range": { "type": "string" },
+                    "allow": { "type": "array", "items": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        },
         "patching": {
           "type": "object",
           "additionalProperties": false,

@@ -32,6 +32,18 @@ func TestOptionsFromPolicy(t *testing.T) {
 		Docker: policy.DockerPolicy{
 			AllowedBaseImages:    []string{"golang:*"},
 			DisallowedBaseImages: []string{"ubuntu:latest"},
+			BaseImageRules: []policy.DockerBaseImageRule{
+				{
+					Image: "registry.internal/platform/go-base",
+					Deny:  []string{".*-debug$"},
+					TagSets: []policy.DockerBaseImageTagSet{
+						{
+							SemverRange: ">=1.21.1 <1.22.0",
+							Allow:       []string{`^v?\d+\.\d+\.\d+-alpine$`},
+						},
+					},
+				},
+			},
 			Patching: policy.DockerPatchingPolicy{
 				BaseImages: policy.DockerPatchDisabled,
 				OSPackages: policy.DockerPatchAuto,
@@ -72,6 +84,24 @@ func TestOptionsFromPolicy(t *testing.T) {
 	}
 	if !reflect.DeepEqual(dockerOptions.DisallowedBaseImages, []string{"ubuntu:latest"}) {
 		t.Fatalf("unexpected disallowed base images: %#v", dockerOptions.DisallowedBaseImages)
+	}
+	if len(dockerOptions.BaseImageRules) != 1 {
+		t.Fatalf("unexpected base image rules: %#v", dockerOptions.BaseImageRules)
+	}
+	if dockerOptions.BaseImageRules[0].Image != "registry.internal/platform/go-base" {
+		t.Fatalf("unexpected base image rule image: %#v", dockerOptions.BaseImageRules)
+	}
+	if !reflect.DeepEqual(dockerOptions.BaseImageRules[0].Deny, []string{".*-debug$"}) {
+		t.Fatalf("unexpected base image rule deny patterns: %#v", dockerOptions.BaseImageRules[0].Deny)
+	}
+	if len(dockerOptions.BaseImageRules[0].TagSets) != 1 {
+		t.Fatalf("unexpected base image rule tag sets: %#v", dockerOptions.BaseImageRules[0].TagSets)
+	}
+	if dockerOptions.BaseImageRules[0].TagSets[0].SemverRange != ">=1.21.1 <1.22.0" {
+		t.Fatalf("unexpected base image rule semver range: %#v", dockerOptions.BaseImageRules[0].TagSets[0])
+	}
+	if !reflect.DeepEqual(dockerOptions.BaseImageRules[0].TagSets[0].Allow, []string{`^v?\d+\.\d+\.\d+-alpine$`}) {
+		t.Fatalf("unexpected base image rule allow patterns: %#v", dockerOptions.BaseImageRules[0].TagSets[0].Allow)
 	}
 
 	goRuntimeOptions := goRuntimeOptionsFromPolicy(cfg)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -177,9 +178,21 @@ type RegistryAuthPolicy struct {
 }
 
 type DockerPolicy struct {
-	AllowedBaseImages    []string             `yaml:"allowed_base_images"`
-	DisallowedBaseImages []string             `yaml:"disallowed_base_images"`
-	Patching             DockerPatchingPolicy `yaml:"patching"`
+	AllowedBaseImages    []string              `yaml:"allowed_base_images"`
+	DisallowedBaseImages []string              `yaml:"disallowed_base_images"`
+	BaseImageRules       []DockerBaseImageRule `yaml:"base_image_rules"`
+	Patching             DockerPatchingPolicy  `yaml:"patching"`
+}
+
+type DockerBaseImageRule struct {
+	Image   string                  `yaml:"image"`
+	TagSets []DockerBaseImageTagSet `yaml:"tag_sets"`
+	Deny    []string                `yaml:"deny"`
+}
+
+type DockerBaseImageTagSet struct {
+	SemverRange string   `yaml:"semver_range"`
+	Allow       []string `yaml:"allow"`
 }
 
 type DockerPatchingPolicy struct {
@@ -798,6 +811,37 @@ func normalizeAndValidate(cfg *Config) error {
 
 	cfg.Docker.AllowedBaseImages = dedupeNonEmpty(cfg.Docker.AllowedBaseImages)
 	cfg.Docker.DisallowedBaseImages = dedupeNonEmpty(cfg.Docker.DisallowedBaseImages)
+	seenBaseImageRules := map[string]struct{}{}
+	for index := range cfg.Docker.BaseImageRules {
+		rule := &cfg.Docker.BaseImageRules[index]
+		rule.Image = strings.TrimSpace(rule.Image)
+		if rule.Image == "" {
+			return fmt.Errorf("docker.base_image_rules[%d].image must not be empty", index)
+		}
+		if _, exists := seenBaseImageRules[rule.Image]; exists {
+			return fmt.Errorf("docker.base_image_rules[%d].image duplicates %q", index, rule.Image)
+		}
+		seenBaseImageRules[rule.Image] = struct{}{}
+		rule.Deny = dedupeNonEmpty(rule.Deny)
+		if len(rule.TagSets) == 0 {
+			return fmt.Errorf("docker.base_image_rules[%d].tag_sets must not be empty", index)
+		}
+		for denyIndex, pattern := range rule.Deny {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("docker.base_image_rules[%d].deny[%d] is invalid: %w", index, denyIndex, err)
+			}
+		}
+		for tagSetIndex := range rule.TagSets {
+			tagSet := &rule.TagSets[tagSetIndex]
+			tagSet.SemverRange = strings.TrimSpace(tagSet.SemverRange)
+			tagSet.Allow = dedupeNonEmpty(tagSet.Allow)
+			for allowIndex, pattern := range tagSet.Allow {
+				if _, err := regexp.Compile(pattern); err != nil {
+					return fmt.Errorf("docker.base_image_rules[%d].tag_sets[%d].allow[%d] is invalid: %w", index, tagSetIndex, allowIndex, err)
+				}
+			}
+		}
+	}
 	cfg.Docker.Patching.BaseImages = normalizeLower(cfg.Docker.Patching.BaseImages)
 	if cfg.Docker.Patching.BaseImages == "" {
 		cfg.Docker.Patching.BaseImages = DockerPatchAuto
