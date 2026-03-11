@@ -907,7 +907,7 @@ func normalizeAndValidate(cfg *Config) error {
 	if errPrompt != nil {
 		return errPrompt
 	}
-	cfg.Agent.RemediationPrompts.FixVulnerabilities.VerificationRegressed, promptBytes, errPrompt = normalizePromptList(
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.VerificationRegressed, _, errPrompt = normalizePromptList(
 		cfg.Agent.RemediationPrompts.FixVulnerabilities.VerificationRegressed,
 		"agent.remediation_prompts.fix_vulnerabilities.verification_regressed",
 		promptBytes,
