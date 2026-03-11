@@ -228,26 +228,46 @@ go:
 agent:
   remediation_prompts:
     all:
-      - follow org policy for upgrades and changelog notes
+      - mode: extend # extend | replace
+        template: |
+          follow org policy for upgrades and changelog notes
     baseline_scan_repair:
       all:
-        - keep baseline scan behavior intact; fix root causes
+        - mode: extend
+          template: |
+            keep baseline scan behavior intact; fix root causes
       generate_baseline_sbom:
-        - if syft fails, fix manifest or build tooling issues first
+        - mode: extend
+          template: |
+            if syft fails, fix manifest or build tooling issues first
       scan_baseline:
-        - keep artifact scans enabled; fix docker/build context issues instead
+        - mode: extend
+          template: |
+            keep artifact scans enabled; fix docker/build context issues instead
     fix_vulnerabilities:
       all:
-        - prefer smallest safe change set
+        - mode: extend
+          template: |
+            prefer smallest safe change set
       deterministic_fix_failed:
-        - do not bypass lockfile updates to silence deterministic engine errors
+        - mode: extend
+          template: |
+            do not bypass lockfile updates to silence deterministic engine errors
       validation_failed:
-        - make validation pass without disabling checks
+        - mode: extend
+          template: |
+            make validation pass without disabling checks
       vulnerabilities_remaining:
-        - focus on findings that still have fix versions
+        - mode: extend
+          template: |
+            focus on findings that still have fix versions
       verification_regressed:
-        - restore previous verification behavior before finalizing
+        - mode: extend
+          template: |
+            restore previous verification behavior before finalizing
 ```
+
+Remediation prompt templates receive the current prompt context, including fields such as `RepoPath`, `AttemptNumber`, `TaskKind`, `Goal`, `FailureStage`, `FailureError`, `CurrentState`, `ValidationPlan`, `Constraints`, `DefaultPrompt`, and `PromptSoFar`. `extend` appends rendered output to the current prompt; `replace` replaces the current prompt with the rendered output.
 
 Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a patched local toolchain without hard-raising the declared minimum Go version. Use `minimum` for applications or enterprise environments that want to require the patched Go version everywhere.
 

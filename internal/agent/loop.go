@@ -36,7 +36,7 @@ type LoopRequest struct {
 	InitialCurrentState      string
 	PreviousAttemptSummaries []string
 	ValidationPlan           []string
-	CustomGuidance           []string
+	RemediationPrompts       []RemediationPrompt
 	Validate                 func(ctx context.Context, attemptNumber int) (ValidationResult, error)
 }
 
@@ -138,7 +138,7 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 			PreviousAttemptSummaries: append([]string(nil), previousSummaries...),
 			ValidationPlan:           append([]string(nil), req.ValidationPlan...),
 			Constraints:              append([]string(nil), req.Constraints...),
-			CustomGuidance:           append([]string(nil), req.CustomGuidance...),
+			RemediationPrompts:       append([]RemediationPrompt(nil), req.RemediationPrompts...),
 			WorkingDirectory:         workingDir,
 			PromptFilePath:           promptPath,
 		}

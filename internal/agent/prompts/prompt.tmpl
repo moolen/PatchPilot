@@ -30,11 +30,6 @@ Constraints:
 {{range .Constraints}}- {{.}}
 {{end}}
 
-{{if .HasCustomGuidance}}Custom remediation guidance:
-{{range .CustomGuidance}}- {{.}}
-{{end}}
-
-{{end}}
 Instructions to the agent:
 - modify the repository directly
 - run the relevant checks after each change

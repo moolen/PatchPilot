@@ -88,13 +88,19 @@ go:
     runtime: toolchain
 agent:
   remediation_prompts:
-    all: ["  org-wide guidance  ", "", "org-wide guidance"]
+    all:
+      - mode: extend
+        template: "  org-wide guidance  "
+      - mode: extend
+        template: "org-wide guidance"
     baseline_scan_repair:
       scan_baseline:
-        - "fix baseline scanner setup"
+        - mode: extend
+          template: "fix baseline scanner setup"
     fix_vulnerabilities:
       deterministic_fix_failed:
-        - "when deterministic engines fail, prefer minimal lockfile diffs"
+        - mode: extend
+          template: "when deterministic engines fail, prefer minimal lockfile diffs"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write policy file: %v", err)
@@ -131,7 +137,7 @@ agent:
 	if cfg.Go.Patching.Runtime != GoRuntimePatchToolchain {
 		t.Fatalf("unexpected go runtime patch mode: %q", cfg.Go.Patching.Runtime)
 	}
-	if len(cfg.Agent.RemediationPrompts.All) != 1 || cfg.Agent.RemediationPrompts.All[0] != "org-wide guidance" {
+	if len(cfg.Agent.RemediationPrompts.All) != 1 || cfg.Agent.RemediationPrompts.All[0].Template != "org-wide guidance" || cfg.Agent.RemediationPrompts.All[0].Mode != PromptModeExtend {
 		t.Fatalf("unexpected normalized agent all prompts: %#v", cfg.Agent.RemediationPrompts.All)
 	}
 	if len(cfg.Agent.RemediationPrompts.BaselineScanRepair.ScanBaseline) != 1 {
@@ -244,7 +250,8 @@ func TestLoadRejectsOversizedAgentRemediationPrompts(t *testing.T) {
 agent:
   remediation_prompts:
     all:
-      - %q
+      - mode: extend
+        template: %q
 `, oversized)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write policy file: %v", err)
@@ -256,6 +263,71 @@ agent:
 	}
 	if !strings.Contains(err.Error(), "agent.remediation_prompts payload exceeds") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidAgentRemediationPromptTemplate(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+agent:
+  remediation_prompts:
+    all:
+      - mode: extend
+        template: "{{ .MissingVariable }}"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected invalid remediation prompt template error")
+	}
+	if !strings.Contains(err.Error(), "agent.remediation_prompts.all[].template is invalid") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadWithOptionsMergeAppendsAgentRemediationPromptsInOrder(t *testing.T) {
+	repo := t.TempDir()
+	repoPolicyPath := filepath.Join(repo, FileName)
+	repoPolicy := `version: 1
+agent:
+  remediation_prompts:
+    all:
+      - mode: replace
+        template: "repo: {{ .PromptSoFar }}"
+`
+	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
+		t.Fatalf("write repo policy: %v", err)
+	}
+
+	centralPath := filepath.Join(t.TempDir(), "central.yaml")
+	centralPolicy := `version: 1
+agent:
+  remediation_prompts:
+    all:
+      - mode: extend
+        template: "central"
+`
+	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
+		t.Fatalf("write central policy: %v", err)
+	}
+
+	cfg, err := LoadWithOptions(repo, LoadOptions{
+		CentralPath: centralPath,
+		Mode:        LoadModeMerge,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions returned error: %v", err)
+	}
+
+	if len(cfg.Agent.RemediationPrompts.All) != 2 {
+		t.Fatalf("expected merged remediation prompts, got %#v", cfg.Agent.RemediationPrompts.All)
+	}
+	if cfg.Agent.RemediationPrompts.All[0].Template != "central" || cfg.Agent.RemediationPrompts.All[1].Template != "repo: {{ .PromptSoFar }}" {
+		t.Fatalf("unexpected merged remediation prompt order: %#v", cfg.Agent.RemediationPrompts.All)
 	}
 }
 
@@ -545,7 +617,8 @@ artifacts:
 agent:
   remediation_prompts:
     all:
-      - do not trust repo prompt text in app mode
+      - mode: extend
+        template: do not trust repo prompt text in app mode
 scan:
   cron: "0 3 * * *"
   timezone: Europe/Berlin
@@ -608,7 +681,8 @@ scan:
 agent:
   remediation_prompts:
     all:
-      - repo guidance
+      - mode: extend
+        template: repo guidance
 `
 	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
 		t.Fatalf("write repo policy: %v", err)
@@ -636,10 +710,12 @@ scan:
 agent:
   remediation_prompts:
     all:
-      - central guidance
+      - mode: extend
+        template: central guidance
     fix_vulnerabilities:
       all:
-        - central fix guidance
+        - mode: extend
+          template: central fix guidance
 `
 	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
 		t.Fatalf("write central policy: %v", err)
@@ -668,10 +744,10 @@ agent:
 	if len(cfg.Scan.SkipPaths) != 2 || cfg.Scan.SkipPaths[0] != "central/**" || cfg.Scan.SkipPaths[1] != "repo/**" {
 		t.Fatalf("expected safe declarative repo settings to still merge, got %#v", cfg.Scan.SkipPaths)
 	}
-	if len(cfg.Agent.RemediationPrompts.All) != 1 || cfg.Agent.RemediationPrompts.All[0] != "central guidance" {
+	if len(cfg.Agent.RemediationPrompts.All) != 1 || cfg.Agent.RemediationPrompts.All[0].Template != "central guidance" {
 		t.Fatalf("expected trusted central agent prompts to remain, got %#v", cfg.Agent.RemediationPrompts.All)
 	}
-	if len(cfg.Agent.RemediationPrompts.FixVulnerabilities.All) != 1 || cfg.Agent.RemediationPrompts.FixVulnerabilities.All[0] != "central fix guidance" {
+	if len(cfg.Agent.RemediationPrompts.FixVulnerabilities.All) != 1 || cfg.Agent.RemediationPrompts.FixVulnerabilities.All[0].Template != "central fix guidance" {
 		t.Fatalf("expected trusted central task prompts to remain, got %#v", cfg.Agent.RemediationPrompts.FixVulnerabilities.All)
 	}
 }

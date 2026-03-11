@@ -12,6 +12,11 @@ const (
 	TaskKindBaselineScanRepair = "baseline_scan_repair"
 )
 
+type RemediationPrompt struct {
+	Mode     string
+	Template string
+}
+
 // AttemptRequest describes the context provided to a single agent attempt.
 type AttemptRequest struct {
 	RepoPath                 string
@@ -25,7 +30,7 @@ type AttemptRequest struct {
 	PreviousAttemptSummaries []string
 	ValidationPlan           []string
 	Constraints              []string
-	CustomGuidance           []string
+	RemediationPrompts       []RemediationPrompt
 	WorkingDirectory         string
 	PromptFilePath           string
 }

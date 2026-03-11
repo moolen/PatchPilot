@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	promptpkg "github.com/moolen/patchpilot/internal/agent/prompts"
 	cron "github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,9 @@ const (
 	LoadModeOverride = "override"
 
 	DefaultAgentRemediationPromptsMaxBytes = 32 * 1024
+
+	PromptModeExtend  = promptpkg.RemediationPromptModeExtend
+	PromptModeReplace = promptpkg.RemediationPromptModeReplace
 )
 
 type Config struct {
@@ -67,24 +71,29 @@ type AgentPolicy struct {
 	RemediationPrompts AgentRemediationPromptsPolicy `yaml:"remediation_prompts"`
 }
 
+type AgentRemediationPromptPolicy struct {
+	Mode     string `yaml:"mode"`
+	Template string `yaml:"template"`
+}
+
 type AgentRemediationPromptsPolicy struct {
-	All                []string                             `yaml:"all"`
+	All                []AgentRemediationPromptPolicy       `yaml:"all"`
 	BaselineScanRepair AgentBaselineScanRepairPromptsPolicy `yaml:"baseline_scan_repair"`
 	FixVulnerabilities AgentFixVulnerabilitiesPromptsPolicy `yaml:"fix_vulnerabilities"`
 }
 
 type AgentBaselineScanRepairPromptsPolicy struct {
-	All                  []string `yaml:"all"`
-	GenerateBaselineSBOM []string `yaml:"generate_baseline_sbom"`
-	ScanBaseline         []string `yaml:"scan_baseline"`
+	All                  []AgentRemediationPromptPolicy `yaml:"all"`
+	GenerateBaselineSBOM []AgentRemediationPromptPolicy `yaml:"generate_baseline_sbom"`
+	ScanBaseline         []AgentRemediationPromptPolicy `yaml:"scan_baseline"`
 }
 
 type AgentFixVulnerabilitiesPromptsPolicy struct {
-	All                      []string `yaml:"all"`
-	DeterministicFixFailed   []string `yaml:"deterministic_fix_failed"`
-	ValidationFailed         []string `yaml:"validation_failed"`
-	VulnerabilitiesRemaining []string `yaml:"vulnerabilities_remaining"`
-	VerificationRegressed    []string `yaml:"verification_regressed"`
+	All                      []AgentRemediationPromptPolicy `yaml:"all"`
+	DeterministicFixFailed   []AgentRemediationPromptPolicy `yaml:"deterministic_fix_failed"`
+	ValidationFailed         []AgentRemediationPromptPolicy `yaml:"validation_failed"`
+	VulnerabilitiesRemaining []AgentRemediationPromptPolicy `yaml:"vulnerabilities_remaining"`
+	VerificationRegressed    []AgentRemediationPromptPolicy `yaml:"verification_regressed"`
 }
 
 type GoPolicy struct {
@@ -1106,22 +1115,33 @@ func dedupeNonEmpty(values []string) []string {
 	return result
 }
 
-func normalizePromptList(values []string, field string, totalBytes int) ([]string, int, error) {
+func normalizePromptList(values []AgentRemediationPromptPolicy, field string, totalBytes int) ([]AgentRemediationPromptPolicy, int, error) {
 	if len(values) == 0 {
 		return nil, totalBytes, nil
 	}
 	seen := map[string]struct{}{}
-	result := make([]string, 0, len(values))
+	normalized := make([]AgentRemediationPromptPolicy, 0, len(values))
 	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
+		value.Mode = normalizeLower(value.Mode)
+		if value.Mode == "" {
+			return nil, totalBytes, fmt.Errorf("%s[].mode must be %q or %q", field, PromptModeExtend, PromptModeReplace)
+		}
+		if value.Mode != PromptModeExtend && value.Mode != PromptModeReplace {
+			return nil, totalBytes, fmt.Errorf("%s[].mode must be %q or %q", field, PromptModeExtend, PromptModeReplace)
+		}
+		value.Template = strings.TrimSpace(value.Template)
+		if value.Template == "" {
+			return nil, totalBytes, fmt.Errorf("%s[].template must not be empty", field)
+		}
+		if err := promptpkg.ValidateRemediationTemplate(value.Template); err != nil {
+			return nil, totalBytes, fmt.Errorf("%s[].template is invalid: %w", field, err)
+		}
+		key := value.Mode + "\x00" + value.Template
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		totalBytes += len(value)
+		seen[key] = struct{}{}
+		totalBytes += len(value.Template)
 		if totalBytes > DefaultAgentRemediationPromptsMaxBytes {
 			return nil, totalBytes, fmt.Errorf(
 				"agent.remediation_prompts payload exceeds %d bytes after normalization (failed at %s)",
@@ -1129,12 +1149,12 @@ func normalizePromptList(values []string, field string, totalBytes int) ([]strin
 				field,
 			)
 		}
-		result = append(result, value)
+		normalized = append(normalized, value)
 	}
-	if len(result) == 0 {
+	if len(normalized) == 0 {
 		return nil, totalBytes, nil
 	}
-	return result, totalBytes, nil
+	return normalized, totalBytes, nil
 }
 
 func cleanRelativePath(path string) string {

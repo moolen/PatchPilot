@@ -178,25 +178,25 @@ func SchemaJSON() []byte {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "all": { "type": "array", "items": { "type": "string" } },
+            "all": { "$ref": "#/$defs/remediation_prompt_list" },
             "baseline_scan_repair": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "all": { "type": "array", "items": { "type": "string" } },
-                "generate_baseline_sbom": { "type": "array", "items": { "type": "string" } },
-                "scan_baseline": { "type": "array", "items": { "type": "string" } }
+                "all": { "$ref": "#/$defs/remediation_prompt_list" },
+                "generate_baseline_sbom": { "$ref": "#/$defs/remediation_prompt_list" },
+                "scan_baseline": { "$ref": "#/$defs/remediation_prompt_list" }
               }
             },
             "fix_vulnerabilities": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "all": { "type": "array", "items": { "type": "string" } },
-                "deterministic_fix_failed": { "type": "array", "items": { "type": "string" } },
-                "validation_failed": { "type": "array", "items": { "type": "string" } },
-                "vulnerabilities_remaining": { "type": "array", "items": { "type": "string" } },
-                "verification_regressed": { "type": "array", "items": { "type": "string" } }
+                "all": { "$ref": "#/$defs/remediation_prompt_list" },
+                "deterministic_fix_failed": { "$ref": "#/$defs/remediation_prompt_list" },
+                "validation_failed": { "$ref": "#/$defs/remediation_prompt_list" },
+                "vulnerabilities_remaining": { "$ref": "#/$defs/remediation_prompt_list" },
+                "verification_regressed": { "$ref": "#/$defs/remediation_prompt_list" }
               }
             }
           }
@@ -254,6 +254,20 @@ func SchemaJSON() []byte {
               }
             }
           }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "remediation_prompt_list": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode", "template"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["extend", "replace"] },
+          "template": { "type": "string", "minLength": 1 }
         }
       }
     }

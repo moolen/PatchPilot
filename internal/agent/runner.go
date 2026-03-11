@@ -28,7 +28,10 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 		return AttemptResult{}, errors.New("prompt file path is empty")
 	}
 
-	prompt := BuildPrompt(req)
+	prompt, err := BuildPrompt(req)
+	if err != nil {
+		return AttemptResult{}, fmt.Errorf("build prompt: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(req.PromptFilePath), 0o755); err != nil {
 		return AttemptResult{}, fmt.Errorf("create prompt directory: %w", err)
 	}
@@ -54,6 +57,10 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 	} else if runner.Stdout != nil {
 		stderr = runner.Stdout
 	}
+	promptLog := formatPromptLog(req.PromptFilePath, prompt)
+	if stderr != nil {
+		_, _ = io.WriteString(stderr, promptLog+"\n")
+	}
 
 	runResult, err := execsafe.Run(ctx, execsafe.Spec{
 		Name:           "agent",
@@ -73,7 +80,7 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 		// Inherit the parent environment, then overlay PATCHPILOT_* variables above.
 		EnvAllowlist: []string{"*"},
 	})
-	result := AttemptResult{Logs: strings.TrimSpace(runResult.Combined)}
+	result := AttemptResult{Logs: combineAttemptLogs(promptLog, runResult.Combined)}
 	if err == nil {
 		result.Success = true
 		result.Summary = "agent command completed successfully"
@@ -92,4 +99,20 @@ func (runner Runner) RunAttempt(ctx context.Context, req AttemptRequest) (Attemp
 		return result, nil
 	}
 	return result, fmt.Errorf("run agent command: %w", err)
+}
+
+func formatPromptLog(promptFilePath, prompt string) string {
+	return fmt.Sprintf("Prompt passed to agent (%s):\n%s", promptFilePath, prompt)
+}
+
+func combineAttemptLogs(promptLog, commandLogs string) string {
+	promptLog = strings.TrimSpace(promptLog)
+	commandLogs = strings.TrimSpace(commandLogs)
+	if promptLog == "" {
+		return commandLogs
+	}
+	if commandLogs == "" {
+		return promptLog
+	}
+	return promptLog + "\n\nAgent output:\n" + commandLogs
 }

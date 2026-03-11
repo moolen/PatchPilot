@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	agentpkg "github.com/moolen/patchpilot/internal/agent"
 	"github.com/moolen/patchpilot/internal/fixer"
 	"github.com/moolen/patchpilot/internal/policy"
 	"github.com/moolen/patchpilot/internal/verifycheck"
@@ -121,24 +122,32 @@ func TestBaselineRemediationPromptGuidance(t *testing.T) {
 	cfg := &policy.Config{
 		Agent: policy.AgentPolicy{
 			RemediationPrompts: policy.AgentRemediationPromptsPolicy{
-				All: []string{"global"},
+				All: []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "global"}},
 				BaselineScanRepair: policy.AgentBaselineScanRepairPromptsPolicy{
-					All:                  []string{"baseline-all"},
-					GenerateBaselineSBOM: []string{"baseline-sbom"},
-					ScanBaseline:         []string{"baseline-scan"},
+					All:                  []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "baseline-all"}},
+					GenerateBaselineSBOM: []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "baseline-sbom"}},
+					ScanBaseline:         []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "baseline-scan"}},
 				},
 			},
 		},
 	}
 
 	gotSBOM := baselineRemediationPromptGuidance(cfg, "generate_baseline_sbom")
-	wantSBOM := []string{"global", "baseline-all", "baseline-sbom"}
+	wantSBOM := []agentpkg.RemediationPrompt{
+		{Mode: policy.PromptModeExtend, Template: "global"},
+		{Mode: policy.PromptModeExtend, Template: "baseline-all"},
+		{Mode: policy.PromptModeExtend, Template: "baseline-sbom"},
+	}
 	if !reflect.DeepEqual(gotSBOM, wantSBOM) {
 		t.Fatalf("unexpected baseline SBOM prompts: got %#v want %#v", gotSBOM, wantSBOM)
 	}
 
 	gotScan := baselineRemediationPromptGuidance(cfg, "scan_baseline")
-	wantScan := []string{"global", "baseline-all", "baseline-scan"}
+	wantScan := []agentpkg.RemediationPrompt{
+		{Mode: policy.PromptModeExtend, Template: "global"},
+		{Mode: policy.PromptModeExtend, Template: "baseline-all"},
+		{Mode: policy.PromptModeExtend, Template: "baseline-scan"},
+	}
 	if !reflect.DeepEqual(gotScan, wantScan) {
 		t.Fatalf("unexpected baseline scan prompts: got %#v want %#v", gotScan, wantScan)
 	}
@@ -148,13 +157,13 @@ func TestFixRemediationPromptGuidance(t *testing.T) {
 	cfg := &policy.Config{
 		Agent: policy.AgentPolicy{
 			RemediationPrompts: policy.AgentRemediationPromptsPolicy{
-				All: []string{"global"},
+				All: []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "global"}},
 				FixVulnerabilities: policy.AgentFixVulnerabilitiesPromptsPolicy{
-					All:                      []string{"fix-all"},
-					DeterministicFixFailed:   []string{"fix-deterministic"},
-					ValidationFailed:         []string{"fix-validation"},
-					VulnerabilitiesRemaining: []string{"fix-remaining"},
-					VerificationRegressed:    []string{"fix-regression"},
+					All:                      []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "fix-all"}},
+					DeterministicFixFailed:   []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "fix-deterministic"}},
+					ValidationFailed:         []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "fix-validation"}},
+					VulnerabilitiesRemaining: []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "fix-remaining"}},
+					VerificationRegressed:    []policy.AgentRemediationPromptPolicy{{Mode: policy.PromptModeExtend, Template: "fix-regression"}},
 				},
 			},
 		},
@@ -168,7 +177,14 @@ func TestFixRemediationPromptGuidance(t *testing.T) {
 		},
 	}
 	got := fixRemediationPromptGuidance(cfg, []string{"npm fixes failed"}, validation, errors.New("verification command failed"))
-	want := []string{"global", "fix-all", "fix-deterministic", "fix-validation", "fix-remaining", "fix-regression"}
+	want := []agentpkg.RemediationPrompt{
+		{Mode: policy.PromptModeExtend, Template: "global"},
+		{Mode: policy.PromptModeExtend, Template: "fix-all"},
+		{Mode: policy.PromptModeExtend, Template: "fix-deterministic"},
+		{Mode: policy.PromptModeExtend, Template: "fix-validation"},
+		{Mode: policy.PromptModeExtend, Template: "fix-remaining"},
+		{Mode: policy.PromptModeExtend, Template: "fix-regression"},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected fix prompts: got %#v want %#v", got, want)
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildPromptIncludesCoreSections(t *testing.T) {
-	prompt := BuildPrompt(AttemptRequest{
+	prompt, err := BuildPrompt(AttemptRequest{
 		RepoPath:          "/repo",
 		AttemptNumber:     2,
 		TaskKind:          TaskKindFixVulnerabilities,
@@ -14,6 +14,9 @@ func TestBuildPromptIncludesCoreSections(t *testing.T) {
 		CurrentStateLabel: "Remaining vulnerabilities (grype JSON)",
 		CurrentState:      "{\"matches\":[]}",
 	})
+	if err != nil {
+		t.Fatalf("BuildPrompt returned error: %v", err)
+	}
 
 	checks := []string{
 		"Repository path:",
@@ -40,7 +43,7 @@ func TestBuildPromptIncludesCoreSections(t *testing.T) {
 }
 
 func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
-	prompt := BuildPrompt(AttemptRequest{
+	prompt, err := BuildPrompt(AttemptRequest{
 		RepoPath:                 "/repo",
 		AttemptNumber:            1,
 		TaskKind:                 TaskKindBaselineScanRepair,
@@ -52,8 +55,10 @@ func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
 		PreviousAttemptSummaries: []string{"attempt 1 failed"},
 		ValidationPlan:           []string{"make verify"},
 		Constraints:              []string{"do not disable artifact scanning"},
-		CustomGuidance:           []string{"follow org escalation policy"},
 	})
+	if err != nil {
+		t.Fatalf("BuildPrompt returned error: %v", err)
+	}
 
 	if !strings.Contains(prompt, "- attempt 1 failed") {
 		t.Fatalf("expected previous attempts in prompt, got:\n%s", prompt)
@@ -73,10 +78,56 @@ func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
 	if !strings.Contains(prompt, "- do not disable artifact scanning") {
 		t.Fatalf("expected custom constraints in prompt, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Custom remediation guidance:") {
-		t.Fatalf("expected custom guidance section, got:\n%s", prompt)
+}
+
+func TestBuildPromptAppliesRemediationPromptsSequentially(t *testing.T) {
+	prompt, err := BuildPrompt(AttemptRequest{
+		RepoPath:                 "/repo",
+		AttemptNumber:            3,
+		TaskKind:                 TaskKindBaselineScanRepair,
+		Goal:                     "Repair the repository so the baseline scan succeeds.",
+		CurrentStateLabel:        "Current baseline state",
+		CurrentState:             "{}",
+		FailureStage:             "scan_baseline",
+		FailureError:             "artifact target build failed",
+		PreviousAttemptSummaries: []string{"attempt 2 failed"},
+		ValidationPlan:           []string{"make verify"},
+		Constraints:              []string{"do not disable artifact scanning"},
+		RemediationPrompts: []RemediationPrompt{
+			{Mode: "extend", Template: "Org guidance for {{ .RepoPath }}"},
+			{Mode: "replace", Template: "REPLACED\n{{ .PromptSoFar }}\nFailure={{ .FailureStage }}"},
+			{Mode: "extend", Template: "Attempt {{ .AttemptNumber }}"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildPrompt returned error: %v", err)
 	}
-	if !strings.Contains(prompt, "- follow org escalation policy") {
-		t.Fatalf("expected custom guidance entry in prompt, got:\n%s", prompt)
+
+	if !strings.Contains(prompt, "REPLACED") {
+		t.Fatalf("expected replace prompt output, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Org guidance for /repo") {
+		t.Fatalf("expected extend prompt output to survive replace via PromptSoFar, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Failure=scan_baseline") {
+		t.Fatalf("expected failure stage variable in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Attempt 3") {
+		t.Fatalf("expected trailing extend prompt output, got:\n%s", prompt)
+	}
+}
+
+func TestBuildPromptReturnsErrorForInvalidRemediationTemplate(t *testing.T) {
+	_, err := BuildPrompt(AttemptRequest{
+		RepoPath: "/repo",
+		RemediationPrompts: []RemediationPrompt{
+			{Mode: "extend", Template: "{{ .MissingVariable }}"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid remediation template")
+	}
+	if !strings.Contains(err.Error(), "render remediation prompt 1") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

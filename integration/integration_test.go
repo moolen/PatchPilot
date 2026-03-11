@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	integrationBinary string
-	integrationRoot   string
+	integrationBinary          string
+	integrationFakeAgentBinary string
+	integrationRoot            string
 )
 
 type commandResult struct {
@@ -50,17 +51,39 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	integrationBinary = filepath.Join(buildDir, "patchpilot")
-	buildCommand := exec.Command("go", "build", "-o", integrationBinary, "./cmd/patchpilot")
-	buildCommand.Dir = integrationRoot
-	buildOutput, err := buildCommand.CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build patchpilot binary: %v\n%s", err, string(buildOutput))
+	if err := buildIntegrationBinary(integrationBinary, "./cmd/patchpilot"); err != nil {
+		fmt.Fprintf(os.Stderr, "build patchpilot binary: %v\n", err)
+		os.Exit(1)
+	}
+	integrationFakeAgentBinary = filepath.Join(buildDir, "fake-agent")
+	if err := buildIntegrationBinaryWithTags(integrationFakeAgentBinary, "./integration", "fakeagentfixture"); err != nil {
+		fmt.Fprintf(os.Stderr, "build fake agent binary: %v\n", err)
 		os.Exit(1)
 	}
 
 	code := m.Run()
 	_ = os.RemoveAll(buildDir)
 	os.Exit(code)
+}
+
+func buildIntegrationBinary(outputPath, packagePath string) error {
+	return buildIntegrationBinaryWithTags(outputPath, packagePath)
+}
+
+func buildIntegrationBinaryWithTags(outputPath, packagePath string, tags ...string) error {
+	args := []string{"build"}
+	if len(tags) > 0 {
+		args = append(args, "-tags", strings.Join(tags, ","))
+	}
+	args = append(args, "-o", outputPath, packagePath)
+
+	buildCommand := exec.Command("go", args...)
+	buildCommand.Dir = integrationRoot
+	buildOutput, err := buildCommand.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w\n%s", err, string(buildOutput))
+	}
+	return nil
 }
 
 func TestFixScenarios(t *testing.T) {

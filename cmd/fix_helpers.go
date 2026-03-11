@@ -121,7 +121,7 @@ func runAgentRepairLoop(
 		Goal:                     "Fix vulnerabilities with minimal changes and keep the build passing.",
 		CurrentStateLabel:        "Remaining vulnerabilities (grype JSON)",
 		Constraints:              fixPromptConstraints(),
-		CustomGuidance:           fixRemediationPromptGuidance(cfg, deterministicIssues, validation, validationErr),
+		RemediationPrompts:       fixRemediationPromptGuidance(cfg, deterministicIssues, validation, validationErr),
 		InitialProgressCount:     initialVulnCount,
 		InitialCurrentState:      initialVulnJSON,
 		PreviousAttemptSummaries: deterministicIssues,
@@ -215,7 +215,7 @@ func runBaselineRepairLoop(
 		Goal:                     "Repair the repository so PatchPilot can complete its baseline vulnerability scan.",
 		CurrentStateLabel:        "Current baseline scan state",
 		Constraints:              baselinePromptConstraints(),
-		CustomGuidance:           baselineRemediationPromptGuidance(cfg, lastStage),
+		RemediationPrompts:       baselineRemediationPromptGuidance(cfg, lastStage),
 		InitialProgressCount:     1,
 		InitialCurrentState:      buildBaselineAgentState(cfg, lastStage, lastErr, nil),
 		PreviousAttemptSummaries: previousSummaries,
@@ -390,12 +390,12 @@ func validationCommandsForPrompt(cfg *policy.Config) []string {
 	return commands
 }
 
-func baselineRemediationPromptGuidance(cfg *policy.Config, failedStage string) []string {
+func baselineRemediationPromptGuidance(cfg *policy.Config, failedStage string) []agentpkg.RemediationPrompt {
 	if cfg == nil {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	prompts := make([]string, 0)
+	prompts := make([]agentpkg.RemediationPrompt, 0)
 	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.All)
 	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.BaselineScanRepair.All)
 
@@ -416,12 +416,12 @@ func fixRemediationPromptGuidance(
 	deterministicIssues []string,
 	validation validationCycle,
 	validationErr error,
-) []string {
+) []agentpkg.RemediationPrompt {
 	if cfg == nil {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	prompts := make([]string, 0)
+	prompts := make([]agentpkg.RemediationPrompt, 0)
 	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.All)
 	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.FixVulnerabilities.All)
 	if len(deterministicIssues) > 0 {
@@ -442,17 +442,26 @@ func fixRemediationPromptGuidance(
 	return prompts
 }
 
-func appendPromptGuidance(dst []string, seen map[string]struct{}, extra []string) []string {
+func appendPromptGuidance(
+	dst []agentpkg.RemediationPrompt,
+	seen map[string]struct{},
+	extra []policy.AgentRemediationPromptPolicy,
+) []agentpkg.RemediationPrompt {
 	for _, prompt := range extra {
-		prompt = strings.TrimSpace(prompt)
-		if prompt == "" {
+		prompt.Mode = strings.TrimSpace(prompt.Mode)
+		prompt.Template = strings.TrimSpace(prompt.Template)
+		if prompt.Mode == "" || prompt.Template == "" {
 			continue
 		}
-		if _, exists := seen[prompt]; exists {
+		key := prompt.Mode + "\x00" + prompt.Template
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		seen[prompt] = struct{}{}
-		dst = append(dst, prompt)
+		seen[key] = struct{}{}
+		dst = append(dst, agentpkg.RemediationPrompt{
+			Mode:     prompt.Mode,
+			Template: prompt.Template,
+		})
 	}
 	return dst
 }
