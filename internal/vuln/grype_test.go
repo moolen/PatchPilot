@@ -15,7 +15,11 @@ func TestParseAndNormalizeRawReport(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(repo, "go.mod"),
 		filepath.Join(repo, "Dockerfile"),
+		filepath.Join(repo, ".github", "workflows", "ci.yml"),
 	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir parent for %s: %v", path, err)
+		}
 		if err := os.WriteFile(path, []byte("placeholder\n"), 0o644); err != nil {
 			t.Fatalf("write fixture file %s: %v", path, err)
 		}
@@ -83,6 +87,26 @@ func TestParseAndNormalizeRawReport(t *testing.T) {
           "state": "not-fixed"
         }
       }
+    },
+    {
+      "artifact": {
+        "name": "checkout",
+        "version": "v4.0.0",
+        "type": "github-action",
+        "language": "",
+        "purl": "pkg:github/actions/checkout@v4.0.0",
+        "locations": [
+          {"path": "/.github/workflows/ci.yml"}
+        ]
+      },
+      "vulnerability": {
+        "id": "GHSA-actions-checkout",
+        "namespace": "github:language:github-action",
+        "fix": {
+          "versions": ["v4.2.3", "v4.2.2"],
+          "state": "fixed"
+        }
+      }
     }
   ]
 }`
@@ -96,17 +120,32 @@ func TestParseAndNormalizeRawReport(t *testing.T) {
 	}
 
 	normalized := normalizeReport(repo, parsed, ScanOptions{})
-	if normalized.RawMatches != 3 {
-		t.Fatalf("expected 3 raw matches, got %d", normalized.RawMatches)
+	if normalized.RawMatches != 4 {
+		t.Fatalf("expected 4 raw matches, got %d", normalized.RawMatches)
 	}
 	if normalized.IgnoredWithoutFix != 1 {
 		t.Fatalf("expected 1 ignored finding, got %d", normalized.IgnoredWithoutFix)
 	}
-	if len(normalized.Findings) != 2 {
-		t.Fatalf("expected 2 normalized findings, got %d", len(normalized.Findings))
+	if len(normalized.Findings) != 3 {
+		t.Fatalf("expected 3 normalized findings, got %d", len(normalized.Findings))
 	}
 
-	goFinding := normalized.Findings[1]
+	var (
+		goFinding     Finding
+		debFinding    Finding
+		actionFinding Finding
+	)
+	for _, finding := range normalized.Findings {
+		switch {
+		case finding.Ecosystem == "golang" && finding.Package == "github.com/example/lib":
+			goFinding = finding
+		case finding.Ecosystem == "deb" && finding.Package == "openssl":
+			debFinding = finding
+		case finding.Ecosystem == "github-actions" && finding.Package == "actions/checkout":
+			actionFinding = finding
+		}
+	}
+
 	if goFinding.Ecosystem != "golang" {
 		t.Fatalf("expected golang ecosystem, got %q", goFinding.Ecosystem)
 	}
@@ -117,7 +156,19 @@ func TestParseAndNormalizeRawReport(t *testing.T) {
 		t.Fatalf("unexpected go finding locations: %#v", goFinding.Locations)
 	}
 
-	debFinding := normalized.Findings[0]
+	if actionFinding.Ecosystem != "github-actions" {
+		t.Fatalf("expected github-actions ecosystem, got %q", actionFinding.Ecosystem)
+	}
+	if actionFinding.Package != "actions/checkout" {
+		t.Fatalf("expected normalized github action package, got %q", actionFinding.Package)
+	}
+	if actionFinding.FixedVersion != "v4.2.2" {
+		t.Fatalf("expected minimal semver github action fix v4.2.2, got %q", actionFinding.FixedVersion)
+	}
+	if len(actionFinding.Locations) != 1 || actionFinding.Locations[0] != filepath.Join(repo, ".github", "workflows", "ci.yml") {
+		t.Fatalf("unexpected action finding locations: %#v", actionFinding.Locations)
+	}
+
 	if debFinding.Ecosystem != "deb" {
 		t.Fatalf("expected deb ecosystem, got %q", debFinding.Ecosystem)
 	}
@@ -126,6 +177,13 @@ func TestParseAndNormalizeRawReport(t *testing.T) {
 	}
 	if len(debFinding.Locations) != 1 || debFinding.Locations[0] != filepath.Join(repo, "Dockerfile") {
 		t.Fatalf("unexpected deb finding locations: %#v", debFinding.Locations)
+	}
+}
+
+func TestNormalizeGitHubActionPackageUsesPURLPath(t *testing.T) {
+	got := normalizeGitHubActionPackage("checkout", "pkg:github/actions/checkout/.github/workflows/release.yml@v1.2.3")
+	if got != "actions/checkout/.github/workflows/release.yml" {
+		t.Fatalf("unexpected normalized package: %q", got)
 	}
 }
 

@@ -860,6 +860,24 @@ done <<EOF
 $(find "$repo" -type f \( -name Dockerfile -o -name 'Dockerfile.*' -o -name '*.Dockerfile' \) | sort)
 EOF
 
+while IFS= read -r workflow; do
+  [ -n "$workflow" ] || continue
+  rel="${workflow#$repo/}"
+
+  checkout_ref=$(sed -n 's/.*uses:[[:space:]]*actions\/checkout@\([^[:space:]#"]*\).*/\1/p' "$workflow" | head -n 1 || true)
+  if [ -n "$checkout_ref" ]; then
+    if [ "${#checkout_ref}" -eq 40 ]; then
+      if [ "$checkout_ref" != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ]; then
+        append_match "{\"artifact\":{\"name\":\"actions/checkout\",\"version\":\"$checkout_ref\",\"type\":\"github-action\",\"language\":\"\",\"purl\":\"pkg:github/actions/checkout@$checkout_ref\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"GHSA-actions-checkout\",\"namespace\":\"github:language:github-action\",\"fix\":{\"versions\":[\"v4.2.2\"],\"state\":\"fixed\"}}}"
+      fi
+    elif version_lt "$checkout_ref" "v4.2.2"; then
+      append_match "{\"artifact\":{\"name\":\"actions/checkout\",\"version\":\"$checkout_ref\",\"type\":\"github-action\",\"language\":\"\",\"purl\":\"pkg:github/actions/checkout@$checkout_ref\",\"locations\":[{\"path\":\"/$rel\"}]},\"vulnerability\":{\"id\":\"GHSA-actions-checkout\",\"namespace\":\"github:language:github-action\",\"fix\":{\"versions\":[\"v4.2.2\"],\"state\":\"fixed\"}}}"
+    fi
+  fi
+done <<EOF
+$(find "$repo/.github/workflows" -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | sort)
+EOF
+
 printf '{\n  "matches": [\n'
 if [ -s "$matches_file" ]; then
   cat "$matches_file"

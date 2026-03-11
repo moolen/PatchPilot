@@ -45,6 +45,12 @@ func DefaultEngines(fileOptions FileOptions, dockerOptions DockerfileOptions, go
 			},
 		},
 		engineFunc{
+			name: "github_actions",
+			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
+				return ApplyGitHubActionsFixesWithOptions(ctx, repo, findings, fileOptions)
+			},
+		},
+		engineFunc{
 			name: "npm",
 			apply: func(ctx context.Context, repo string, findings []vuln.Finding) ([]Patch, error) {
 				return ApplyNPMFixesWithOptions(ctx, repo, findings, fileOptions)

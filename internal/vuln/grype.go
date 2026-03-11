@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -241,6 +242,9 @@ func normalizeReport(repo string, decoded *rawReport, options ScanOptions) *Repo
 			Language:        match.Artifact.Language,
 			Namespace:       match.Vulnerability.Namespace,
 		}
+		if ecosystem == "github-actions" {
+			finding.Package = normalizeGitHubActionPackage(match.Artifact.Name, match.Artifact.PURL)
+		}
 		if shouldSkipFindingByPath(repo, finding, options.SkipPaths) {
 			result.IgnoredByPolicy++
 			continue
@@ -349,6 +353,9 @@ func detectEcosystem(artifact rawArtifact) string {
 	if strings.HasPrefix(purl, "pkg:maven/") {
 		return "maven"
 	}
+	if strings.HasPrefix(purl, "pkg:github/") {
+		return "github-actions"
+	}
 	if strings.HasPrefix(purl, "pkg:cargo/") {
 		return "cargo"
 	}
@@ -371,6 +378,8 @@ func detectEcosystem(artifact rawArtifact) string {
 		return "pypi"
 	case "maven":
 		return "maven"
+	case "github-action", "github-actions", "github-workflow":
+		return "github-actions"
 	case "cargo", "rust-crate":
 		return "cargo"
 	case "nuget", "dotnet":
@@ -423,7 +432,7 @@ func minimalFixedVersion(ecosystem string, versions []string) string {
 		return ""
 	}
 
-	if ecosystem != "golang" {
+	if ecosystem != "golang" && ecosystem != "github-actions" {
 		sort.Strings(trimmed)
 		return trimmed[0]
 	}
@@ -444,6 +453,31 @@ func minimalFixedVersion(ecosystem string, versions []string) string {
 		return semver.Compare(valid[i], valid[j]) < 0
 	})
 	return valid[0]
+}
+
+func normalizeGitHubActionPackage(name, purlValue string) string {
+	purlValue = strings.TrimSpace(purlValue)
+	if strings.HasPrefix(strings.ToLower(purlValue), "pkg:github/") {
+		raw := strings.TrimPrefix(purlValue, "pkg:github/")
+		raw = strings.TrimPrefix(raw, "pkg:github/")
+		if parsed, err := url.PathUnescape(raw); err == nil {
+			raw = parsed
+		}
+		if at := strings.Index(raw, "@"); at != -1 {
+			raw = raw[:at]
+		}
+		if semi := strings.Index(raw, ";"); semi != -1 {
+			raw = raw[:semi]
+		}
+		if question := strings.Index(raw, "?"); question != -1 {
+			raw = raw[:question]
+		}
+		raw = strings.Trim(raw, "/")
+		if raw != "" {
+			return raw
+		}
+	}
+	return strings.Trim(strings.TrimSpace(name), "/")
 }
 
 func canonicalSemver(version string) string {
