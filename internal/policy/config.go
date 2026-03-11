@@ -837,9 +837,14 @@ func normalizeArtifactTargets(targets []ArtifactTargetPolicy, field string) erro
 			return fmt.Errorf("%s[%d].dockerfile must not be empty", field, index)
 		}
 
+		explicitRepoRootContext := isExplicitRepoRootArtifactContext(target.Context)
 		target.Context = cleanRelativePath(target.Context)
 		if target.Context == "" {
-			target.Context = cleanRelativePath(filepath.Dir(target.Dockerfile))
+			if explicitRepoRootContext {
+				target.Context = "."
+			} else {
+				target.Context = cleanRelativePath(filepath.Dir(target.Dockerfile))
+			}
 		}
 
 		target.Image.Tag = strings.TrimSpace(target.Image.Tag)
@@ -864,6 +869,14 @@ func normalizeArtifactTargets(targets []ArtifactTargetPolicy, field string) erro
 		}
 	}
 	return nil
+}
+
+func isExplicitRepoRootArtifactContext(value string) bool {
+	trimmed := filepath.ToSlash(strings.TrimSpace(value))
+	if trimmed == "" {
+		return false
+	}
+	return strings.TrimRight(trimmed, "/") == "."
 }
 
 func (cfg *Config) ResolveScanSchedule() (cron.Schedule, *time.Location, bool, error) {

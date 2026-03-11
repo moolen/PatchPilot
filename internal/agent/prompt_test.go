@@ -7,22 +7,29 @@ import (
 
 func TestBuildPromptIncludesCoreSections(t *testing.T) {
 	prompt := BuildPrompt(AttemptRequest{
-		RepoPath:                 "/repo",
-		AttemptNumber:            2,
-		RemainingVulnerabilities: "{\"matches\":[]}",
+		RepoPath:          "/repo",
+		AttemptNumber:     2,
+		TaskKind:          TaskKindFixVulnerabilities,
+		Goal:              "Fix vulnerabilities with minimal changes and keep the build passing.",
+		CurrentStateLabel: "Remaining vulnerabilities (grype JSON)",
+		CurrentState:      "{\"matches\":[]}",
 	})
 
 	checks := []string{
 		"Repository path:",
 		"/repo",
+		"Task:",
+		TaskKindFixVulnerabilities,
 		"Goal:",
 		"Remaining vulnerabilities (grype JSON):",
 		"{\"matches\":[]}",
 		"Previous attempts:",
 		"- none",
-		"Verification commands:",
+		"Validation plan:",
 		"go build ./...",
 		"go test -run=^$ ./...",
+		"Constraints:",
+		"do not modify .patchpilot/ artifacts or .patchpilot.yaml",
 		"Attempt number: 2",
 	}
 	for _, check := range checks {
@@ -36,10 +43,15 @@ func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
 	prompt := BuildPrompt(AttemptRequest{
 		RepoPath:                 "/repo",
 		AttemptNumber:            1,
-		RemainingVulnerabilities: "{}",
+		TaskKind:                 TaskKindBaselineScanRepair,
+		Goal:                     "Repair the repository so the baseline scan succeeds.",
+		CurrentStateLabel:        "Current baseline state",
+		CurrentState:             "{}",
+		FailureStage:             "scan_baseline",
+		FailureError:             "artifact target build failed",
 		PreviousAttemptSummaries: []string{"attempt 1 failed"},
-		ValidationCommands:       []string{"make verify"},
-		PromptFilePath:           "/repo/.patchpilot/agent/attempt-1/prompt.txt",
+		ValidationPlan:           []string{"make verify"},
+		Constraints:              []string{"do not disable artifact scanning"},
 	})
 
 	if !strings.Contains(prompt, "- attempt 1 failed") {
@@ -51,7 +63,13 @@ func TestBuildPromptUsesProvidedCommandsAndAttemptHistory(t *testing.T) {
 	if strings.Contains(prompt, "go build ./...") {
 		t.Fatalf("expected default commands to be omitted when explicit commands are set, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "Prompt file path: /repo/.patchpilot/agent/attempt-1/prompt.txt") {
-		t.Fatalf("expected prompt file path in prompt, got:\n%s", prompt)
+	if !strings.Contains(prompt, "- failing stage: scan_baseline") {
+		t.Fatalf("expected failure stage in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "- last error: artifact target build failed") {
+		t.Fatalf("expected failure error in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "- do not disable artifact scanning") {
+		t.Fatalf("expected custom constraints in prompt, got:\n%s", prompt)
 	}
 }

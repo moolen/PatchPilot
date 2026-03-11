@@ -81,26 +81,71 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	tracker.endStageSuccess(stage, nil)
 	defer restoreRegistry()
 
+	var before *vuln.Report
+
 	logProgress("generating baseline SBOM")
 	stage = tracker.beginStage("generate_baseline_sbom")
 	if err := generateSBOM(ctx, repo, cfg); err != nil {
-		tracker.endStageFailure(stage, err, nil)
-		return err
-	}
-	tracker.endStageSuccess(stage, nil)
+		if !options.EnableAgent {
+			tracker.endStageFailure(stage, err, nil)
+			return err
+		}
+		tracker.endStageSuccess(stage, map[string]any{
+			"status": "deferred_to_agent",
+			"error":  err.Error(),
+		})
 
-	logProgress("scanning baseline vulnerabilities")
-	stage = tracker.beginStage("scan_baseline")
-	before, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "baseline", "fix")
-	if err != nil {
-		tracker.endStageFailure(stage, err, nil)
-		return err
+		stage = tracker.beginStage("baseline_scan_repair_loop")
+		var attempts int
+		before, attempts, err = runBaselineRepairLoop(ctx, repo, cfg, options, tracker.record.RunID, "generate_baseline_sbom", err)
+		if err != nil {
+			tracker.endStageFailure(stage, err, nil)
+			return err
+		}
+		agentSucceeded = true
+		tracker.endStageSuccess(stage, map[string]any{
+			"attempts": attempts,
+			"success":  true,
+		})
+	} else {
+		tracker.endStageSuccess(stage, nil)
+
+		logProgress("scanning baseline vulnerabilities")
+		stage = tracker.beginStage("scan_baseline")
+		before, err = scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "baseline", "fix")
+		if err != nil {
+			if !options.EnableAgent {
+				tracker.endStageFailure(stage, err, nil)
+				return err
+			}
+			tracker.endStageSuccess(stage, map[string]any{
+				"status": "deferred_to_agent",
+				"error":  err.Error(),
+			})
+
+			stage = tracker.beginStage("baseline_scan_repair_loop")
+			var attempts int
+			before, attempts, err = runBaselineRepairLoop(ctx, repo, cfg, options, tracker.record.RunID, "scan_baseline", err)
+			if err != nil {
+				tracker.endStageFailure(stage, err, nil)
+				return err
+			}
+			agentSucceeded = true
+			tracker.endStageSuccess(stage, map[string]any{
+				"attempts": attempts,
+				"success":  true,
+			})
+		} else {
+			tracker.endStageSuccess(stage, map[string]any{
+				"findings":            len(before.Findings),
+				"ignored_without_fix": before.IgnoredWithoutFix,
+				"ignored_by_policy":   before.IgnoredByPolicy,
+			})
+		}
 	}
-	tracker.endStageSuccess(stage, map[string]any{
-		"findings":            len(before.Findings),
-		"ignored_without_fix": before.IgnoredWithoutFix,
-		"ignored_by_policy":   before.IgnoredByPolicy,
-	})
+	if before == nil {
+		return wrapWithExitCode(ExitCodePatchFailed, errors.New("unable to produce baseline vulnerability report"))
+	}
 	tracker.addCounter("findings_before", len(before.Findings))
 	logProgress("baseline findings with fix versions: %d", len(before.Findings))
 

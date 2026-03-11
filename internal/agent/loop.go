@@ -14,41 +14,47 @@ const DefaultMaxAttempts = 5
 
 // ValidationResult captures the orchestrator's validation state after an attempt.
 type ValidationResult struct {
-	ValidationPassed         bool
-	VulnerabilityCount       int
-	RemainingVulnerabilities string
-	Summary                  string
-	Logs                     string
+	ValidationPassed bool
+	GoalMet          bool
+	ProgressCount    int
+	CurrentState     string
+	Summary          string
+	Logs             string
 }
 
 // LoopRequest configures the repair loop.
 type LoopRequest struct {
-	RepoPath                        string
-	WorkingDirectory                string
-	ArtifactDirectory               string
-	MaxAttempts                     int
-	InitialVulnerabilityCount       int
-	InitialRemainingVulnerabilities string
-	PreviousAttemptSummaries        []string
-	ValidationCommands              []string
-	Validate                        func(ctx context.Context, attemptNumber int) (ValidationResult, error)
+	RepoPath                 string
+	WorkingDirectory         string
+	ArtifactDirectory        string
+	MaxAttempts              int
+	TaskKind                 string
+	Goal                     string
+	CurrentStateLabel        string
+	Constraints              []string
+	InitialProgressCount     int
+	InitialCurrentState      string
+	PreviousAttemptSummaries []string
+	ValidationPlan           []string
+	Validate                 func(ctx context.Context, attemptNumber int) (ValidationResult, error)
 }
 
 // AttemptSummary describes one agent iteration and is written to summary.json.
 type AttemptSummary struct {
-	AttemptNumber          int    `json:"attempt_number"`
-	Succeeded              bool   `json:"succeeded"`
-	AgentSuccess           bool   `json:"agent_success"`
-	AgentSummary           string `json:"agent_summary,omitempty"`
-	AgentError             string `json:"agent_error,omitempty"`
-	ValidationPassed       bool   `json:"validation_passed"`
-	ValidationError        string `json:"validation_error,omitempty"`
-	VulnerabilitiesBefore  int    `json:"vulnerabilities_before"`
-	VulnerabilitiesAfter   int    `json:"vulnerabilities_after"`
-	VulnerabilitiesReduced bool   `json:"vulnerabilities_reduced"`
-	ValidationSummary      string `json:"validation_summary,omitempty"`
-	StartedAt              string `json:"started_at"`
-	CompletedAt            string `json:"completed_at"`
+	AttemptNumber     int    `json:"attempt_number"`
+	Succeeded         bool   `json:"succeeded"`
+	AgentSuccess      bool   `json:"agent_success"`
+	AgentSummary      string `json:"agent_summary,omitempty"`
+	AgentError        string `json:"agent_error,omitempty"`
+	ValidationPassed  bool   `json:"validation_passed"`
+	GoalMet           bool   `json:"goal_met"`
+	ValidationError   string `json:"validation_error,omitempty"`
+	ProgressBefore    int    `json:"progress_before"`
+	ProgressAfter     int    `json:"progress_after"`
+	ProgressReduced   bool   `json:"progress_reduced"`
+	ValidationSummary string `json:"validation_summary,omitempty"`
+	StartedAt         string `json:"started_at"`
+	CompletedAt       string `json:"completed_at"`
 }
 
 // LoopResult is returned when the repair loop ends.
@@ -93,13 +99,13 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 		workingDir = req.RepoPath
 	}
 
-	currentVulnCount := req.InitialVulnerabilityCount
-	if currentVulnCount < 0 {
-		currentVulnCount = 0
+	currentProgressCount := req.InitialProgressCount
+	if currentProgressCount < 0 {
+		currentProgressCount = 0
 	}
-	currentVulnJSON := strings.TrimSpace(req.InitialRemainingVulnerabilities)
-	if currentVulnJSON == "" {
-		currentVulnJSON = "{}"
+	currentState := strings.TrimSpace(req.InitialCurrentState)
+	if currentState == "" {
+		currentState = "{}"
 	}
 
 	previousSummaries := append([]string(nil), req.PreviousAttemptSummaries...)
@@ -124,9 +130,13 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 		attemptReq := AttemptRequest{
 			RepoPath:                 req.RepoPath,
 			AttemptNumber:            attempt,
-			RemainingVulnerabilities: currentVulnJSON,
+			TaskKind:                 req.TaskKind,
+			Goal:                     req.Goal,
+			CurrentStateLabel:        req.CurrentStateLabel,
+			CurrentState:             currentState,
 			PreviousAttemptSummaries: append([]string(nil), previousSummaries...),
-			ValidationCommands:       append([]string(nil), req.ValidationCommands...),
+			ValidationPlan:           append([]string(nil), req.ValidationPlan...),
+			Constraints:              append([]string(nil), req.Constraints...),
 			WorkingDirectory:         workingDir,
 			PromptFilePath:           promptPath,
 		}
@@ -148,7 +158,7 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 			return result, fmt.Errorf("write agent log for attempt %d: %w", attempt, err)
 		}
 
-		vulnerabilitiesBefore := currentVulnCount
+		progressBefore := currentProgressCount
 		validationResult, validationErr := req.Validate(ctx, attempt)
 		if validationErr != nil && ctx.Err() != nil {
 			return result, ctx.Err()
@@ -166,35 +176,36 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 			return result, fmt.Errorf("write validation log for attempt %d: %w", attempt, err)
 		}
 
-		vulnerabilitiesAfter := vulnerabilitiesBefore
-		vulnerabilitiesReduced := false
+		progressAfter := progressBefore
+		progressReduced := false
 		if validationErr == nil {
-			vulnerabilitiesAfter = validationResult.VulnerabilityCount
-			if vulnerabilitiesBefore == 0 {
-				vulnerabilitiesReduced = vulnerabilitiesAfter == 0
+			progressAfter = validationResult.ProgressCount
+			if progressBefore == 0 {
+				progressReduced = progressAfter == 0
 			} else {
-				vulnerabilitiesReduced = vulnerabilitiesAfter < vulnerabilitiesBefore
+				progressReduced = progressAfter < progressBefore
 			}
-			currentVulnCount = vulnerabilitiesAfter
-			if trimmed := strings.TrimSpace(validationResult.RemainingVulnerabilities); trimmed != "" {
-				currentVulnJSON = trimmed
+			currentProgressCount = progressAfter
+			if trimmed := strings.TrimSpace(validationResult.CurrentState); trimmed != "" {
+				currentState = trimmed
 			}
 			copyValidation := validationResult
 			result.LastValidation = &copyValidation
 		}
 
 		summary := AttemptSummary{
-			AttemptNumber:          attempt,
-			Succeeded:              validationErr == nil && validationResult.ValidationPassed && vulnerabilitiesReduced,
-			AgentSuccess:           attemptResult.Success,
-			AgentSummary:           strings.TrimSpace(attemptResult.Summary),
-			ValidationPassed:       validationErr == nil && validationResult.ValidationPassed,
-			VulnerabilitiesBefore:  vulnerabilitiesBefore,
-			VulnerabilitiesAfter:   vulnerabilitiesAfter,
-			VulnerabilitiesReduced: vulnerabilitiesReduced,
-			ValidationSummary:      strings.TrimSpace(validationResult.Summary),
-			StartedAt:              started.Format(time.RFC3339),
-			CompletedAt:            time.Now().UTC().Format(time.RFC3339),
+			AttemptNumber:     attempt,
+			Succeeded:         validationErr == nil && validationResult.GoalMet,
+			AgentSuccess:      attemptResult.Success,
+			AgentSummary:      strings.TrimSpace(attemptResult.Summary),
+			ValidationPassed:  validationErr == nil && validationResult.ValidationPassed,
+			GoalMet:           validationErr == nil && validationResult.GoalMet,
+			ProgressBefore:    progressBefore,
+			ProgressAfter:     progressAfter,
+			ProgressReduced:   progressReduced,
+			ValidationSummary: strings.TrimSpace(validationResult.Summary),
+			StartedAt:         started.Format(time.RFC3339),
+			CompletedAt:       time.Now().UTC().Format(time.RFC3339),
 		}
 		if agentErr != nil {
 			summary.AgentError = agentErr.Error()
@@ -204,10 +215,11 @@ func (loop Loop) Run(ctx context.Context, req LoopRequest) (LoopResult, error) {
 		}
 		if summary.ValidationSummary == "" {
 			summary.ValidationSummary = fmt.Sprintf(
-				"validation_passed=%t vulnerabilities_before=%d vulnerabilities_after=%d",
+				"validation_passed=%t goal_met=%t progress_before=%d progress_after=%d",
 				summary.ValidationPassed,
-				summary.VulnerabilitiesBefore,
-				summary.VulnerabilitiesAfter,
+				summary.GoalMet,
+				summary.ProgressBefore,
+				summary.ProgressAfter,
 			)
 		}
 
@@ -236,13 +248,14 @@ func summarizeForPrompt(summary AttemptSummary) string {
 		status = "succeeded"
 	}
 	return fmt.Sprintf(
-		"attempt %d %s (agent_success=%t, validation_passed=%t, vulnerabilities=%d->%d)",
+		"attempt %d %s (agent_success=%t, validation_passed=%t, goal_met=%t, progress=%d->%d)",
 		summary.AttemptNumber,
 		status,
 		summary.AgentSuccess,
 		summary.ValidationPassed,
-		summary.VulnerabilitiesBefore,
-		summary.VulnerabilitiesAfter,
+		summary.GoalMet,
+		summary.ProgressBefore,
+		summary.ProgressAfter,
 	)
 }
 

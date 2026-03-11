@@ -12,11 +12,14 @@ func TestRunnerRunAttemptSuccess(t *testing.T) {
 	runner := Runner{Command: `echo run-ok; test -f "$PATCHPILOT_PROMPT_FILE"`}
 
 	result, err := runner.RunAttempt(context.Background(), AttemptRequest{
-		RepoPath:                 temp,
-		AttemptNumber:            1,
-		RemainingVulnerabilities: "{}",
-		WorkingDirectory:         temp,
-		PromptFilePath:           filepath.Join(temp, "prompt.txt"),
+		RepoPath:          temp,
+		AttemptNumber:     1,
+		TaskKind:          TaskKindFixVulnerabilities,
+		Goal:              "Fix vulnerabilities.",
+		CurrentStateLabel: "Current state",
+		CurrentState:      "{}",
+		WorkingDirectory:  temp,
+		PromptFilePath:    filepath.Join(temp, "prompt.txt"),
 	})
 	if err != nil {
 		t.Fatalf("RunAttempt returned error: %v", err)
@@ -36,11 +39,14 @@ func TestRunnerRunAttemptInheritsParentEnv(t *testing.T) {
 	runner := Runner{Command: `test "$AZURE_OPENAI_API_KEY" = "unit-test-key"`}
 
 	result, err := runner.RunAttempt(context.Background(), AttemptRequest{
-		RepoPath:                 temp,
-		AttemptNumber:            1,
-		RemainingVulnerabilities: "{}",
-		WorkingDirectory:         temp,
-		PromptFilePath:           filepath.Join(temp, "prompt.txt"),
+		RepoPath:          temp,
+		AttemptNumber:     1,
+		TaskKind:          TaskKindFixVulnerabilities,
+		Goal:              "Fix vulnerabilities.",
+		CurrentStateLabel: "Current state",
+		CurrentState:      "{}",
+		WorkingDirectory:  temp,
+		PromptFilePath:    filepath.Join(temp, "prompt.txt"),
 	})
 	if err != nil {
 		t.Fatalf("RunAttempt returned error: %v", err)
@@ -55,11 +61,14 @@ func TestRunnerRunAttemptNonZeroExitIsAttemptFailure(t *testing.T) {
 	runner := Runner{Command: `echo run-failed; exit 3`}
 
 	result, err := runner.RunAttempt(context.Background(), AttemptRequest{
-		RepoPath:                 temp,
-		AttemptNumber:            1,
-		RemainingVulnerabilities: "{}",
-		WorkingDirectory:         temp,
-		PromptFilePath:           filepath.Join(temp, "prompt.txt"),
+		RepoPath:          temp,
+		AttemptNumber:     1,
+		TaskKind:          TaskKindFixVulnerabilities,
+		Goal:              "Fix vulnerabilities.",
+		CurrentStateLabel: "Current state",
+		CurrentState:      "{}",
+		WorkingDirectory:  temp,
+		PromptFilePath:    filepath.Join(temp, "prompt.txt"),
 	})
 	if err != nil {
 		t.Fatalf("RunAttempt returned error: %v", err)

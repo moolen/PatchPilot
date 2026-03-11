@@ -13,6 +13,12 @@ var defaultValidationCommands = []string{
 	"go test -run=^$ ./...",
 }
 
+var defaultConstraints = []string{
+	"prefer minimal, repository-specific changes",
+	"preserve the repository's intended behavior",
+	"do not modify .patchpilot/ artifacts or .patchpilot.yaml",
+}
+
 //go:embed prompt.tmpl
 var promptTemplateText string
 
@@ -21,32 +27,47 @@ var promptTemplate = template.Must(template.New("prompt.tmpl").Parse(promptTempl
 type Request struct {
 	RepoPath                 string
 	AttemptNumber            int
-	RemainingVulnerabilities string
+	TaskKind                 string
+	Goal                     string
+	CurrentStateLabel        string
+	CurrentState             string
+	FailureStage             string
+	FailureError             string
 	PreviousAttemptSummaries []string
-	ValidationCommands       []string
-	PromptFilePath           string
+	ValidationPlan           []string
+	Constraints              []string
 }
 
 type templateData struct {
 	RepoPath                 string
 	AttemptNumber            int
-	RemainingVulnerabilities string
+	TaskKind                 string
+	Goal                     string
+	CurrentStateLabel        string
+	CurrentState             string
+	FailureStage             string
+	FailureError             string
 	PreviousAttemptSummaries []string
-	ValidationCommands       []string
-	PromptFilePath           string
-	HasPromptFilePath        bool
+	ValidationPlan           []string
+	Constraints              []string
+	HasFailure               bool
 }
 
 func Build(req Request) string {
 	data := templateData{
 		RepoPath:                 req.RepoPath,
 		AttemptNumber:            req.AttemptNumber,
-		RemainingVulnerabilities: normalizeRemainingVulnerabilities(req.RemainingVulnerabilities),
+		TaskKind:                 normalizeTaskKind(req.TaskKind),
+		Goal:                     normalizeGoal(req.Goal),
+		CurrentStateLabel:        normalizeCurrentStateLabel(req.CurrentStateLabel),
+		CurrentState:             normalizeCurrentState(req.CurrentState),
+		FailureStage:             strings.TrimSpace(req.FailureStage),
+		FailureError:             strings.TrimSpace(req.FailureError),
 		PreviousAttemptSummaries: normalizeList(req.PreviousAttemptSummaries, []string{"none"}),
-		ValidationCommands:       normalizeList(req.ValidationCommands, defaultValidationCommands),
-		PromptFilePath:           strings.TrimSpace(req.PromptFilePath),
+		ValidationPlan:           normalizeList(req.ValidationPlan, defaultValidationCommands),
+		Constraints:              normalizeList(req.Constraints, defaultConstraints),
 	}
-	data.HasPromptFilePath = data.PromptFilePath != ""
+	data.HasFailure = data.FailureStage != "" || data.FailureError != ""
 
 	var buf bytes.Buffer
 	if err := promptTemplate.Execute(&buf, data); err != nil {
@@ -55,7 +76,31 @@ func Build(req Request) string {
 	return buf.String()
 }
 
-func normalizeRemainingVulnerabilities(raw string) string {
+func normalizeTaskKind(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "repository repair"
+	}
+	return trimmed
+}
+
+func normalizeGoal(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "Repair the repository with minimal changes and satisfy the validation plan."
+	}
+	return trimmed
+}
+
+func normalizeCurrentStateLabel(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "Current state"
+	}
+	return trimmed
+}
+
+func normalizeCurrentState(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "{}"

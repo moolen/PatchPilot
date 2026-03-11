@@ -7,13 +7,24 @@ type Agent interface {
 	RunAttempt(ctx context.Context, req AttemptRequest) (AttemptResult, error)
 }
 
+const (
+	TaskKindFixVulnerabilities = "fix_vulnerabilities"
+	TaskKindBaselineScanRepair = "baseline_scan_repair"
+)
+
 // AttemptRequest describes the context provided to a single agent attempt.
 type AttemptRequest struct {
 	RepoPath                 string
 	AttemptNumber            int
-	RemainingVulnerabilities string
+	TaskKind                 string
+	Goal                     string
+	CurrentStateLabel        string
+	CurrentState             string
+	FailureStage             string
+	FailureError             string
 	PreviousAttemptSummaries []string
-	ValidationCommands       []string
+	ValidationPlan           []string
+	Constraints              []string
 	WorkingDirectory         string
 	PromptFilePath           string
 }

@@ -1,33 +1,40 @@
 Repository path:
 {{.RepoPath}}
 
+Task:
+{{.TaskKind}}
+
 Goal:
-Fix vulnerabilities with minimal changes and keep the build passing.
+{{.Goal}}
 
-Constraints:
-- prioritize minimal dependency upgrades
-- prefer fixing vulnerabilities over introducing new functionality
-- ensure repository builds successfully
+{{if .HasFailure}}Current failure:
+{{if .FailureStage}}- failing stage: {{.FailureStage}}
+{{end}}{{if .FailureError}}- last error: {{.FailureError}}
+{{end}}
+{{end}}
 
-Remaining vulnerabilities (grype JSON):
+{{.CurrentStateLabel}}:
 ```json
-{{.RemainingVulnerabilities}}
+{{.CurrentState}}
 ```
 
 Previous attempts:
 {{range .PreviousAttemptSummaries}}- {{.}}
 {{end}}
 
-Verification commands:
-{{range .ValidationCommands}}- {{.}}
+Validation plan:
+{{range .ValidationPlan}}- {{.}}
+{{end}}
+
+Constraints:
+{{range .Constraints}}- {{.}}
 {{end}}
 
 Instructions to the agent:
 - modify the repository directly
-- run verification commands after each change
-- iterate until vulnerabilities are fixed and build passes
-- do not stop until verification commands succeed or attempts exhausted
+- run the relevant checks after each change
+- preserve the repository's intended behavior while satisfying the goal
+- do not modify .patchpilot/ artifacts or .patchpilot.yaml
+- do not stop until the goal is met or attempts are exhausted
 
 Attempt number: {{.AttemptNumber}}
-{{if .HasPromptFilePath}}Prompt file path: {{.PromptFilePath}}
-{{end}}

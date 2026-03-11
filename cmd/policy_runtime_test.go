@@ -334,6 +334,27 @@ targets:
 	}
 }
 
+func TestParseArtifactTargetsCommandOutputPreservesExplicitRootContext(t *testing.T) {
+	targets, err := parseArtifactTargetsCommandOutput(`
+targets:
+  - dockerfile: ./images/backend/Dockerfile
+    context: .
+    image:
+      tag: patchpilot/backend:${PP_RUN_ID}
+    build:
+      run: make image
+`)
+	if err != nil {
+		t.Fatalf("parseArtifactTargetsCommandOutput returned error: %v", err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("expected one target, got %#v", targets)
+	}
+	if targets[0].Context != "." {
+		t.Fatalf("expected explicit root context to be preserved, got %q", targets[0].Context)
+	}
+}
+
 func TestParseArtifactTargetsCommandOutputRequiresTopLevelTargets(t *testing.T) {
 	_, err := parseArtifactTargetsCommandOutput(`{}`)
 	if err == nil {

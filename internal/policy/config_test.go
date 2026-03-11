@@ -659,6 +659,35 @@ artifacts:
 	}
 }
 
+func TestLoadPreservesExplicitArtifactRootContext(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+artifacts:
+  targets:
+    - dockerfile: ./images/backend/Dockerfile
+      context: .
+      image:
+        tag: patchpilot/backend:${PP_RUN_ID}
+      build:
+        run: APP=backend make container-image
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	cfg, err := Load(repo, "")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Artifacts.Targets) != 1 {
+		t.Fatalf("expected one artifact target, got %#v", cfg.Artifacts.Targets)
+	}
+	if cfg.Artifacts.Targets[0].Context != "." {
+		t.Fatalf("expected explicit root context to be preserved, got %q", cfg.Artifacts.Targets[0].Context)
+	}
+}
+
 func TestLoadRejectsInvalidArtifactTargetsCommandMode(t *testing.T) {
 	repo := t.TempDir()
 	path := filepath.Join(repo, FileName)

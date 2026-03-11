@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +16,12 @@ import (
 	"github.com/moolen/patchpilot/internal/verifycheck"
 	"github.com/moolen/patchpilot/internal/vuln"
 )
+
+type baselineScanCycle struct {
+	Baseline    *vuln.Report
+	FailedStage string
+	Logs        string
+}
 
 func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
 	return applyFixEngines(ctx, repo, findings, fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions), allowFailures)
@@ -102,22 +110,21 @@ func runAgentRepairLoop(
 	}
 	loop := agentpkg.Loop{Agent: runner}
 
-	artifactDir := strings.TrimSpace(options.AgentArtifactDir)
-	if artifactDir == "" {
-		artifactDir = filepath.Join(repo, ".patchpilot", "agent")
-	} else if !filepath.IsAbs(artifactDir) {
-		artifactDir = filepath.Join(repo, artifactDir)
-	}
+	artifactDir := agentArtifactDir(repo, options.AgentArtifactDir, "")
 
 	loopResult, loopErr := loop.Run(ctx, agentpkg.LoopRequest{
-		RepoPath:                        repo,
-		WorkingDirectory:                repo,
-		ArtifactDirectory:               artifactDir,
-		MaxAttempts:                     options.AgentMaxAttempts,
-		InitialVulnerabilityCount:       initialVulnCount,
-		InitialRemainingVulnerabilities: initialVulnJSON,
-		PreviousAttemptSummaries:        deterministicIssues,
-		ValidationCommands:              validationCommandsForPrompt(cfg),
+		RepoPath:                 repo,
+		WorkingDirectory:         repo,
+		ArtifactDirectory:        artifactDir,
+		MaxAttempts:              options.AgentMaxAttempts,
+		TaskKind:                 agentpkg.TaskKindFixVulnerabilities,
+		Goal:                     "Fix vulnerabilities with minimal changes and keep the build passing.",
+		CurrentStateLabel:        "Remaining vulnerabilities (grype JSON)",
+		Constraints:              fixPromptConstraints(),
+		InitialProgressCount:     initialVulnCount,
+		InitialCurrentState:      initialVulnJSON,
+		PreviousAttemptSummaries: deterministicIssues,
+		ValidationPlan:           validationCommandsForPrompt(cfg),
 		Validate: func(validateCtx context.Context, attemptNumber int) (agentpkg.ValidationResult, error) {
 			phase := fmt.Sprintf("agent-attempt-%d", attemptNumber)
 			next, err := runValidationCycle(validateCtx, repo, cfg, verificationBaseline, verificationDirs, runID, phase)
@@ -126,10 +133,11 @@ func runAgentRepairLoop(
 			}
 
 			result := agentpkg.ValidationResult{
-				ValidationPassed:   next.ValidationPassed,
-				VulnerabilityCount: knownVulnCount,
+				ValidationPassed: next.ValidationPassed,
+				GoalMet:          false,
+				ProgressCount:    knownVulnCount,
 				Summary: fmt.Sprintf(
-					"attempt=%d validation_passed=%t vulnerabilities=%d",
+					"attempt=%d validation_passed=%t remaining_vulnerabilities=%d",
 					attemptNumber,
 					next.ValidationPassed,
 					knownVulnCount,
@@ -139,10 +147,11 @@ func runAgentRepairLoop(
 
 			if next.After != nil {
 				knownVulnCount = len(next.After.Findings)
-				result.VulnerabilityCount = knownVulnCount
-				result.RemainingVulnerabilities = readFileOrDefault(next.After.RawPath, "{}")
+				result.ProgressCount = knownVulnCount
+				result.CurrentState = readFileOrDefault(next.After.RawPath, "{}")
+				result.GoalMet = next.ValidationPassed && knownVulnCount == 0
 				result.Summary = fmt.Sprintf(
-					"attempt=%d validation_passed=%t vulnerabilities=%d",
+					"attempt=%d validation_passed=%t remaining_vulnerabilities=%d",
 					attemptNumber,
 					next.ValidationPassed,
 					knownVulnCount,
@@ -167,6 +176,118 @@ func runAgentRepairLoop(
 		return validation, false, loopResult.Attempts, lastValidationErr
 	}
 	return validation, false, loopResult.Attempts, nil
+}
+
+func runBaselineRepairLoop(
+	ctx context.Context,
+	repo string,
+	cfg *policy.Config,
+	options fixOptions,
+	runID string,
+	failedStage string,
+	initialErr error,
+) (*vuln.Report, int, error) {
+	logProgress("baseline scan incomplete, starting agent repair loop")
+
+	runner := agentpkg.Runner{
+		Command: options.AgentCommand,
+		Stdout:  os.Stderr,
+		Stderr:  os.Stderr,
+	}
+	loop := agentpkg.Loop{Agent: runner}
+
+	lastStage := strings.TrimSpace(failedStage)
+	lastErr := initialErr
+	var baseline *vuln.Report
+
+	previousSummaries := []string{}
+	if lastStage != "" || lastErr != nil {
+		previousSummaries = append(previousSummaries, summarizeBaselineFailure(lastStage, lastErr))
+	}
+
+	loopResult, loopErr := loop.Run(ctx, agentpkg.LoopRequest{
+		RepoPath:                 repo,
+		WorkingDirectory:         repo,
+		ArtifactDirectory:        agentArtifactDir(repo, options.AgentArtifactDir, "baseline-scan"),
+		MaxAttempts:              options.AgentMaxAttempts,
+		TaskKind:                 agentpkg.TaskKindBaselineScanRepair,
+		Goal:                     "Repair the repository so PatchPilot can complete its baseline vulnerability scan.",
+		CurrentStateLabel:        "Current baseline scan state",
+		Constraints:              baselinePromptConstraints(),
+		InitialProgressCount:     1,
+		InitialCurrentState:      buildBaselineAgentState(cfg, lastStage, lastErr, nil),
+		PreviousAttemptSummaries: previousSummaries,
+		ValidationPlan:           baselineValidationPlan(cfg),
+		Validate: func(validateCtx context.Context, attemptNumber int) (agentpkg.ValidationResult, error) {
+			phase := fmt.Sprintf("baseline-agent-attempt-%d", attemptNumber)
+			next, err := runBaselineScanCycle(validateCtx, repo, cfg, runID, phase)
+			if err != nil {
+				lastErr = err
+				if strings.TrimSpace(next.FailedStage) != "" {
+					lastStage = next.FailedStage
+				}
+			}
+
+			result := agentpkg.ValidationResult{
+				ValidationPassed: err == nil,
+				GoalMet:          err == nil && next.Baseline != nil,
+				ProgressCount:    1,
+				CurrentState:     buildBaselineAgentState(cfg, next.FailedStage, err, next.Baseline),
+				Summary:          fmt.Sprintf("attempt=%d baseline_ready=%t", attemptNumber, err == nil && next.Baseline != nil),
+				Logs:             next.Logs,
+			}
+			if next.Baseline != nil && err == nil {
+				baseline = next.Baseline
+				result.ProgressCount = 0
+				result.Summary = fmt.Sprintf(
+					"attempt=%d baseline_ready=true findings=%d",
+					attemptNumber,
+					len(next.Baseline.Findings),
+				)
+			}
+			return result, err
+		},
+	})
+	if loopErr != nil {
+		return nil, 0, fmt.Errorf("run baseline repair loop: %w", loopErr)
+	}
+
+	if loopResult.Success && baseline != nil {
+		logProgress("baseline repair loop succeeded after %d attempt(s)", loopResult.Attempts)
+		return baseline, loopResult.Attempts, nil
+	}
+
+	logProgress("baseline repair loop exhausted %d attempt(s) without success", loopResult.Attempts)
+	if lastErr != nil {
+		return nil, loopResult.Attempts, lastErr
+	}
+	return nil, loopResult.Attempts, errors.New("baseline scan did not succeed within agent attempts")
+}
+
+func runBaselineScanCycle(ctx context.Context, repo string, cfg *policy.Config, runID, phase string) (baselineScanCycle, error) {
+	result := baselineScanCycle{}
+	var logs strings.Builder
+
+	result.FailedStage = "generate_baseline_sbom"
+	logs.WriteString("generate baseline SBOM\n")
+	if err := generateSBOM(ctx, repo, cfg); err != nil {
+		result.Logs = strings.TrimSpace(logs.String())
+		return result, err
+	}
+
+	result.FailedStage = "scan_baseline"
+	logs.WriteString("scan baseline vulnerabilities\n")
+	baseline, err := scanVulnerabilitiesForRun(ctx, repo, cfg, runID, phase, "fix")
+	if err != nil {
+		result.Logs = strings.TrimSpace(logs.String())
+		return result, err
+	}
+
+	result.Baseline = baseline
+	result.FailedStage = ""
+	_, _ = fmt.Fprintf(&logs, "baseline findings with fix versions: %d\n", len(baseline.Findings))
+	result.Logs = strings.TrimSpace(logs.String())
+	return result, nil
 }
 
 func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, verificationBaseline verifycheck.Report, verificationDirs []string, runID, phase string) (validationCycle, error) {
@@ -215,6 +336,19 @@ func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, ve
 	return result, nil
 }
 
+func agentArtifactDir(repo, configured, suffix string) string {
+	artifactDir := strings.TrimSpace(configured)
+	if artifactDir == "" {
+		artifactDir = filepath.Join(repo, ".patchpilot", "agent")
+	} else if !filepath.IsAbs(artifactDir) {
+		artifactDir = filepath.Join(repo, artifactDir)
+	}
+	if strings.TrimSpace(suffix) == "" {
+		return artifactDir
+	}
+	return filepath.Join(artifactDir, suffix)
+}
+
 func readFileOrDefault(path, fallback string) string {
 	if strings.TrimSpace(path) == "" {
 		return fallback
@@ -252,4 +386,81 @@ func validationCommandsForPrompt(cfg *policy.Config) []string {
 		return standard
 	}
 	return commands
+}
+
+func fixPromptConstraints() []string {
+	return []string{
+		"prioritize minimal dependency upgrades and repository-specific changes",
+		"preserve the repository's intended build and verification behavior",
+		"do not modify .patchpilot/ artifacts or .patchpilot.yaml",
+	}
+}
+
+func baselinePromptConstraints() []string {
+	return []string{
+		"prefer minimal, repository-specific fixes",
+		"preserve the repository's intended build and scan behavior",
+		"do not disable scanning or artifact target execution to make the baseline pass",
+		"if artifact target discovery or builds fail, fix the relevant repository scripts, Dockerfiles, build contexts, or source files instead",
+		"do not modify .patchpilot/ artifacts or .patchpilot.yaml",
+	}
+}
+
+func baselineValidationPlan(cfg *policy.Config) []string {
+	plan := []string{
+		"generate the repository SBOM",
+		"run the repository vulnerability scan",
+	}
+	if cfg != nil && (len(cfg.Artifacts.Targets) > 0 || strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run) != "") {
+		plan = append(plan,
+			"resolve configured artifact targets and validate their build contexts",
+			"build and scan configured artifact images",
+		)
+	}
+	return plan
+}
+
+func buildBaselineAgentState(cfg *policy.Config, failedStage string, lastErr error, baseline *vuln.Report) string {
+	state := map[string]any{
+		"baseline_ready": strings.TrimSpace(failedStage) == "" && lastErr == nil && baseline != nil,
+	}
+	if strings.TrimSpace(failedStage) != "" {
+		state["failed_stage"] = failedStage
+	}
+	if lastErr != nil {
+		state["last_error"] = lastErr.Error()
+	}
+	if baseline != nil {
+		state["findings_with_fix_versions"] = len(baseline.Findings)
+	}
+	if cfg != nil {
+		artifactScanConfigured := len(cfg.Artifacts.Targets) > 0 || strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run) != ""
+		state["artifact_scanning_configured"] = artifactScanConfigured
+		state["static_artifact_targets"] = len(cfg.Artifacts.Targets)
+		if strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run) != "" {
+			state["targets_command_configured"] = true
+			state["targets_command_mode"] = strings.TrimSpace(cfg.Artifacts.TargetsCommand.Mode)
+		} else {
+			state["targets_command_configured"] = false
+		}
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+func summarizeBaselineFailure(stage string, err error) string {
+	stage = strings.TrimSpace(stage)
+	switch {
+	case stage == "" && err == nil:
+		return "baseline scan failed"
+	case stage == "":
+		return fmt.Sprintf("baseline scan failed: %v", err)
+	case err == nil:
+		return fmt.Sprintf("baseline scan failed at stage %s", stage)
+	default:
+		return fmt.Sprintf("baseline scan failed at stage %s: %v", stage, err)
+	}
 }
