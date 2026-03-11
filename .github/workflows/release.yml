@@ -110,7 +110,7 @@ jobs:
 
       - name: Set up QEMU
         if: steps.semver.outputs.created == 'true'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         if: steps.semver.outputs.created == 'true'
