@@ -13,6 +13,10 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
