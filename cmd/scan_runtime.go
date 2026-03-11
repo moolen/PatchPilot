@@ -17,10 +17,6 @@ func generateSBOM(ctx context.Context, repo string, cfg *policy.Config) error {
 	return nil
 }
 
-func scanVulnerabilities(ctx context.Context, repo string, cfg *policy.Config) (*vuln.Report, error) {
-	return scanVulnerabilitiesForRun(ctx, repo, cfg, "", "", "")
-}
-
 func scanVulnerabilitiesForRun(ctx context.Context, repo string, cfg *policy.Config, runID, phase, command string) (*vuln.Report, error) {
 	report, err := vuln.ScanWithOptions(ctx, repo, vulnOptionsFromPolicy(cfg))
 	if err != nil {
