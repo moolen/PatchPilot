@@ -170,6 +170,39 @@ func SchemaJSON() []byte {
         }
       }
     },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "remediation_prompts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "all": { "type": "array", "items": { "type": "string" } },
+            "baseline_scan_repair": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "all": { "type": "array", "items": { "type": "string" } },
+                "generate_baseline_sbom": { "type": "array", "items": { "type": "string" } },
+                "scan_baseline": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "fix_vulnerabilities": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "all": { "type": "array", "items": { "type": "string" } },
+                "deterministic_fix_failed": { "type": "array", "items": { "type": "string" } },
+                "validation_failed": { "type": "array", "items": { "type": "string" } },
+                "vulnerabilities_remaining": { "type": "array", "items": { "type": "string" } },
+                "verification_regressed": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
     "artifacts": {
       "type": "object",
       "additionalProperties": false,

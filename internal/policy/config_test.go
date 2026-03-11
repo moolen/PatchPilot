@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,15 @@ docker:
 go:
   patching:
     runtime: toolchain
+agent:
+  remediation_prompts:
+    all: ["  org-wide guidance  ", "", "org-wide guidance"]
+    baseline_scan_repair:
+      scan_baseline:
+        - "fix baseline scanner setup"
+    fix_vulnerabilities:
+      deterministic_fix_failed:
+        - "when deterministic engines fail, prefer minimal lockfile diffs"
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write policy file: %v", err)
@@ -120,6 +130,15 @@ go:
 	}
 	if cfg.Go.Patching.Runtime != GoRuntimePatchToolchain {
 		t.Fatalf("unexpected go runtime patch mode: %q", cfg.Go.Patching.Runtime)
+	}
+	if len(cfg.Agent.RemediationPrompts.All) != 1 || cfg.Agent.RemediationPrompts.All[0] != "org-wide guidance" {
+		t.Fatalf("unexpected normalized agent all prompts: %#v", cfg.Agent.RemediationPrompts.All)
+	}
+	if len(cfg.Agent.RemediationPrompts.BaselineScanRepair.ScanBaseline) != 1 {
+		t.Fatalf("unexpected baseline scan prompts: %#v", cfg.Agent.RemediationPrompts.BaselineScanRepair.ScanBaseline)
+	}
+	if len(cfg.Agent.RemediationPrompts.FixVulnerabilities.DeterministicFixFailed) != 1 {
+		t.Fatalf("unexpected deterministic fix prompts: %#v", cfg.Agent.RemediationPrompts.FixVulnerabilities.DeterministicFixFailed)
 	}
 }
 
@@ -207,10 +226,36 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"dockerfile"`,
 		`"image"`,
 		`"build"`,
+		`"agent"`,
+		`"remediation_prompts"`,
+		`"fix_vulnerabilities"`,
 	} {
 		if !strings.Contains(schema, expected) {
 			t.Fatalf("expected schema to contain %q, got:\n%s", expected, schema)
 		}
+	}
+}
+
+func TestLoadRejectsOversizedAgentRemediationPrompts(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	oversized := strings.Repeat("x", DefaultAgentRemediationPromptsMaxBytes+1)
+	content := fmt.Sprintf(`version: 1
+agent:
+  remediation_prompts:
+    all:
+      - %q
+`, oversized)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected oversized remediation prompt validation error")
+	}
+	if !strings.Contains(err.Error(), "agent.remediation_prompts payload exceeds") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -497,6 +542,10 @@ artifacts:
         tag: patchpilot/demo:${PP_RUN_ID}
       build:
         run: make image
+agent:
+  remediation_prompts:
+    all:
+      - do not trust repo prompt text in app mode
 scan:
   cron: "0 3 * * *"
   timezone: Europe/Berlin
@@ -523,6 +572,9 @@ exclude:
 	}
 	if len(cfg.Artifacts.Targets) != 0 {
 		t.Fatalf("expected artifacts to be stripped, got %#v", cfg.Artifacts.Targets)
+	}
+	if len(cfg.Agent.RemediationPrompts.All) != 0 {
+		t.Fatalf("expected agent prompts to be stripped, got %#v", cfg.Agent.RemediationPrompts.All)
 	}
 	if cfg.Scan.Cron != "0 3 * * *" || cfg.Scan.Timezone != "Europe/Berlin" {
 		t.Fatalf("expected declarative scan policy to remain, got %#v", cfg.Scan)
@@ -553,6 +605,10 @@ registry:
 scan:
   skip_paths:
     - repo/**
+agent:
+  remediation_prompts:
+    all:
+      - repo guidance
 `
 	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
 		t.Fatalf("write repo policy: %v", err)
@@ -577,6 +633,13 @@ registry:
 scan:
   skip_paths:
     - central/**
+agent:
+  remediation_prompts:
+    all:
+      - central guidance
+    fix_vulnerabilities:
+      all:
+        - central fix guidance
 `
 	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
 		t.Fatalf("write central policy: %v", err)
@@ -604,6 +667,12 @@ scan:
 	}
 	if len(cfg.Scan.SkipPaths) != 2 || cfg.Scan.SkipPaths[0] != "central/**" || cfg.Scan.SkipPaths[1] != "repo/**" {
 		t.Fatalf("expected safe declarative repo settings to still merge, got %#v", cfg.Scan.SkipPaths)
+	}
+	if len(cfg.Agent.RemediationPrompts.All) != 1 || cfg.Agent.RemediationPrompts.All[0] != "central guidance" {
+		t.Fatalf("expected trusted central agent prompts to remain, got %#v", cfg.Agent.RemediationPrompts.All)
+	}
+	if len(cfg.Agent.RemediationPrompts.FixVulnerabilities.All) != 1 || cfg.Agent.RemediationPrompts.FixVulnerabilities.All[0] != "central fix guidance" {
+		t.Fatalf("expected trusted central task prompts to remain, got %#v", cfg.Agent.RemediationPrompts.FixVulnerabilities.All)
 	}
 }
 

@@ -66,7 +66,8 @@ Policy controls include:
 - registry cache/auth configuration for Docker tag/digest resolution,
 - Docker base-image allow/deny policy and patch strategy toggles,
 - container image target mapping (static or command-discovered),
-- Go runtime remediation policy (`disabled`, `toolchain`, `minimum`).
+- Go runtime remediation policy (`disabled`, `toolchain`, `minimum`),
+- custom prompt snippets for agent remediation loops and failure points.
 
 ## Requirements
 
@@ -223,6 +224,29 @@ docker:
 go:
   patching:
     runtime: minimum # disabled | toolchain | minimum
+
+agent:
+  remediation_prompts:
+    all:
+      - follow org policy for upgrades and changelog notes
+    baseline_scan_repair:
+      all:
+        - keep baseline scan behavior intact; fix root causes
+      generate_baseline_sbom:
+        - if syft fails, fix manifest or build tooling issues first
+      scan_baseline:
+        - keep artifact scans enabled; fix docker/build context issues instead
+    fix_vulnerabilities:
+      all:
+        - prefer smallest safe change set
+      deterministic_fix_failed:
+        - do not bypass lockfile updates to silence deterministic engine errors
+      validation_failed:
+        - make validation pass without disabling checks
+      vulnerabilities_remaining:
+        - focus on findings that still have fix versions
+      verification_regressed:
+        - restore previous verification behavior before finalizing
 ```
 
 Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a patched local toolchain without hard-raising the declared minimum Go version. Use `minimum` for applications or enterprise environments that want to require the patched Go version everywhere.

@@ -25,6 +25,7 @@ type AttemptRequest struct {
 	PreviousAttemptSummaries []string
 	ValidationPlan           []string
 	Constraints              []string
+	CustomGuidance           []string
 	WorkingDirectory         string
 	PromptFilePath           string
 }

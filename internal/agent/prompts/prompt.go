@@ -36,6 +36,7 @@ type Request struct {
 	PreviousAttemptSummaries []string
 	ValidationPlan           []string
 	Constraints              []string
+	CustomGuidance           []string
 }
 
 type templateData struct {
@@ -50,7 +51,9 @@ type templateData struct {
 	PreviousAttemptSummaries []string
 	ValidationPlan           []string
 	Constraints              []string
+	CustomGuidance           []string
 	HasFailure               bool
+	HasCustomGuidance        bool
 }
 
 func Build(req Request) string {
@@ -66,8 +69,10 @@ func Build(req Request) string {
 		PreviousAttemptSummaries: normalizeList(req.PreviousAttemptSummaries, []string{"none"}),
 		ValidationPlan:           normalizeList(req.ValidationPlan, defaultValidationCommands),
 		Constraints:              normalizeList(req.Constraints, defaultConstraints),
+		CustomGuidance:           normalizeOptionalList(req.CustomGuidance),
 	}
 	data.HasFailure = data.FailureStage != "" || data.FailureError != ""
+	data.HasCustomGuidance = len(data.CustomGuidance) > 0
 
 	var buf bytes.Buffer
 	if err := promptTemplate.Execute(&buf, data); err != nil {
@@ -121,4 +126,19 @@ func normalizeList(values []string, fallback []string) []string {
 		return cleaned
 	}
 	return append([]string(nil), fallback...)
+}
+
+func normalizeOptionalList(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		cleaned = append(cleaned, value)
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }

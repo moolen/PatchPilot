@@ -45,6 +45,8 @@ const (
 
 	LoadModeMerge    = "merge"
 	LoadModeOverride = "override"
+
+	DefaultAgentRemediationPromptsMaxBytes = 32 * 1024
 )
 
 type Config struct {
@@ -58,6 +60,31 @@ type Config struct {
 	Docker        DockerPolicy        `yaml:"docker"`
 	Go            GoPolicy            `yaml:"go"`
 	Artifacts     ArtifactsPolicy     `yaml:"artifacts"`
+	Agent         AgentPolicy         `yaml:"agent"`
+}
+
+type AgentPolicy struct {
+	RemediationPrompts AgentRemediationPromptsPolicy `yaml:"remediation_prompts"`
+}
+
+type AgentRemediationPromptsPolicy struct {
+	All                []string                             `yaml:"all"`
+	BaselineScanRepair AgentBaselineScanRepairPromptsPolicy `yaml:"baseline_scan_repair"`
+	FixVulnerabilities AgentFixVulnerabilitiesPromptsPolicy `yaml:"fix_vulnerabilities"`
+}
+
+type AgentBaselineScanRepairPromptsPolicy struct {
+	All                  []string `yaml:"all"`
+	GenerateBaselineSBOM []string `yaml:"generate_baseline_sbom"`
+	ScanBaseline         []string `yaml:"scan_baseline"`
+}
+
+type AgentFixVulnerabilitiesPromptsPolicy struct {
+	All                      []string `yaml:"all"`
+	DeterministicFixFailed   []string `yaml:"deterministic_fix_failed"`
+	ValidationFailed         []string `yaml:"validation_failed"`
+	VulnerabilitiesRemaining []string `yaml:"vulnerabilities_remaining"`
+	VerificationRegressed    []string `yaml:"verification_regressed"`
 }
 
 type GoPolicy struct {
@@ -513,6 +540,7 @@ func sanitizeUntrustedRepoPolicyMap(root map[string]any) map[string]any {
 	delete(sanitized, "post_execution")
 	delete(sanitized, "registry")
 	delete(sanitized, "artifacts")
+	delete(sanitized, "agent")
 
 	return sanitized
 }
@@ -813,6 +841,81 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("artifacts.targets_command.timeout must be > 0")
 	}
 
+	var promptBytes int
+	var errPrompt error
+	cfg.Agent.RemediationPrompts.All, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.All,
+		"agent.remediation_prompts.all",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.BaselineScanRepair.All, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.BaselineScanRepair.All,
+		"agent.remediation_prompts.baseline_scan_repair.all",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.BaselineScanRepair.GenerateBaselineSBOM, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.BaselineScanRepair.GenerateBaselineSBOM,
+		"agent.remediation_prompts.baseline_scan_repair.generate_baseline_sbom",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.BaselineScanRepair.ScanBaseline, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.BaselineScanRepair.ScanBaseline,
+		"agent.remediation_prompts.baseline_scan_repair.scan_baseline",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.All, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.FixVulnerabilities.All,
+		"agent.remediation_prompts.fix_vulnerabilities.all",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.DeterministicFixFailed, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.FixVulnerabilities.DeterministicFixFailed,
+		"agent.remediation_prompts.fix_vulnerabilities.deterministic_fix_failed",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.ValidationFailed, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.FixVulnerabilities.ValidationFailed,
+		"agent.remediation_prompts.fix_vulnerabilities.validation_failed",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.VulnerabilitiesRemaining, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.FixVulnerabilities.VulnerabilitiesRemaining,
+		"agent.remediation_prompts.fix_vulnerabilities.vulnerabilities_remaining",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.VerificationRegressed, promptBytes, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.FixVulnerabilities.VerificationRegressed,
+		"agent.remediation_prompts.fix_vulnerabilities.verification_regressed",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
+
 	return nil
 }
 
@@ -1001,6 +1104,37 @@ func dedupeNonEmpty(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func normalizePromptList(values []string, field string, totalBytes int) ([]string, int, error) {
+	if len(values) == 0 {
+		return nil, totalBytes, nil
+	}
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		totalBytes += len(value)
+		if totalBytes > DefaultAgentRemediationPromptsMaxBytes {
+			return nil, totalBytes, fmt.Errorf(
+				"agent.remediation_prompts payload exceeds %d bytes after normalization (failed at %s)",
+				DefaultAgentRemediationPromptsMaxBytes,
+				field,
+			)
+		}
+		result = append(result, value)
+	}
+	if len(result) == 0 {
+		return nil, totalBytes, nil
+	}
+	return result, totalBytes, nil
 }
 
 func cleanRelativePath(path string) string {

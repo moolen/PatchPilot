@@ -16,5 +16,6 @@ func BuildPrompt(req AttemptRequest) string {
 		PreviousAttemptSummaries: req.PreviousAttemptSummaries,
 		ValidationPlan:           req.ValidationPlan,
 		Constraints:              req.Constraints,
+		CustomGuidance:           req.CustomGuidance,
 	})
 }
