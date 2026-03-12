@@ -1,5 +1,5 @@
 {
-  "exit_code": 21,
-  "summary": { "before": 0, "fixed": 0, "after": 0 },
-  "failure_code": "policy_violation"
+  "exit_code": 23,
+  "summary": { "before": 1, "fixed": 0, "after": 1 },
+  "failure_code": "no_automated_fix_available"
 }

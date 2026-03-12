@@ -323,23 +323,6 @@ func buildPatchedFromLine(ctx context.Context, line, path, image, imageWithoutDi
 	return updatedLine, Patch{Manager: "dockerfile", Target: path, Package: patchPackage, From: fromRef, To: toRef}, true
 }
 
-func imageMatchesPackage(repo, pkg string) bool {
-	return repo == pkg || strings.HasSuffix(repo, "/"+pkg)
-}
-
-func updateImageTag(currentTag, fixed string) string {
-	currentCore, suffix := splitTagSuffix(currentTag)
-	currentSemver := canonicalImageSemver(currentCore)
-	fixedSemver := canonicalImageSemver(fixed)
-	if currentSemver == "" || fixedSemver == "" {
-		return ""
-	}
-	if semver.Compare(currentSemver, fixedSemver) >= 0 {
-		return currentTag
-	}
-	return strings.TrimPrefix(fixedSemver, "v") + suffix
-}
-
 func canonicalImageSemver(version string) string {
 	version = strings.TrimSpace(version)
 	if version == "" {

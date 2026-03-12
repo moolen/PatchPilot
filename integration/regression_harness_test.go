@@ -24,10 +24,11 @@ func TestRegressionSnapshots(t *testing.T) {
 	env := integrationEnv(toolsDir)
 
 	testCases := []struct {
-		name     string
-		snapshot string
-		files    map[string]string
-		policy   string
+		name         string
+		snapshot     string
+		files        map[string]string
+		policy       string
+		registryTags []registryTagFixture
 	}{
 		{
 			name:     "go-direct",
@@ -40,17 +41,23 @@ func TestRegressionSnapshots(t *testing.T) {
 			name:     "docker-os-disabled",
 			snapshot: "docker-os-disabled.json",
 			files: map[string]string{
-				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 			},
-			policy: "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n",
 		},
 		{
 			name:     "policy-blocked",
 			snapshot: "policy-blocked.json",
 			files: map[string]string{
-				"Dockerfile": "# patchpilot:deb-openssl\nFROM ubuntu:latest\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:base-golang\nFROM golang:1.21.0-alpine\nRUN echo baseline\n",
 			},
-			policy: "version: 1\ndocker:\n  disallowed_base_images:\n    - ubuntu:latest\n",
+			policy: "version: 1\noci:\n  policies:\n    - name: blocked\n      source: golang\n      tags:\n        allow:\n          - '^1\\.21\\.[0-9]+-alpine$'\n        semver:\n          - range:\n              - '>=1.22.0 <2.0.0'\n",
+			registryTags: []registryTagFixture{
+				{
+					Registry:   "docker.io",
+					Repository: "library/golang",
+					Tags:       []string{"1.21.0-alpine", "1.21.1-alpine"},
+				},
+			},
 		},
 		{
 			name:     "npm-direct",
@@ -90,7 +97,11 @@ func TestRegressionSnapshots(t *testing.T) {
 			if testCase.policy != "" {
 				writeFile(t, repo, ".patchpilot.yaml", testCase.policy)
 			}
-			result := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
+			scenarioEnv := cloneEnv(env)
+			if len(testCase.registryTags) > 0 {
+				scenarioEnv = withRegistryTagCache(t, scenarioEnv, testCase.registryTags...)
+			}
+			result := runBinary(t, scenarioEnv, "--dir", repo, "fix", "--enable-agent=false")
 
 			snapshot := loadRegressionSnapshot(t, testCase.snapshot)
 			if result.exitCode != snapshot.ExitCode {

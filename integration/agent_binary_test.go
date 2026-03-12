@@ -47,9 +47,15 @@ func TestBuiltBinaryBumpsGoMod(t *testing.T) {
 func TestBuiltBinaryBumpsDockerfile(t *testing.T) {
 	toolsDir := installFakeTools(t)
 	env := integrationEnv(toolsDir)
-	repo := newScenarioRepo(t, map[string]string{
-		"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+	env = withRegistryTagCache(t, env, registryTagFixture{
+		Registry:   "docker.io",
+		Repository: "library/golang",
+		Tags:       []string{"1.21.0-alpine", "1.21.1-alpine", "1.22.0-alpine"},
 	})
+	repo := newScenarioRepo(t, map[string]string{
+		"Dockerfile": "# patchpilot:base-golang\nFROM golang:1.21.0-alpine\nRUN echo baseline\n",
+	})
+	writeFile(t, repo, ".patchpilot.yaml", "version: 1\noci:\n  policies:\n    - name: golang-alpine\n      source: golang\n      tags:\n        allow:\n          - '^1\\.21\\.[0-9]+-alpine$'\n        semver:\n          - range:\n              - '>=1.21.1 <1.22.0'\n")
 
 	result := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
 	if result.exitCode != 0 {
@@ -57,7 +63,7 @@ func TestBuiltBinaryBumpsDockerfile(t *testing.T) {
 	}
 
 	content := readFile(t, repo, "Dockerfile")
-	if !strings.Contains(content, "apt-get install --only-upgrade -y openssl") {
+	if !strings.Contains(content, "FROM golang:1.21.1-alpine") {
 		t.Fatalf("expected Dockerfile to be bumped, got:\n%s", content)
 	}
 

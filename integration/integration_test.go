@@ -4,6 +4,8 @@ package integration
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 var (
@@ -25,6 +28,12 @@ type commandResult struct {
 	stdout   string
 	stderr   string
 	exitCode int
+}
+
+type registryTagFixture struct {
+	Registry   string
+	Repository string
+	Tags       []string
 }
 
 type summarySnapshot struct {
@@ -94,6 +103,7 @@ func TestFixScenarios(t *testing.T) {
 		name              string
 		files             map[string]string
 		policy            string
+		registryTags      []registryTagFixture
 		expectedExitCode  int
 		expectSummary     *summarySnapshot
 		expectNoSummary   bool
@@ -193,43 +203,8 @@ func TestFixScenarios(t *testing.T) {
 		{
 			name: "docker deb patch",
 			files: map[string]string{
-				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 			},
-			expectedExitCode: 0,
-			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
-			expectContains: map[string]string{
-				"Dockerfile": "apt-get install --only-upgrade -y openssl",
-			},
-		},
-		{
-			name: "docker apk patch",
-			files: map[string]string{
-				"Dockerfile": "# patchpilot:apk-busybox\nFROM alpine:3.19\nRUN echo baseline\n",
-			},
-			expectedExitCode: 0,
-			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
-			expectContains: map[string]string{
-				"Dockerfile": "apk upgrade --no-cache busybox",
-			},
-		},
-		{
-			name: "docker base image patch",
-			files: map[string]string{
-				"Dockerfile": "# patchpilot:base-golang\nFROM golang:1.21-alpine\nRUN echo baseline\n",
-			},
-			policy:           "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n",
-			expectedExitCode: 0,
-			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
-			expectContains: map[string]string{
-				"Dockerfile": "FROM golang:1.21.1-alpine",
-			},
-		},
-		{
-			name: "os package patching disabled",
-			files: map[string]string{
-				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
-			},
-			policy:           "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n",
 			expectedExitCode: 23,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
 			expectNotContains: map[string]string{
@@ -237,13 +212,64 @@ func TestFixScenarios(t *testing.T) {
 			},
 		},
 		{
-			name: "disallowed base image policy",
+			name: "docker apk patch",
 			files: map[string]string{
-				"Dockerfile": "# patchpilot:deb-openssl\nFROM ubuntu:latest\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:apk-busybox\nFROM alpine\nRUN echo baseline\n",
 			},
-			policy:           "version: 1\ndocker:\n  disallowed_base_images:\n    - ubuntu:latest\n",
-			expectedExitCode: 21,
-			expectNoSummary:  true,
+			expectedExitCode: 23,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
+			expectNotContains: map[string]string{
+				"Dockerfile": "apk upgrade --no-cache",
+			},
+		},
+		{
+			name: "docker base image patch",
+			files: map[string]string{
+				"Dockerfile": "# patchpilot:base-golang\nFROM golang:1.21.0-alpine\nRUN echo baseline\n",
+			},
+			policy: "version: 1\noci:\n  policies:\n    - name: golang-alpine\n      source: golang\n      tags:\n        allow:\n          - '^1\\.21\\.[0-9]+-alpine$'\n        semver:\n          - range:\n              - '>=1.21.1 <1.22.0'\n",
+			registryTags: []registryTagFixture{
+				{
+					Registry:   "docker.io",
+					Repository: "library/golang",
+					Tags:       []string{"1.21.0-alpine", "1.21.1-alpine", "1.22.0-alpine"},
+				},
+			},
+			expectedExitCode: 0,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
+			expectContains: map[string]string{
+				"Dockerfile": "FROM golang:1.21.1-alpine",
+			},
+		},
+		{
+			name: "os package findings require agent",
+			files: map[string]string{
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
+			},
+			expectedExitCode: 23,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
+			expectNotContains: map[string]string{
+				"Dockerfile": "apt-get install --only-upgrade",
+			},
+		},
+		{
+			name: "oci policy blocks base image update",
+			files: map[string]string{
+				"Dockerfile": "# patchpilot:base-golang\nFROM golang:1.21.0-alpine\nRUN echo baseline\n",
+			},
+			policy: "version: 1\noci:\n  policies:\n    - name: blocked\n      source: golang\n      tags:\n        allow:\n          - '^1\\.21\\.[0-9]+-alpine$'\n        semver:\n          - range:\n              - '>=1.22.0 <2.0.0'\n",
+			registryTags: []registryTagFixture{
+				{
+					Registry:   "docker.io",
+					Repository: "library/golang",
+					Tags:       []string{"1.21.0-alpine", "1.21.1-alpine"},
+				},
+			},
+			expectedExitCode: 23,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
+			expectContains: map[string]string{
+				"Dockerfile": "FROM golang:1.21.0-alpine",
+			},
 		},
 		{
 			name: "verification regression after patch",
@@ -259,7 +285,7 @@ func TestFixScenarios(t *testing.T) {
 				Verification: &struct {
 					Mode        string `json:"mode"`
 					Regressions int    `json:"regressions"`
-				}{Mode: "standard", Regressions: 3},
+				}{Mode: "standard", Regressions: 2},
 			},
 			extraAssertions: func(t *testing.T, repo string) {
 				assertSummaryFindingReason(t, repo, "GHSA-go-lib", false, "verification regressed after patch")
@@ -322,7 +348,11 @@ func TestFixScenarios(t *testing.T) {
 				writeFile(t, repo, ".patchpilot.yaml", testCase.policy)
 			}
 
-			result := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
+			scenarioEnv := cloneEnv(env)
+			if len(testCase.registryTags) > 0 {
+				scenarioEnv = withRegistryTagCache(t, scenarioEnv, testCase.registryTags...)
+			}
+			result := runBinary(t, scenarioEnv, "--dir", repo, "fix", "--enable-agent=false")
 			if result.exitCode != testCase.expectedExitCode {
 				t.Fatalf("unexpected exit code: got %d want %d\nstdout:\n%s\nstderr:\n%s", result.exitCode, testCase.expectedExitCode, result.stdout, result.stderr)
 			}
@@ -444,9 +474,8 @@ func TestVerifyScenarios(t *testing.T) {
 
 	t.Run("verify returns 23 when vulnerabilities remain", func(t *testing.T) {
 		repo := newScenarioRepo(t, map[string]string{
-			"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+			"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 		})
-		writeFile(t, repo, ".patchpilot.yaml", "version: 1\ndocker:\n  patching:\n    base_images: auto\n    os_packages: disabled\n")
 
 		fixResult := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
 		if fixResult.exitCode != 23 {
@@ -526,6 +555,40 @@ func mergedEnv(overrides map[string]string) []string {
 		result = append(result, key+"="+values[key])
 	}
 	return result
+}
+
+func cloneEnv(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func withRegistryTagCache(t *testing.T, baseEnv map[string]string, fixtures ...registryTagFixture) map[string]string {
+	t.Helper()
+	env := cloneEnv(baseEnv)
+	cacheDir := t.TempDir()
+	for _, fixture := range fixtures {
+		sum := sha256.Sum256([]byte(fixture.Registry + "/" + fixture.Repository))
+		path := filepath.Join(cacheDir, hex.EncodeToString(sum[:])+".json")
+		entry := struct {
+			FetchedAt time.Time `json:"fetched_at"`
+			Tags      []string  `json:"tags"`
+		}{
+			FetchedAt: time.Now().UTC(),
+			Tags:      append([]string(nil), fixture.Tags...),
+		}
+		data, err := json.MarshalIndent(entry, "", "  ")
+		if err != nil {
+			t.Fatalf("marshal registry cache entry: %v", err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatalf("write registry cache entry: %v", err)
+		}
+	}
+	env["PATCHPILOT_REGISTRY_CACHE_DIR"] = cacheDir
+	return env
 }
 
 func integrationEnv(toolsDir string) map[string]string {

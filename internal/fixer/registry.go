@@ -20,7 +20,6 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
-	"golang.org/x/mod/semver"
 )
 
 const defaultRegistryCacheTTL = 4 * time.Hour
@@ -82,33 +81,6 @@ func ConfigureRegistry(options RegistryOptions) func() {
 	}
 }
 
-func resolveUpdatedImageTag(ctx context.Context, image, fixed string) string {
-	ref, ok := parseImageReference(image)
-	if !ok {
-		return ""
-	}
-
-	currentCore, _ := splitTagSuffix(ref.Tag)
-	currentSemver := canonicalImageSemver(currentCore)
-	fixedSemver := canonicalImageSemver(fixed)
-	if currentSemver == "" || fixedSemver == "" {
-		return ""
-	}
-	if semver.Compare(currentSemver, fixedSemver) >= 0 {
-		return ref.Tag
-	}
-
-	tags, err := listRegistryTags(ctx, ref)
-	if err != nil {
-		return updateImageTag(ref.Tag, fixed)
-	}
-
-	if candidate := selectRegistryTag(ref.Tag, fixedSemver, tags); candidate != "" {
-		return candidate
-	}
-	return updateImageTag(ref.Tag, fixed)
-}
-
 func resolveUpdatedImageDigest(ctx context.Context, image, tag string) string {
 	ref, ok := parseImageReference(image)
 	if !ok {
@@ -154,75 +126,12 @@ func parseImageReference(image string) (imageReference, bool) {
 	}, true
 }
 
-func selectRegistryTag(currentTag, fixedSemver string, tags []string) string {
-	currentCore, suffix := splitTagSuffix(currentTag)
-	currentSemver := canonicalImageSemver(currentCore)
-	if currentSemver == "" {
-		return ""
-	}
-	family := versionFamily(currentCore)
-
-	candidates := make([]string, 0)
-	for _, tag := range tags {
-		candidateCore, candidateSuffix := splitTagSuffix(tag)
-		if candidateSuffix != suffix {
-			continue
-		}
-		candidateSemver := canonicalImageSemver(candidateCore)
-		if candidateSemver == "" {
-			continue
-		}
-		if !matchesVersionFamily(candidateCore, family) {
-			continue
-		}
-		if semver.Compare(candidateSemver, currentSemver) <= 0 {
-			continue
-		}
-		if semver.Compare(candidateSemver, fixedSemver) < 0 {
-			continue
-		}
-		candidates = append(candidates, tag)
-	}
-	if len(candidates) == 0 {
-		return ""
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		leftCore, _ := splitTagSuffix(candidates[i])
-		rightCore, _ := splitTagSuffix(candidates[j])
-		left := canonicalImageSemver(leftCore)
-		right := canonicalImageSemver(rightCore)
-		return semver.Compare(left, right) < 0
-	})
-	return candidates[0]
-}
-
 func splitTagSuffix(tag string) (string, string) {
 	index := strings.Index(tag, "-")
 	if index == -1 {
 		return tag, ""
 	}
 	return tag[:index], tag[index:]
-}
-
-func versionFamily(core string) []string {
-	parts := strings.Split(strings.TrimPrefix(core, "v"), ".")
-	if len(parts) == 0 {
-		return nil
-	}
-	return parts
-}
-
-func matchesVersionFamily(core string, family []string) bool {
-	parts := strings.Split(strings.TrimPrefix(core, "v"), ".")
-	if len(parts) < len(family) {
-		return false
-	}
-	for index, part := range family {
-		if parts[index] != part {
-			return false
-		}
-	}
-	return true
 }
 
 func listRegistryTags(ctx context.Context, ref imageReference) ([]string, error) {

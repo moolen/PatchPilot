@@ -16,38 +16,56 @@ func TestFixIdempotency(t *testing.T) {
 	env := integrationEnv(toolsDir)
 
 	testCases := []struct {
-		name  string
-		files map[string]string
+		name             string
+		files            map[string]string
+		expectedExitCode int
+		expectedAfter    int
+		expectedStatus   string
 	}{
 		{
 			name: "go module idempotent",
 			files: map[string]string{
 				"go.mod": "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.0.0\n",
 			},
+			expectedExitCode: 0,
+			expectedAfter:    0,
+			expectedStatus:   "success",
 		},
 		{
 			name: "docker idempotent",
 			files: map[string]string{
-				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian:12\nRUN echo baseline\n",
+				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 			},
+			expectedExitCode: 23,
+			expectedAfter:    1,
+			expectedStatus:   "failed",
 		},
 		{
 			name: "npm idempotent",
 			files: map[string]string{
 				"package.json": "{\n  \"name\": \"svc\",\n  \"dependencies\": {\n    \"left-pad\": \"1.1.0\"\n  }\n}\n",
 			},
+			expectedExitCode: 0,
+			expectedAfter:    0,
+			expectedStatus:   "success",
 		},
 		{
 			name: "pip idempotent",
 			files: map[string]string{
 				"requirements.txt": "requests==2.31.0\n",
 			},
+			expectedExitCode: 0,
+			expectedAfter:    0,
+			expectedStatus:   "success",
 		},
 		{
 			name: "maven idempotent",
 			files: map[string]string{
 				"pom.xml": "<project><dependencies><dependency><groupId>org.apache.commons</groupId><artifactId>commons-io</artifactId><version>2.14.0</version></dependency></dependencies></project>\n",
 			},
+			expectedExitCode: 0,
+			expectedAfter:    0,
+			expectedStatus:   "success",
 		},
 	}
 
@@ -56,8 +74,8 @@ func TestFixIdempotency(t *testing.T) {
 			repo := newScenarioRepo(t, testCase.files)
 
 			first := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
-			if first.exitCode != 0 {
-				t.Fatalf("first fix failed: %d\nstdout:\n%s\nstderr:\n%s", first.exitCode, first.stdout, first.stderr)
+			if first.exitCode != testCase.expectedExitCode {
+				t.Fatalf("first fix failed: got %d want %d\nstdout:\n%s\nstderr:\n%s", first.exitCode, testCase.expectedExitCode, first.stdout, first.stderr)
 			}
 
 			beforeSecond, err := trackedFileHashes(repo)
@@ -66,8 +84,8 @@ func TestFixIdempotency(t *testing.T) {
 			}
 
 			second := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
-			if second.exitCode != 0 {
-				t.Fatalf("second fix failed: %d\nstdout:\n%s\nstderr:\n%s", second.exitCode, second.stdout, second.stderr)
+			if second.exitCode != testCase.expectedExitCode {
+				t.Fatalf("second fix failed: got %d want %d\nstdout:\n%s\nstderr:\n%s", second.exitCode, testCase.expectedExitCode, second.stdout, second.stderr)
 			}
 
 			afterSecond, err := trackedFileHashes(repo)
@@ -79,13 +97,13 @@ func TestFixIdempotency(t *testing.T) {
 			}
 
 			summary := readSummary(t, repo)
-			if summary.Fixed != 0 || summary.After != 0 {
+			if summary.Fixed != 0 || summary.After != testCase.expectedAfter {
 				t.Fatalf("expected second run summary to report no further fixes, got %+v", summary)
 			}
 
 			runRecord := readRunRecord(t, repo)
-			if runRecord["status"] != "success" {
-				t.Fatalf("expected successful run record, got %#v", runRecord)
+			if runRecord["status"] != testCase.expectedStatus {
+				t.Fatalf("unexpected run record status: got %#v want %q", runRecord["status"], testCase.expectedStatus)
 			}
 		})
 	}

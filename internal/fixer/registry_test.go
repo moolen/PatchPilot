@@ -34,13 +34,6 @@ func TestParseImageReferenceWithDigest(t *testing.T) {
 	}
 }
 
-func TestSelectRegistryTagPrefersMinimalMatchingFamily(t *testing.T) {
-	tag := selectRegistryTag("1.21-alpine", "v1.21.1", []string{"1.21.3-alpine", "1.21.1-alpine", "1.22.0-alpine", "1.21.4-bullseye"})
-	if tag != "1.21.1-alpine" {
-		t.Fatalf("unexpected selected tag: %q", tag)
-	}
-}
-
 func TestListRegistryTagsUsesDiskCache(t *testing.T) {
 	cacheDir := t.TempDir()
 	oldCacheDir := registryCacheDir
