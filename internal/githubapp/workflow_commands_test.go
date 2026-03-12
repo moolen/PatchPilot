@@ -2,6 +2,9 @@ package githubapp
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,5 +41,81 @@ func TestRunCommandScrubsSensitiveHostEnv(t *testing.T) {
 	}
 	if parts[3] != "extra-ok" {
 		t.Fatalf("expected extra env override to be preserved, got %q", parts[3])
+	}
+}
+
+func TestFilterMeaningfulPathsIgnoresNestedPatchpilotArtifacts(t *testing.T) {
+	input := []string{
+		".patchpilot/findings.json",
+		"src/foo-test/.patchpilot/gocache/cache.bin",
+		"src/foo-test/.patchpilot/gomodcache/mod.zip",
+		"src/foo-test/go.mod",
+		".patchpilot.yaml",
+	}
+
+	got := filterMeaningfulPaths(input)
+	want := []string{"src/foo-test/go.mod", ".patchpilot.yaml"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("unexpected filtered paths:\n got: %q\nwant: %q", got, want)
+	}
+}
+
+func TestUnstagePatchPilotArtifactsRemovesNestedArtifactsOnly(t *testing.T) {
+	repo := t.TempDir()
+	runGitOrFail(t, repo, "init", "-b", "master")
+
+	goModPath := filepath.Join(repo, "src", "foo-test", "go.mod")
+	if err := os.MkdirAll(filepath.Dir(goModPath), 0o755); err != nil {
+		t.Fatalf("mkdir module dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	if err := os.WriteFile(goModPath, []byte("module example.com/foo\n\ngo 1.26.1\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	runGitOrFail(t, repo, "add", "-A")
+	runGitOrFail(t, repo, "-c", "user.name=Tester", "-c", "user.email=test@example.com", "commit", "-m", "seed")
+
+	if err := os.WriteFile(goModPath, []byte("module example.com/foo\n\ngo 1.27.0\n"), 0o644); err != nil {
+		t.Fatalf("rewrite go.mod: %v", err)
+	}
+	artifactPath := filepath.Join(repo, "src", "foo-test", ".patchpilot", "gocache", "cache.bin")
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatalf("mkdir artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("cache"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	runGitOrFail(t, repo, "add", "-A")
+	if err := unstagePatchPilotArtifacts(context.Background(), repo); err != nil {
+		t.Fatalf("unstagePatchPilotArtifacts returned error: %v", err)
+	}
+
+	changedFiles, err := stagedChangedFiles(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("stagedChangedFiles returned error: %v", err)
+	}
+	if len(changedFiles) != 1 || changedFiles[0] != "src/foo-test/go.mod" {
+		t.Fatalf("unexpected staged files after unstage: %q", changedFiles)
+	}
+
+	rawStaged, err := stagedPaths(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("stagedPaths returned error: %v", err)
+	}
+	if len(rawStaged) != 1 || rawStaged[0] != "src/foo-test/go.mod" {
+		t.Fatalf("unexpected raw staged files after unstage: %q", rawStaged)
+	}
+}
+
+func runGitOrFail(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed:\n%s\n%v", strings.Join(args, " "), string(output), err)
 	}
 }

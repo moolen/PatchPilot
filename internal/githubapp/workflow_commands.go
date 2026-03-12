@@ -133,11 +133,19 @@ func hasRepositoryChanges(ctx context.Context, repoPath string) (bool, error) {
 }
 
 func stagedChangedFiles(ctx context.Context, repoPath string) ([]string, error) {
+	paths, err := stagedPaths(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	return filterMeaningfulPaths(paths), nil
+}
+
+func stagedPaths(ctx context.Context, repoPath string) ([]string, error) {
 	stdout, _, err := runCommand(ctx, repoPath, nil, "git", "diff", "--cached", "--name-only")
 	if err != nil {
 		return nil, fmt.Errorf("list changed files: %w", err)
 	}
-	return filterMeaningfulPaths(strings.Split(strings.TrimSpace(stdout), "\n")), nil
+	return strings.Split(strings.TrimSpace(stdout), "\n"), nil
 }
 
 func unstagePath(ctx context.Context, repoPath string, target string) error {
@@ -146,6 +154,27 @@ func unstagePath(ctx context.Context, repoPath string, target string) error {
 	}
 	if _, _, err := runCommand(ctx, repoPath, nil, "git", "reset", "--quiet", "HEAD", "--", target); err != nil {
 		return fmt.Errorf("unstage %s: %w", target, err)
+	}
+	return nil
+}
+
+func unstagePatchPilotArtifacts(ctx context.Context, repoPath string) error {
+	paths, err := stagedPaths(ctx, repoPath)
+	if err != nil {
+		return err
+	}
+	artifactPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if isPatchPilotArtifactPath(path) {
+			artifactPaths = append(artifactPaths, filepath.ToSlash(strings.TrimSpace(path)))
+		}
+	}
+	if len(artifactPaths) == 0 {
+		return nil
+	}
+	args := append([]string{"reset", "--quiet", "HEAD", "--"}, artifactPaths...)
+	if _, _, err := runCommand(ctx, repoPath, nil, "git", args...); err != nil {
+		return fmt.Errorf("unstage .patchpilot artifacts: %w", err)
 	}
 	return nil
 }
@@ -209,10 +238,24 @@ func filterMeaningfulPaths(paths []string) []string {
 		if normalized == "" {
 			continue
 		}
-		if normalized == ".patchpilot" || strings.HasPrefix(normalized, ".patchpilot/") {
+		if isPatchPilotArtifactPath(normalized) {
 			continue
 		}
 		result = append(result, normalized)
 	}
 	return result
+}
+
+func isPatchPilotArtifactPath(path string) bool {
+	normalized := filepath.ToSlash(strings.TrimSpace(path))
+	if normalized == "" {
+		return false
+	}
+	parts := strings.Split(normalized, "/")
+	for _, part := range parts {
+		if part == ".patchpilot" {
+			return true
+		}
+	}
+	return false
 }

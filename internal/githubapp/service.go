@@ -2,6 +2,7 @@ package githubapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -695,6 +696,9 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKe
 	}
 	relativizeFindingLocations(repoPath, ociReport)
 	mergedReport := mergeVulnerabilityReports(findingsReport, ociReport)
+	if err := writeMergedFindingsReport(repoPath, mergedReport); err != nil {
+		return scanRunResult{}, err
+	}
 	findingsBySeverity := countFindingsBySeverity(mergedReport)
 
 	return scanRunResult{
@@ -710,6 +714,24 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKe
 		OCIImageTag:        ociTag,
 		OCIImageRepository: ociRepository,
 	}, nil
+}
+
+func writeMergedFindingsReport(repoPath string, report *vuln.Report) error {
+	if report == nil {
+		return fmt.Errorf("merged findings report is nil")
+	}
+	stateDir := filepath.Join(repoPath, ".patchpilot")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("create state dir: %w", err)
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal merged findings report: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "findings.json"), data, 0o644); err != nil {
+		return fmt.Errorf("write merged findings report: %w", err)
+	}
+	return nil
 }
 
 func (service *Service) loadRepositoryPolicy(ctx context.Context, client *github.Client, owner, repo, defaultBranch string) (*policy.Config, *repositoryCronSchedule, bool, bool, error) {

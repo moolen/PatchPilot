@@ -526,7 +526,7 @@ func (service *Service) repairPullRequestBranch(ctx context.Context, owner, repo
 	if _, _, err := runCommand(ctx, repoPath, nil, "git", "add", "-A"); err != nil {
 		return fmt.Errorf("git add ci repair: %w", err)
 	}
-	if err := unstagePath(ctx, repoPath, ".patchpilot"); err != nil {
+	if err := unstagePatchPilotArtifacts(ctx, repoPath); err != nil {
 		return err
 	}
 	changedFiles, err := stagedChangedFiles(ctx, repoPath)

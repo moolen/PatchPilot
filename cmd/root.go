@@ -25,6 +25,11 @@ type cliOptions struct {
 	agentCommand        string
 	agentMaxAttempts    int
 	agentArtifactDir    string
+	findingsFile        string
+	repositoryKey       string
+	ociImage            string
+	ociImageTag         string
+	ociImageRepository  string
 }
 
 var (
@@ -130,14 +135,28 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 				AgentArtifactDir: options.agentArtifactDir,
 				UntrustedRepo:    options.untrustedRepoPolicy,
 				JSONOutput:       options.jsonOutput,
+				FindingsFile:     options.findingsFile,
+				RepositoryKey:    options.repositoryKey,
+				OCIImage:         options.ociImage,
+				OCIImageTag:      options.ociImageTag,
+				OCIImageRepo:     options.ociImageRepository,
 			})
 		},
 	}
 
-	command.Flags().BoolVar(&options.enableAgent, "enable-agent", true, "Enable external agent repair loop when deterministic fixes fail")
+	command.Flags().BoolVar(&options.enableAgent, "enable-agent", true, "Enable one-shot agent patching for container OS findings")
 	command.Flags().StringVar(&options.agentCommand, "agent-command", "codex exec --skip-git-repo-check --sandbox workspace-write -o \"$PATCHPILOT_AGENT_ARTIFACT_DIR/last-message.txt\" - < \"$PATCHPILOT_PROMPT_FILE\"", "External agent harness command (must run non-interactively)")
-	command.Flags().IntVar(&options.agentMaxAttempts, "agent-max-attempts", 5, "Maximum number of external agent repair attempts")
+	command.Flags().IntVar(&options.agentMaxAttempts, "agent-max-attempts", 5, "Deprecated compatibility flag")
 	command.Flags().StringVar(&options.agentArtifactDir, "agent-artifact-dir", "", "Directory for agent attempt artifacts (default: <repo>/.patchpilot/agent state directory)")
+	command.Flags().StringVar(&options.findingsFile, "findings-file", "", "Path to normalized findings JSON (defaults to <repo>/.patchpilot/findings.json)")
+	command.Flags().StringVar(&options.repositoryKey, "repository-key", "", "Repository identifier used in agent state payloads")
+	command.Flags().StringVar(&options.ociImage, "oci-image", "", "Resolved OCI image reference for remediation context")
+	command.Flags().StringVar(&options.ociImageTag, "oci-image-tag", "", "Resolved OCI image tag for remediation context")
+	command.Flags().StringVar(&options.ociImageRepository, "oci-image-repository", "", "Resolved OCI image repository for remediation context")
+	_ = command.Flags().MarkHidden("repository-key")
+	_ = command.Flags().MarkHidden("oci-image")
+	_ = command.Flags().MarkHidden("oci-image-tag")
+	_ = command.Flags().MarkHidden("oci-image-repository")
 
 	return command
 }

@@ -229,7 +229,7 @@ func discoverDockerfiles(repoPath string, cfg *policy.Config) ([]string, error) 
 			return err
 		}
 		normalized := filepath.ToSlash(relative)
-		if normalized == ".git" || strings.HasPrefix(normalized, ".git/") || normalized == ".patchpilot" || strings.HasPrefix(normalized, ".patchpilot/") {
+		if normalized == ".git" || strings.HasPrefix(normalized, ".git/") || isPatchPilotArtifactPath(normalized) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

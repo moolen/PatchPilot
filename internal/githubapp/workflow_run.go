@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,14 +58,37 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 	if err != nil {
 		return fixRunResult{}, err
 	}
-	normalizeFindingLocations(repoPath, scan.Report)
-
-	patches, issues, err := service.applyDeterministicRepositoryFixes(ctx, repoPath, cfg, scan.Report)
-	if err != nil {
-		return fixRunResult{}, err
+	args := []string{
+		"fix",
+		"--dir", repoPath,
+		"--untrusted-repo-policy",
+		"--enable-agent=" + strconv.FormatBool(strings.TrimSpace(service.cfg.AgentCommand) != ""),
+		"--repository-key", repoKey,
+		"--oci-image", scan.OCIImage,
+		"--oci-image-tag", scan.OCIImageTag,
+		"--oci-image-repository", scan.OCIImageRepository,
 	}
-	if err := service.applyContainerOSPatchingWithAI(ctx, repoPath, repoKey, scan.Report, scan); err != nil {
-		issues = append(issues, fmt.Sprintf("container_os_patching: %v", err))
+	if command := strings.TrimSpace(service.cfg.AgentCommand); command != "" {
+		args = append(args, "--agent-command", command)
+	}
+	service.log("info", "running patchpilot fix", map[string]interface{}{
+		"owner": owner,
+		"repo":  repo,
+		"args":  args,
+	})
+	stdout, stderr, runErr := service.jobRunner.Run(ctx, repoPath, args)
+	exitCode := commandExitCode(runErr)
+	service.log("info", "patchpilot fix finished", map[string]interface{}{
+		"owner":          owner,
+		"repo":           repo,
+		"exit_code":      exitCode,
+		"stdout_bytes":   len(stdout),
+		"stderr_bytes":   len(stderr),
+		"stdout_preview": previewLogText(stdout),
+		"stderr_preview": previewLogText(stderr),
+	})
+	if runErr != nil {
+		return fixRunResult{}, fmt.Errorf("run PatchPilot fix (exit %d): %w\nstderr:\n%s", exitCode, runErr, truncateForComment(stderr))
 	}
 
 	changed, err := hasRepositoryChanges(ctx, repoPath)
@@ -73,14 +97,14 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 	}
 	if !changed {
 		service.log("info", "fix workflow detected no repository changes", map[string]interface{}{
-			"owner":       owner,
-			"repo":        repo,
-			"head_sha":    headSHA,
-			"issue_count": len(issues),
+			"owner":    owner,
+			"repo":     repo,
+			"head_sha": headSHA,
 		})
 		return fixRunResult{
-			ExitCode: 0,
-			Stdout:   strings.Join(issues, "\n"),
+			ExitCode: exitCode,
+			Stdout:   stdout,
+			Stderr:   stderr,
 			Changed:  false,
 			HeadSHA:  headSHA,
 		}, nil
@@ -96,7 +120,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 	if _, _, err := runCommand(ctx, repoPath, nil, "git", "add", "-A"); err != nil {
 		return fixRunResult{}, fmt.Errorf("git add: %w", err)
 	}
-	if err := unstagePath(ctx, repoPath, ".patchpilot"); err != nil {
+	if err := unstagePatchPilotArtifacts(ctx, repoPath); err != nil {
 		return fixRunResult{}, err
 	}
 	changedFiles, err := stagedChangedFiles(ctx, repoPath)
@@ -104,13 +128,14 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 		return fixRunResult{}, err
 	}
 	if len(changedFiles) == 0 {
-		return fixRunResult{ExitCode: 0, Stdout: strings.Join(issues, "\n"), Changed: false, HeadSHA: headSHA}, nil
+		return fixRunResult{ExitCode: exitCode, Stdout: stdout, Stderr: stderr, Changed: false, HeadSHA: headSHA}, nil
 	}
 	for _, changed := range changedFiles {
 		if pathBlocked(changed, service.cfg.DisallowedPaths) {
 			return fixRunResult{
-				ExitCode:      0,
-				Stdout:        strings.Join(issues, "\n"),
+				ExitCode:      exitCode,
+				Stdout:        stdout,
+				Stderr:        stderr,
 				Changed:       false,
 				HeadSHA:       headSHA,
 				BlockedReason: fmt.Sprintf("changed path %q is blocked by PP_DISALLOWED_PATHS", changed),
@@ -153,13 +178,13 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 	}
 
 	return fixRunResult{
-		ExitCode:     0,
-		Stdout:       strings.Join(issues, "\n"),
-		Stderr:       "",
+		ExitCode:     exitCode,
+		Stdout:       stdout,
+		Stderr:       stderr,
 		Changed:      true,
 		Branch:       branch,
 		HeadSHA:      headSHA,
-		RiskScore:    len(changedFiles) + len(patches),
+		RiskScore:    len(changedFiles),
 		ChangedFiles: changedFiles,
 	}, nil
 }

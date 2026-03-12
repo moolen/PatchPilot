@@ -45,6 +45,7 @@ func CommandEnv(dir string) ([]string, error) {
 
 func StateDir(dir string) (string, error) {
 	current := dir
+	repoRootFallback := ""
 	for {
 		candidate := filepath.Join(current, ".patchpilot")
 		info, err := os.Stat(candidate)
@@ -53,6 +54,13 @@ func StateDir(dir string) (string, error) {
 		}
 		if err != nil && !os.IsNotExist(err) {
 			return "", fmt.Errorf("inspect %s: %w", candidate, err)
+		}
+		if repoRootFallback == "" {
+			repoRoot, err := gitRootFallback(current)
+			if err != nil {
+				return "", err
+			}
+			repoRootFallback = repoRoot
 		}
 
 		parent := filepath.Dir(current)
@@ -63,8 +71,21 @@ func StateDir(dir string) (string, error) {
 	}
 
 	fallback := filepath.Join(dir, ".patchpilot")
+	if repoRootFallback != "" {
+		fallback = filepath.Join(repoRootFallback, ".patchpilot")
+	}
 	if err := os.MkdirAll(fallback, 0o755); err != nil {
 		return "", fmt.Errorf("create fallback state dir %s: %w", fallback, err)
 	}
 	return fallback, nil
+}
+
+func gitRootFallback(dir string) (string, error) {
+	candidate := filepath.Join(dir, ".git")
+	if _, err := os.Stat(candidate); err == nil {
+		return dir, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect %s: %w", candidate, err)
+	}
+	return "", nil
 }
