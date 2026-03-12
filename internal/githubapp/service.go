@@ -184,10 +184,6 @@ func (service *Service) runSchedulerCycleWithOptions(ctx context.Context, option
 	service.log("info", "scheduler cycle finished", map[string]interface{}{"repositories": len(repositories), "duration_ms": time.Since(started).Milliseconds()})
 }
 
-func (service *Service) runRepositoryCycle(parentCtx context.Context, client *github.Client, token string, repository *github.Repository, now time.Time) {
-	service.runRepositoryCycleWithOptions(parentCtx, client, token, repository, now, schedulerCycleOptions{})
-}
-
 func (service *Service) runRepositoryCycleWithOptions(parentCtx context.Context, client *github.Client, token string, repository *github.Repository, now time.Time, options schedulerCycleOptions) {
 	owner := ownerFromRepository(repository)
 	repo := repository.GetName()

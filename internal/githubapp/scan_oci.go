@@ -14,13 +14,6 @@ import (
 	"github.com/moolen/patchpilot/internal/vuln"
 )
 
-func sbomOptionsFromPolicy(cfg *policy.Config) sbom.Options {
-	if cfg == nil {
-		return sbom.Options{}
-	}
-	return sbom.Options{Exclude: append([]string(nil), cfg.Scan.SkipPaths...)}
-}
-
 func vulnOptionsFromPolicy(cfg *policy.Config) vuln.ScanOptions {
 	if cfg == nil {
 		return vuln.ScanOptions{}
@@ -92,33 +85,6 @@ func mergeVulnerabilityReports(reports ...*vuln.Report) *vuln.Report {
 		return left.FixedVersion < right.FixedVersion
 	})
 	return merged
-}
-
-func normalizeFindingLocations(repoPath string, report *vuln.Report) {
-	if report == nil {
-		return
-	}
-	for index := range report.Findings {
-		locations := make([]string, 0, len(report.Findings[index].Locations))
-		seen := map[string]struct{}{}
-		for _, location := range report.Findings[index].Locations {
-			location = strings.TrimSpace(location)
-			if location == "" {
-				continue
-			}
-			if !filepath.IsAbs(location) {
-				location = filepath.Join(repoPath, location)
-			}
-			location = filepath.Clean(location)
-			if _, exists := seen[location]; exists {
-				continue
-			}
-			seen[location] = struct{}{}
-			locations = append(locations, location)
-		}
-		sort.Strings(locations)
-		report.Findings[index].Locations = locations
-	}
 }
 
 func relativizeFindingLocations(repoPath string, report *vuln.Report) {

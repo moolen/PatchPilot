@@ -13,6 +13,10 @@ import (
 )
 
 func runCommand(ctx context.Context, dir string, extraEnv map[string]string, name string, args ...string) (string, string, error) {
+	return runCommandWithInput(ctx, dir, extraEnv, "", name, args...)
+}
+
+func runCommandWithInput(ctx context.Context, dir string, extraEnv map[string]string, input string, name string, args ...string) (string, string, error) {
 	if err := validateExecutableName(name); err != nil {
 		return "", "", err
 	}
@@ -20,6 +24,9 @@ func runCommand(ctx context.Context, dir string, extraEnv map[string]string, nam
 	command := exec.CommandContext(ctx, name, args...) // #nosec G204,G702 -- command/args are controlled by internal callsites and validated executable names.
 	command.Dir = dir
 	command.Env = githubAppCommandEnv(extraEnv)
+	if input != "" {
+		command.Stdin = strings.NewReader(input)
+	}
 
 	var stdoutBuffer bytes.Buffer
 	var stderrBuffer bytes.Buffer
@@ -148,16 +155,6 @@ func stagedPaths(ctx context.Context, repoPath string) ([]string, error) {
 	return strings.Split(strings.TrimSpace(stdout), "\n"), nil
 }
 
-func unstagePath(ctx context.Context, repoPath string, target string) error {
-	if strings.TrimSpace(target) == "" {
-		return nil
-	}
-	if _, _, err := runCommand(ctx, repoPath, nil, "git", "reset", "--quiet", "HEAD", "--", target); err != nil {
-		return fmt.Errorf("unstage %s: %w", target, err)
-	}
-	return nil
-}
-
 func unstagePatchPilotArtifacts(ctx context.Context, repoPath string) error {
 	paths, err := stagedPaths(ctx, repoPath)
 	if err != nil {
@@ -172,8 +169,23 @@ func unstagePatchPilotArtifacts(ctx context.Context, repoPath string) error {
 	if len(artifactPaths) == 0 {
 		return nil
 	}
-	args := append([]string{"reset", "--quiet", "HEAD", "--"}, artifactPaths...)
-	if _, _, err := runCommand(ctx, repoPath, nil, "git", args...); err != nil {
+	var pathspec bytes.Buffer
+	for _, path := range artifactPaths {
+		pathspec.WriteString(path)
+		pathspec.WriteByte(0)
+	}
+	if _, _, err := runCommandWithInput(
+		ctx,
+		repoPath,
+		nil,
+		pathspec.String(),
+		"git",
+		"reset",
+		"--quiet",
+		"--pathspec-from-file=-",
+		"--pathspec-file-nul",
+		"HEAD",
+	); err != nil {
 		return fmt.Errorf("unstage .patchpilot artifacts: %w", err)
 	}
 	return nil
