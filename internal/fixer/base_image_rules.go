@@ -121,17 +121,15 @@ func matchingOCIPolicies(source string, policies []OCIImagePolicy) []OCIImagePol
 
 func selectLatestSemverTagByDefault(currentTag string, tags []string) string {
 	candidates := make([]tagCandidate, 0, len(tags))
-	currentCore, currentSuffix := splitTagSuffix(currentTag)
-	currentVersion, currentHasSemver := extractImageTagSemver(currentCore)
-	_ = currentVersion
+	_, currentSuffix := splitTagSuffix(currentTag)
 	for _, tag := range tags {
 		core, suffix := splitTagSuffix(tag)
 		version, ok := extractImageTagSemver(core)
 		if !ok {
 			continue
 		}
-		// Default guardrail: when current tag has a prerelease/suffix family, keep exact suffix.
-		if currentHasSemver && strings.TrimSpace(currentSuffix) != "" && suffix != currentSuffix {
+		// Default guardrail: when current tag has a suffix family, require exact suffix matching.
+		if strings.TrimSpace(currentSuffix) != "" && suffix != currentSuffix {
 			continue
 		}
 		candidates = append(candidates, tagCandidate{Tag: tag, Version: version})

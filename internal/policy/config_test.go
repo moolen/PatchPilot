@@ -152,6 +152,130 @@ agent:
 	}
 }
 
+func TestFixEcosystemDefaultsDisableGitHubActions(t *testing.T) {
+	cfg := Default()
+	if cfg.IsFixEcosystemEnabled(FixEcosystemGitHubActions) {
+		t.Fatalf("expected %q to be disabled by default", FixEcosystemGitHubActions)
+	}
+	if !cfg.IsFixEcosystemEnabled(FixEcosystemNPM) {
+		t.Fatalf("expected %q to be enabled by default", FixEcosystemNPM)
+	}
+}
+
+func TestLoadNormalizesFixUpdatesAndResolvesOverrides(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+fix:
+  updates:
+    - package-ecosystem: " * "
+      enabled: true
+    - package-ecosystem: GitHub_Actions
+      enabled: false
+    - package-ecosystem: Go-Modules
+      enabled: false
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	cfg, err := Load(repo, "")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(cfg.Fix.Updates) != 3 {
+		t.Fatalf("unexpected fix updates: %#v", cfg.Fix.Updates)
+	}
+	if cfg.Fix.Updates[0].PackageEcosystem != FixEcosystemWildcard {
+		t.Fatalf("unexpected normalized wildcard ecosystem: %#v", cfg.Fix.Updates[0])
+	}
+	if cfg.Fix.Updates[1].PackageEcosystem != FixEcosystemGitHubActions {
+		t.Fatalf("unexpected normalized github actions ecosystem: %#v", cfg.Fix.Updates[1])
+	}
+	if cfg.Fix.Updates[2].PackageEcosystem != FixEcosystemGoMod {
+		t.Fatalf("unexpected normalized gomod ecosystem: %#v", cfg.Fix.Updates[2])
+	}
+	if cfg.IsFixEcosystemEnabled(FixEcosystemGitHubActions) {
+		t.Fatalf("expected %q to remain disabled", FixEcosystemGitHubActions)
+	}
+	if cfg.IsFixEcosystemEnabled(FixEcosystemGoMod) {
+		t.Fatalf("expected %q to be disabled", FixEcosystemGoMod)
+	}
+	if !cfg.IsFixEcosystemEnabled(FixEcosystemNPM) {
+		t.Fatalf("expected %q to remain enabled", FixEcosystemNPM)
+	}
+}
+
+func TestFixUpdatesLastMatchingRuleWins(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+fix:
+  updates:
+    - package-ecosystem: "*"
+      enabled: false
+    - package-ecosystem: github-actions
+      enabled: true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	cfg, err := Load(repo, "")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.IsFixEcosystemEnabled(FixEcosystemGitHubActions) {
+		t.Fatalf("expected %q to be enabled by override", FixEcosystemGitHubActions)
+	}
+	if cfg.IsFixEcosystemEnabled(FixEcosystemNPM) {
+		t.Fatalf("expected %q to remain disabled via wildcard rule", FixEcosystemNPM)
+	}
+}
+
+func TestLoadRejectsInvalidFixUpdateEcosystem(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+fix:
+  updates:
+    - package-ecosystem: poetry
+      enabled: true
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected validation error for invalid fix ecosystem")
+	}
+	if !strings.Contains(err.Error(), "fix.updates[0].package-ecosystem") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsFixUpdateWithoutEnabled(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+fix:
+  updates:
+    - package-ecosystem: npm
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected validation error for missing enabled field")
+	}
+	if !strings.Contains(err.Error(), "fix.updates[0].enabled") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadRejectsBearerWithoutTokenEnv(t *testing.T) {
 	repo := t.TempDir()
 	path := filepath.Join(repo, FileName)
@@ -219,6 +343,10 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"cve_rules"`,
 		`"go"`,
 		`"runtime"`,
+		`"fix"`,
+		`"updates"`,
+		`"package-ecosystem"`,
+		`"github-actions"`,
 		`"oci"`,
 		`"policies"`,
 		`"external_images"`,

@@ -38,6 +38,18 @@ const (
 
 	DefaultAgentRemediationPromptsMaxBytes = 32 * 1024
 
+	FixEcosystemWildcard      = "*"
+	FixEcosystemGoMod         = "gomod"
+	FixEcosystemDocker        = "docker"
+	FixEcosystemGitHubActions = "github-actions"
+	FixEcosystemNPM           = "npm"
+	FixEcosystemPIP           = "pip"
+	FixEcosystemMaven         = "maven"
+	FixEcosystemGradle        = "gradle"
+	FixEcosystemCargo         = "cargo"
+	FixEcosystemNuGet         = "nuget"
+	FixEcosystemComposer      = "composer"
+
 	PromptModeExtend  = promptpkg.RemediationPromptModeExtend
 	PromptModeReplace = promptpkg.RemediationPromptModeReplace
 )
@@ -48,8 +60,18 @@ type Config struct {
 	Scan     ScanPolicy     `yaml:"scan"`
 	Registry RegistryPolicy `yaml:"registry"`
 	Go       GoPolicy       `yaml:"go"`
+	Fix      FixPolicy      `yaml:"fix"`
 	OCI      OCIPolicy      `yaml:"oci"`
 	Agent    AgentPolicy    `yaml:"agent"`
+}
+
+type FixPolicy struct {
+	Updates []FixUpdatePolicy `yaml:"updates"`
+}
+
+type FixUpdatePolicy struct {
+	PackageEcosystem string `yaml:"package-ecosystem"`
+	Enabled          *bool  `yaml:"enabled"`
 }
 
 type AgentPolicy struct {
@@ -685,6 +707,34 @@ func normalizeAndValidate(cfg *Config) error {
 		return fmt.Errorf("go.patching.runtime must be %q, %q, or %q", GoRuntimePatchDisabled, GoRuntimePatchToolchain, GoRuntimePatchMinimum)
 	}
 
+	for index := range cfg.Fix.Updates {
+		update := &cfg.Fix.Updates[index]
+		update.PackageEcosystem = normalizeFixEcosystem(update.PackageEcosystem)
+		if update.PackageEcosystem == "" {
+			return fmt.Errorf("fix.updates[%d].package-ecosystem must not be empty", index)
+		}
+		if !isValidFixEcosystem(update.PackageEcosystem) {
+			return fmt.Errorf(
+				"fix.updates[%d].package-ecosystem must be one of %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, or %q",
+				index,
+				FixEcosystemWildcard,
+				FixEcosystemGoMod,
+				FixEcosystemDocker,
+				FixEcosystemGitHubActions,
+				FixEcosystemNPM,
+				FixEcosystemPIP,
+				FixEcosystemMaven,
+				FixEcosystemGradle,
+				FixEcosystemCargo,
+				FixEcosystemNuGet,
+				FixEcosystemComposer,
+			)
+		}
+		if update.Enabled == nil {
+			return fmt.Errorf("fix.updates[%d].enabled must be set", index)
+		}
+	}
+
 	var promptBytes int
 	var errPrompt error
 	cfg.Agent.RemediationPrompts.All, promptBytes, errPrompt = normalizePromptList(
@@ -769,6 +819,27 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func (cfg *Config) IsFixEcosystemEnabled(ecosystem string) bool {
+	normalized := normalizeFixEcosystem(ecosystem)
+	if normalized == "" {
+		return true
+	}
+	enabled := defaultFixEcosystemEnabled(normalized)
+	if cfg == nil {
+		return enabled
+	}
+	for _, update := range cfg.Fix.Updates {
+		if update.Enabled == nil {
+			continue
+		}
+		if update.PackageEcosystem != FixEcosystemWildcard && update.PackageEcosystem != normalized {
+			continue
+		}
+		enabled = *update.Enabled
+	}
+	return enabled
 }
 
 func (cfg *Config) ResolveScanSchedule() (cron.Schedule, *time.Location, bool, error) {
@@ -872,6 +943,43 @@ func dedupeSelectors(values []VulnerabilitySelector) []VulnerabilitySelector {
 
 func normalizeLower(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeFixEcosystem(value string) string {
+	value = normalizeLower(value)
+	value = strings.ReplaceAll(value, "_", "-")
+	switch value {
+	case "githubactions":
+		return FixEcosystemGitHubActions
+	case "go", "go-mod", "go-module", "go-modules", "golang":
+		return FixEcosystemGoMod
+	case "python", "pypi":
+		return FixEcosystemPIP
+	}
+	return value
+}
+
+func isValidFixEcosystem(value string) bool {
+	switch value {
+	case FixEcosystemWildcard,
+		FixEcosystemGoMod,
+		FixEcosystemDocker,
+		FixEcosystemGitHubActions,
+		FixEcosystemNPM,
+		FixEcosystemPIP,
+		FixEcosystemMaven,
+		FixEcosystemGradle,
+		FixEcosystemCargo,
+		FixEcosystemNuGet,
+		FixEcosystemComposer:
+		return true
+	default:
+		return false
+	}
+}
+
+func defaultFixEcosystemEnabled(ecosystem string) bool {
+	return ecosystem != FixEcosystemGitHubActions
 }
 
 func dedupeNonEmpty(values []string) []string {

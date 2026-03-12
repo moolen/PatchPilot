@@ -24,7 +24,12 @@ type baselineScanCycle struct {
 }
 
 func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
-	return applyFixEngines(ctx, repo, findings, fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions), allowFailures)
+	return applyDeterministicFixesWithPolicy(ctx, repo, nil, findings, fileOptions, dockerOptions, goRuntimeOptions, allowFailures)
+}
+
+func applyDeterministicFixesWithPolicy(ctx context.Context, repo string, cfg *policy.Config, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
+	engines := filterFixEnginesByPolicy(cfg, fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions))
+	return applyFixEngines(ctx, repo, findings, engines, allowFailures)
 }
 
 func applyFixEngines(ctx context.Context, repo string, findings []vuln.Finding, engines []fixer.Engine, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
@@ -65,6 +70,58 @@ func applyFixEngines(ctx context.Context, repo string, findings []vuln.Finding, 
 	}
 
 	return patches, issues, engineDetails, nil
+}
+
+func filterFixEnginesByPolicy(cfg *policy.Config, engines []fixer.Engine) []fixer.Engine {
+	filtered := make([]fixer.Engine, 0, len(engines))
+	for _, engine := range engines {
+		ecosystem, ok := fixEcosystemForEngine(engine.Name())
+		if !ok {
+			filtered = append(filtered, engine)
+			continue
+		}
+		if cfg != nil {
+			if !cfg.IsFixEcosystemEnabled(ecosystem) {
+				logProgress("skipping %s fixer: ecosystem %q disabled by policy", engine.Name(), ecosystem)
+				continue
+			}
+			filtered = append(filtered, engine)
+			continue
+		}
+		if ecosystem == policy.FixEcosystemGitHubActions {
+			logProgress("skipping %s fixer: ecosystem %q disabled by default", engine.Name(), ecosystem)
+			continue
+		}
+		filtered = append(filtered, engine)
+	}
+	return filtered
+}
+
+func fixEcosystemForEngine(engineName string) (string, bool) {
+	switch strings.TrimSpace(engineName) {
+	case "go_runtime", "go_modules":
+		return policy.FixEcosystemGoMod, true
+	case "docker":
+		return policy.FixEcosystemDocker, true
+	case "github_actions":
+		return policy.FixEcosystemGitHubActions, true
+	case "npm":
+		return policy.FixEcosystemNPM, true
+	case "pip":
+		return policy.FixEcosystemPIP, true
+	case "maven":
+		return policy.FixEcosystemMaven, true
+	case "gradle":
+		return policy.FixEcosystemGradle, true
+	case "cargo":
+		return policy.FixEcosystemCargo, true
+	case "nuget":
+		return policy.FixEcosystemNuGet, true
+	case "composer":
+		return policy.FixEcosystemComposer, true
+	default:
+		return "", false
+	}
 }
 
 func shouldRunAgentRepair(options fixOptions, deterministicIssues []string, validation validationCycle, validationErr error) bool {

@@ -118,6 +118,71 @@ func TestApplyFixEnginesLogsPerEngineProgress(t *testing.T) {
 	}
 }
 
+func TestFilterFixEnginesByPolicyDefaultDisablesGitHubActions(t *testing.T) {
+	engines := []fixer.Engine{
+		stubFixEngine{name: "go_runtime"},
+		stubFixEngine{name: "github_actions"},
+		stubFixEngine{name: "npm"},
+	}
+
+	filtered := filterFixEnginesByPolicy(nil, engines)
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 engines after default filtering, got %d", len(filtered))
+	}
+	if filtered[0].Name() != "go_runtime" || filtered[1].Name() != "npm" {
+		t.Fatalf("unexpected filtered engines: %#v", []string{filtered[0].Name(), filtered[1].Name()})
+	}
+}
+
+func TestFilterFixEnginesByPolicyHonorsOverrides(t *testing.T) {
+	enable := true
+	cfg := &policy.Config{
+		Fix: policy.FixPolicy{
+			Updates: []policy.FixUpdatePolicy{
+				{PackageEcosystem: policy.FixEcosystemGitHubActions, Enabled: &enable},
+			},
+		},
+	}
+	engines := []fixer.Engine{
+		stubFixEngine{name: "github_actions"},
+		stubFixEngine{name: "npm"},
+	}
+
+	filtered := filterFixEnginesByPolicy(cfg, engines)
+	if len(filtered) != 2 {
+		t.Fatalf("expected github_actions override to keep both engines, got %d", len(filtered))
+	}
+	if filtered[0].Name() != "github_actions" || filtered[1].Name() != "npm" {
+		t.Fatalf("unexpected filtered engines: %#v", []string{filtered[0].Name(), filtered[1].Name()})
+	}
+}
+
+func TestFilterFixEnginesByPolicyWildcardAndSpecificRules(t *testing.T) {
+	disable := false
+	enable := true
+	cfg := &policy.Config{
+		Fix: policy.FixPolicy{
+			Updates: []policy.FixUpdatePolicy{
+				{PackageEcosystem: policy.FixEcosystemWildcard, Enabled: &disable},
+				{PackageEcosystem: policy.FixEcosystemGoMod, Enabled: &enable},
+			},
+		},
+	}
+	engines := []fixer.Engine{
+		stubFixEngine{name: "go_runtime"},
+		stubFixEngine{name: "go_modules"},
+		stubFixEngine{name: "docker"},
+	}
+
+	filtered := filterFixEnginesByPolicy(cfg, engines)
+	if len(filtered) != 2 {
+		t.Fatalf("expected wildcard+gomod rules to keep only go engines, got %d", len(filtered))
+	}
+	if filtered[0].Name() != "go_runtime" || filtered[1].Name() != "go_modules" {
+		t.Fatalf("unexpected filtered engines: %#v", []string{filtered[0].Name(), filtered[1].Name()})
+	}
+}
+
 func TestBaselineRemediationPromptGuidance(t *testing.T) {
 	cfg := &policy.Config{
 		Agent: policy.AgentPolicy{

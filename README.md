@@ -64,6 +64,7 @@ Policy controls include:
 - Docker base-image allow/deny policy, patch toggles, and rule-driven tag selection for `FROM` images,
 - container image target mapping (static or command-discovered),
 - Go runtime remediation policy (`disabled`, `toolchain`, `minimum`),
+- Dependabot-style deterministic fixer toggles per ecosystem (`fix.updates`, default `github-actions` disabled),
 - custom prompt snippets for agent remediation loops and failure points.
 
 ## Requirements
@@ -206,6 +207,15 @@ oci:
 go:
   patching:
     runtime: minimum # disabled | toolchain | minimum
+
+fix:
+  updates:
+    - package-ecosystem: "*" # applies to all deterministic fix ecosystems
+      enabled: true
+    - package-ecosystem: github-actions
+      enabled: false # default unless explicitly enabled
+    - package-ecosystem: gomod
+      enabled: true
 
 agent:
   remediation_prompts:

@@ -202,9 +202,10 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	logProgress("applying deterministic fixes")
 	stage = tracker.beginStage("apply_deterministic_fixes")
-	allPatches, deterministicIssues, engineDetails, err := applyDeterministicFixes(
+	allPatches, deterministicIssues, engineDetails, err := applyDeterministicFixesWithPolicy(
 		ctx,
 		repo,
+		cfg,
 		before.Findings,
 		fileOptions,
 		dockerOptions,

@@ -149,6 +149,27 @@ func SchemaJSON() []byte {
         }
       }
     },
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "updates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["package-ecosystem", "enabled"],
+            "properties": {
+              "package-ecosystem": {
+                "type": "string",
+                "enum": ["*", "gomod", "docker", "github-actions", "npm", "pip", "maven", "gradle", "cargo", "nuget", "composer"]
+              },
+              "enabled": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
     "agent": {
       "type": "object",
       "additionalProperties": false,

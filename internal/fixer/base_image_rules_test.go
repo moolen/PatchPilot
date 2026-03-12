@@ -175,6 +175,26 @@ func TestSelectLatestSemverTagByDefaultKeepsPrereleaseFamily(t *testing.T) {
 	}
 }
 
+func TestSelectLatestSemverTagByDefaultKeepsSuffixFamilyForMajorOnlyTag(t *testing.T) {
+	got := selectLatestSemverTagByDefault(
+		"25-alpine",
+		[]string{"25.8.1-trixie-slim", "25.8.1-alpine", "25.7.0-alpine"},
+	)
+	if got != "25.8.1-alpine" {
+		t.Fatalf("expected same suffix family for major-only tag, got %q", got)
+	}
+}
+
+func TestSelectLatestSemverTagByDefaultSkipsDifferentSuffixFamilyWhenNoExactMatch(t *testing.T) {
+	got := selectLatestSemverTagByDefault(
+		"25-alpine",
+		[]string{"25.8.1-trixie-slim", "25.8.1-bookworm"},
+	)
+	if got != "" {
+		t.Fatalf("expected no candidate when suffix family differs, got %q", got)
+	}
+}
+
 func TestSelectLatestSemverTagByPolicyRespectsPrereleaseAllow(t *testing.T) {
 	policy := OCIImagePolicy{
 		Name:   "prerelease-rc-only",

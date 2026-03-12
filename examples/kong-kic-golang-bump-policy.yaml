@@ -1,0 +1,27 @@
+version: 1
+
+scan:
+  skip_paths:
+    - .github/actions/**
+
+fix:
+  updates:
+    - package-ecosystem: "*"
+      enabled: false
+    - package-ecosystem: docker
+      enabled: true
+    - package-ecosystem: github-actions
+      enabled: false
+
+oci:
+  policies:
+    - name: kong-kic-golang-bump
+      source: golang
+      tags:
+        allow:
+          - '^1\.26\.\d+$'
+        semver:
+          - range:
+              - ">=1.26.0 <1.27.0"
+            includePrerelease: false
+            prereleaseAllow: []
