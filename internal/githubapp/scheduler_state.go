@@ -31,10 +31,19 @@ type scheduledRepositoryState struct {
 }
 
 type trackedRemediationPRState struct {
-	Number     int       `json:"number,omitempty"`
-	URL        string    `json:"url,omitempty"`
-	CreatedAt  time.Time `json:"created_at,omitempty"`
-	LastSeenAt time.Time `json:"last_seen_at,omitempty"`
+	Number              int       `json:"number,omitempty"`
+	URL                 string    `json:"url,omitempty"`
+	Branch              string    `json:"branch,omitempty"`
+	HeadSHA             string    `json:"head_sha,omitempty"`
+	CreatedAt           time.Time `json:"created_at,omitempty"`
+	LastSeenAt          time.Time `json:"last_seen_at,omitempty"`
+	CIAttemptCount      int       `json:"ci_attempt_count,omitempty"`
+	LastCIPollAt        time.Time `json:"last_ci_poll_at,omitempty"`
+	LastCIConclusion    string    `json:"last_ci_conclusion,omitempty"`
+	LastFailedChecks    []string  `json:"last_failed_checks,omitempty"`
+	LastAIAssessment    string    `json:"last_ai_assessment,omitempty"`
+	LastRerunAction     string    `json:"last_rerun_action,omitempty"`
+	LastClosureComment  string    `json:"last_closure_comment,omitempty"`
 }
 
 func newSchedulerStateStore(path string) (*schedulerStateStore, error) {
@@ -150,6 +159,9 @@ func cloneScheduledRepositoryState(state scheduledRepositoryState) scheduledRepo
 	}
 	if state.OpenPR != nil {
 		openPR := *state.OpenPR
+		if len(state.OpenPR.LastFailedChecks) > 0 {
+			openPR.LastFailedChecks = append([]string(nil), state.OpenPR.LastFailedChecks...)
+		}
 		cloned.OpenPR = &openPR
 	}
 	return cloned

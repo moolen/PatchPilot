@@ -278,8 +278,10 @@ func setupSchedulerFakePatchPilot(t *testing.T, root, scanCountPath string, arti
 
 	path := filepath.Join(binDir, "patchpilot")
 	fixBody := "echo \"patched $(date +%s)\" >> \"$dir/README.md\"\n"
+	scanFindings := "{\"findings\":[{\"vulnerability_id\":\"GHSA-1\",\"package\":\"golang\",\"fixed_version\":\"1.27.0\",\"ecosystem\":\"deb\",\"locations\":[\"Dockerfile\"]}]}"
 	if artifactOnly {
 		fixBody = "mkdir -p \"$dir/.patchpilot\"\necho \"artifact-only\" > \"$dir/.patchpilot/generated.txt\"\n"
+		scanFindings = "{\"findings\":[{\"vulnerability_id\":\"GHSA-1\",\"package\":\"artifact-only\",\"fixed_version\":\"1.0.1\",\"ecosystem\":\"generic\",\"locations\":[\".patchpilot/generated.txt\"]}]}"
 	}
 
 	script := "#!/bin/sh\nset -eu\n" +
@@ -297,7 +299,7 @@ func setupSchedulerFakePatchPilot(t *testing.T, root, scanCountPath string, arti
 		"    count=$((count + 1))\n" +
 		"    echo \"$count\" > \"" + scanCountPath + "\"\n" +
 		"    mkdir -p \"$dir/.patchpilot\"\n" +
-		"    echo '{\"findings\":[{\"vulnerability_id\":\"GHSA-1\"}]}' > \"$dir/.patchpilot/findings.json\"\n" +
+		"    echo '" + scanFindings + "' > \"$dir/.patchpilot/findings.json\"\n" +
 		"    exit 23\n" +
 		"    ;;\n" +
 		"  fix)\n" +
@@ -337,6 +339,9 @@ func setupRemoteRepo(t *testing.T, root string) (string, string, string) {
 	}
 	if err := os.WriteFile(filepath.Join(seedPath, "go.mod"), []byte("module example.com/demo\n\ngo 1.26.1\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(seedPath, "Dockerfile"), []byte("FROM golang:1.26.1\n"), 0o644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
 	}
 	runCommandOrFail(t, seedPath, "git", "add", "-A")
 	runCommandOrFail(t, seedPath, "git", "-c", "user.name=Tester", "-c", "user.email=test@example.com", "commit", "-m", "seed")
@@ -389,6 +394,7 @@ type fakePR struct {
 	Number    int
 	Title     string
 	Head      string
+	HeadSHA   string
 	Base      string
 	Body      string
 	NodeID    string
@@ -483,6 +489,20 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 	}
 
 	basePullsPath := "/api/v3/repos/" + api.owner + "/" + api.repo + "/pulls"
+	if strings.HasPrefix(path, "/api/v3/repos/"+api.owner+"/"+api.repo+"/commits/") && strings.HasSuffix(path, "/status") && request.Method == http.MethodGet {
+		writeJSON(writer, map[string]interface{}{
+			"state":    "success",
+			"statuses": []map[string]interface{}{},
+		})
+		return
+	}
+	if strings.HasPrefix(path, "/api/v3/repos/"+api.owner+"/"+api.repo+"/commits/") && strings.HasSuffix(path, "/check-runs") && request.Method == http.MethodGet {
+		writeJSON(writer, map[string]interface{}{
+			"total_count": 0,
+			"check_runs":  []map[string]interface{}{},
+		})
+		return
+	}
 	if path == basePullsPath && request.Method == http.MethodGet {
 		api.mu.Lock()
 		defer api.mu.Unlock()
@@ -537,6 +557,7 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 			Number:    prNumber,
 			Title:     payload.Title,
 			Head:      payload.Head,
+			HeadSHA:   "fake-head-sha",
 			Base:      payload.Base,
 			Body:      payload.Body,
 			NodeID:    "PR_node_" + strconv.Itoa(prNumber),
@@ -599,6 +620,7 @@ func pullRequestPayload(pr fakePR) map[string]interface{} {
 		"created_at": pr.CreatedAt.Format(time.RFC3339),
 		"head": map[string]interface{}{
 			"ref": pr.Head,
+			"sha": pr.HeadSHA,
 		},
 		"base": map[string]interface{}{
 			"ref": pr.Base,

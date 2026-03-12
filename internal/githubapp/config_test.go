@@ -33,6 +33,9 @@ func TestLoadConfigFromEnvSuccess(t *testing.T) {
 	if cfg.RetryMaxBackoff.String() != "30s" {
 		t.Fatalf("RetryMaxBackoff = %s, want 30s", cfg.RetryMaxBackoff)
 	}
+	if cfg.AuthMode != AuthModeApp {
+		t.Fatalf("AuthMode = %q, want %q", cfg.AuthMode, AuthModeApp)
+	}
 }
 
 func TestLoadConfigFromEnvRequiresFields(t *testing.T) {
@@ -41,6 +44,47 @@ func TestLoadConfigFromEnvRequiresFields(t *testing.T) {
 
 	if _, err := LoadConfigFromEnv(); err == nil {
 		t.Fatalf("expected error for missing PP_APP_ID")
+	}
+}
+
+func TestLoadConfigFromEnvTokenMode(t *testing.T) {
+	t.Setenv("PP_GITHUB_AUTH_MODE", "token")
+	t.Setenv("PP_GITHUB_TOKEN", "ghp_test")
+	t.Setenv("PP_GITHUB_TOKEN_REPOSITORIES", "Acme/One, acme/two, acme/one")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AuthMode != AuthModeToken {
+		t.Fatalf("AuthMode = %q, want %q", cfg.AuthMode, AuthModeToken)
+	}
+	if len(cfg.GitHubTokenRepositories) != 2 {
+		t.Fatalf("GitHubTokenRepositories = %#v", cfg.GitHubTokenRepositories)
+	}
+	if cfg.GitHubTokenRepositories[0] != "acme/one" || cfg.GitHubTokenRepositories[1] != "acme/two" {
+		t.Fatalf("GitHubTokenRepositories = %#v", cfg.GitHubTokenRepositories)
+	}
+}
+
+func TestLoadConfigFromEnvTokenModeRequiresAllowlist(t *testing.T) {
+	t.Setenv("PP_GITHUB_AUTH_MODE", "token")
+	t.Setenv("PP_GITHUB_TOKEN", "ghp_test")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatalf("expected error for missing token repository allowlist")
+	}
+}
+
+func TestLoadConfigFromEnvTokenModeRejectsAppCredentials(t *testing.T) {
+	t.Setenv("PP_GITHUB_AUTH_MODE", "token")
+	t.Setenv("PP_GITHUB_TOKEN", "ghp_test")
+	t.Setenv("PP_GITHUB_TOKEN_REPOSITORIES", "acme/one")
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatalf("expected error when token mode is mixed with app credentials")
 	}
 }
 
@@ -67,6 +111,7 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	t.Setenv("PP_GITHUB_RETRY_MAX_ATTEMPTS", "7")
 	t.Setenv("PP_GITHUB_RETRY_INITIAL_BACKOFF", "3s")
 	t.Setenv("PP_GITHUB_RETRY_MAX_BACKOFF", "20s")
+	t.Setenv("PP_PR_STATUS_POLL_INTERVAL", "45s")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -86,6 +131,9 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	}
 	if cfg.RetryMaxBackoff.String() != "20s" {
 		t.Fatalf("RetryMaxBackoff = %s, want 20s", cfg.RetryMaxBackoff)
+	}
+	if cfg.PRStatusPollInterval.String() != "45s" {
+		t.Fatalf("PRStatusPollInterval = %s, want 45s", cfg.PRStatusPollInterval)
 	}
 	if cfg.EnableAutoMerge {
 		t.Fatalf("EnableAutoMerge = true, want false")

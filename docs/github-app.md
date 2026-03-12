@@ -1,12 +1,12 @@
 # PatchPilot GitHub App
 
-`patchpilot-app` runs as a scheduler-first GitHub App worker. It authenticates as the app, discovers every repository where the app is installed, and runs scans/remediation automatically without webhook triggers or slash commands.
+`patchpilot-app` runs as a scheduler-first GitHub automation worker. It can authenticate either as a GitHub App or with an explicit-allowlist GitHub token, and it runs scans/remediation automatically without webhook triggers or slash commands.
 
 ## How it works
 
-1. PatchPilot lists the app installations and the repositories granted to each installation.
+1. PatchPilot resolves repositories from either GitHub App installations or the explicit token allowlist.
 2. Each repository is scanned on its own cadence from `.patchpilot.yaml`.
-3. When remediation is needed, PatchPilot opens a pull request with the proposed fix.
+3. When remediation is needed, PatchPilot opens a pull request with the proposed fix, waits on PR CI, and retries flaky or repairable failures up to the configured limit.
 
 Per-repository cadence comes from `.patchpilot.yaml`:
 
@@ -26,8 +26,12 @@ scan:
 Use these minimum GitHub App permissions:
 
 - Repository permissions:
+  - `Actions`: Read & write
+  - `Checks`: Read-only
   - `Contents`: Read & write
+  - `Issues`: Read & write
   - `Pull requests`: Read & write
+  - `Statuses`: Read-only
   - `Metadata`: Read-only
 
 Install the app on the repositories you want PatchPilot to manage. Installed repositories are discovered automatically.
@@ -38,13 +42,21 @@ For gradual rollout, PatchPilot can gate scheduled work on repository topics. Gi
 
 Required:
 
-- `PP_APP_ID`: GitHub App ID.
-- `PP_PRIVATE_KEY_PATH` or `PP_PRIVATE_KEY_PEM`: app private key.
+- GitHub App mode:
+  - `PP_APP_ID`
+  - `PP_PRIVATE_KEY_PATH` or `PP_PRIVATE_KEY_PEM`
+- Token mode:
+  - `PP_GITHUB_AUTH_MODE=token`
+  - `PP_GITHUB_TOKEN`
+  - `PP_GITHUB_TOKEN_REPOSITORIES`
 
 Common optional settings:
 
+- `PP_GITHUB_AUTH_MODE`: `app`, `token`, or `auto`. Defaults to `auto`.
+- `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE`: operator-managed YAML file for repository-to-OCI-image mappings and app remediation prompts.
 - `PP_WORKDIR`: temporary working directory root.
 - `PP_PATCHPILOT_BINARY`: path to the PatchPilot binary.
+- `PP_AGENT_COMMAND`: external agent command used for container OS patching and CI failure triage/repair.
 - `PP_JOB_RUNNER`: `local` or `container`. Defaults to `local`.
 - `PP_JOB_CONTAINER_RUNTIME`: container runtime for repo jobs when `PP_JOB_RUNNER=container`. Defaults to `docker`.
 - `PP_JOB_CONTAINER_IMAGE`: container image that contains `patchpilot`, `syft`, `grype`, language toolchains, and package managers needed for remediation, including `cargo` for Rust/Cargo repositories.
@@ -58,7 +70,25 @@ Common optional settings:
 - `PP_REPOSITORY_IGNORE_LABEL_SELECTOR`: comma-separated repository topic selectors that force PatchPilot to skip a repository even if it matches the opt-in selector.
 - `PP_LISTEN_ADDR`: HTTP listen address if you expose health/metrics endpoints.
 - `PP_METRICS_PATH`: metrics endpoint path. Defaults to `/metrics`.
+- `PP_PR_STATUS_POLL_INTERVAL`: polling interval while waiting on PR CI. Defaults to `30s`.
 - `PP_GITHUB_RETRY_MAX_ATTEMPTS`, `PP_GITHUB_RETRY_INITIAL_BACKOFF`, `PP_GITHUB_RETRY_MAX_BACKOFF`: GitHub API retry controls.
+
+Operator-managed app config example:
+
+```yaml
+repositories:
+  acme/demo:
+    image_repository: ghcr.io/acme/demo
+    dockerfiles:
+      - Dockerfile
+remediation:
+  max_ci_attempts: 3
+  prompts:
+    ci_failure_assessment:
+      - mode: extend
+        template: |
+          Return JSON only.
+```
 
 Example gradual rollout:
 
@@ -104,7 +134,7 @@ docker run --rm \
 ```
 
 Published releases push a multi-arch image to `ghcr.io/<owner>/patchpilot-app`.
-If you enable `PP_JOB_RUNNER=container`, mount access to a Docker-compatible daemon or socket because the app invokes `docker run` for repo jobs.
+Mount access to a Docker-compatible daemon or socket because the app also pulls and scans mapped OCI images during scheduled runs.
 
 Run environment diagnostics:
 
@@ -134,6 +164,7 @@ Security note:
 
 - In GitHub App mode, repo-local `.patchpilot.yaml` is treated as untrusted input.
 - Repo-local `pre_execution`, `verification`, `post_execution`, `registry`, `artifacts`, and `agent` sections are ignored.
+- OCI image mappings and remediation prompt overrides come from the operator-managed app config file, not from repo-local policy.
 - This prevents repository owners from using policy to execute arbitrary host commands or read operator-managed environment secrets.
 - For stronger isolation, set `PP_JOB_RUNNER=container` so `scan` and `fix` run inside a short-lived container with a read-only root filesystem, dropped capabilities, and only the cloned repository mounted in.
 

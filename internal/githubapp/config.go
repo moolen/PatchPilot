@@ -10,12 +10,17 @@ import (
 )
 
 type Config struct {
+	AuthMode                       string
 	AppID                          int64
 	PrivateKeyPath                 string
 	PrivateKeyPEM                  string
+	GitHubToken                    string
+	GitHubTokenRepositories        []string
 	ListenAddr                     string
 	WorkDir                        string
 	PatchPilotBinary               string
+	AgentCommand                   string
+	RuntimeConfigPath              string
 	JobRunner                      string
 	JobContainerRuntime            string
 	JobContainerImage              string
@@ -32,10 +37,19 @@ type Config struct {
 	MetricsPath                    string
 	SchedulerTick                  time.Duration
 	RepoRunTimeout                 time.Duration
+	PRStatusPollInterval           time.Duration
 	RetryMaxAttempts               int
 	RetryInitialBackoff            time.Duration
 	RetryMaxBackoff                time.Duration
 }
+
+const (
+	AuthModeAuto  = "auto"
+	AuthModeApp   = "app"
+	AuthModeToken = "token"
+
+	defaultAgentCommand = "codex exec --skip-git-repo-check --sandbox workspace-write -o \"$PATCHPILOT_AGENT_ARTIFACT_DIR/last-message.txt\" - < \"$PATCHPILOT_PROMPT_FILE\""
+)
 
 func LoadConfigFromEnv() (Config, error) {
 	schedulerTick, err := parseDurationWithDefault("PP_SCHEDULER_TICK", time.Hour)
@@ -43,6 +57,10 @@ func LoadConfigFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	repoRunTimeout, err := parseDurationWithDefault("PP_REPO_RUN_TIMEOUT", 30*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
+	prStatusPollInterval, err := parseDurationWithDefault("PP_PR_STATUS_POLL_INTERVAL", 30*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
@@ -66,9 +84,12 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	cfg := Config{
+		AuthMode:                       firstNonEmpty(strings.ToLower(strings.TrimSpace(os.Getenv("PP_GITHUB_AUTH_MODE"))), AuthModeAuto),
 		ListenAddr:                     firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
 		WorkDir:                        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
 		PatchPilotBinary:               firstNonEmpty(strings.TrimSpace(os.Getenv("PP_PATCHPILOT_BINARY")), "patchpilot"),
+		AgentCommand:                   firstNonEmpty(strings.TrimSpace(os.Getenv("PP_AGENT_COMMAND")), defaultAgentCommand),
+		RuntimeConfigPath:              firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_APP_CONFIG_FILE")), strings.TrimSpace(os.Getenv("PP_OCI_MAPPING_FILE"))),
 		JobRunner:                      firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_RUNNER")), "local"),
 		JobContainerRuntime:            firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_RUNTIME")), "docker"),
 		JobContainerImage:              strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_IMAGE")),
@@ -82,28 +103,26 @@ func LoadConfigFromEnv() (Config, error) {
 		MetricsPath:                    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
 		SchedulerTick:                  schedulerTick,
 		RepoRunTimeout:                 repoRunTimeout,
+		PRStatusPollInterval:           prStatusPollInterval,
 		RetryMaxAttempts:               retryMaxAttempts,
 		RetryInitialBackoff:            retryInitialBackoff,
 		RetryMaxBackoff:                retryMaxBackoff,
 	}
 
-	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
-	if appIDText == "" {
-		return Config{}, fmt.Errorf("PP_APP_ID is required")
+	cfg.GitHubToken = strings.TrimSpace(os.Getenv("PP_GITHUB_TOKEN"))
+	cfg.GitHubTokenRepositories = parseRepositoryAllowlist(os.Getenv("PP_GITHUB_TOKEN_REPOSITORIES"))
+	switch cfg.AuthMode {
+	case "", AuthModeAuto:
+		cfg.AuthMode = deriveAuthMode(cfg)
+	case AuthModeApp, AuthModeToken:
+	default:
+		return Config{}, fmt.Errorf("PP_GITHUB_AUTH_MODE must be one of: %s, %s, %s", AuthModeAuto, AuthModeApp, AuthModeToken)
 	}
-	appID, err := strconv.ParseInt(appIDText, 10, 64)
-	if err != nil || appID <= 0 {
-		return Config{}, fmt.Errorf("PP_APP_ID must be a positive integer")
+	if err := validateAuthConfig(&cfg); err != nil {
+		return Config{}, err
 	}
-	cfg.AppID = appID
-
-	cfg.PrivateKeyPath = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PATH"))
-	cfg.PrivateKeyPEM = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PEM"))
-	if cfg.PrivateKeyPath == "" && cfg.PrivateKeyPEM == "" {
-		return Config{}, fmt.Errorf("PP_PRIVATE_KEY_PATH or PP_PRIVATE_KEY_PEM is required")
-	}
-	if cfg.PrivateKeyPath != "" {
-		cfg.PrivateKeyPath = filepath.Clean(cfg.PrivateKeyPath)
+	if cfg.RuntimeConfigPath != "" {
+		cfg.RuntimeConfigPath = filepath.Clean(cfg.RuntimeConfigPath)
 	}
 
 	cfg.GitHubAPIBaseURL = strings.TrimSpace(os.Getenv("PP_GITHUB_API_BASE_URL"))
@@ -124,6 +143,60 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func deriveAuthMode(cfg Config) string {
+	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
+	privateKeyPath := strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PATH"))
+	privateKeyPEM := strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PEM"))
+	switch {
+	case strings.TrimSpace(cfg.GitHubToken) != "":
+		return AuthModeToken
+	case appIDText != "" || privateKeyPath != "" || privateKeyPEM != "":
+		return AuthModeApp
+	default:
+		return AuthModeApp
+	}
+}
+
+func validateAuthConfig(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
+	}
+	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
+	cfg.PrivateKeyPath = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PATH"))
+	cfg.PrivateKeyPEM = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PEM"))
+	if cfg.PrivateKeyPath != "" {
+		cfg.PrivateKeyPath = filepath.Clean(cfg.PrivateKeyPath)
+	}
+
+	switch cfg.AuthMode {
+	case AuthModeApp:
+		if appIDText == "" {
+			return fmt.Errorf("PP_APP_ID is required when PP_GITHUB_AUTH_MODE=%s", AuthModeApp)
+		}
+		appID, err := strconv.ParseInt(appIDText, 10, 64)
+		if err != nil || appID <= 0 {
+			return fmt.Errorf("PP_APP_ID must be a positive integer")
+		}
+		cfg.AppID = appID
+		if cfg.PrivateKeyPath == "" && cfg.PrivateKeyPEM == "" {
+			return fmt.Errorf("PP_PRIVATE_KEY_PATH or PP_PRIVATE_KEY_PEM is required when PP_GITHUB_AUTH_MODE=%s", AuthModeApp)
+		}
+	case AuthModeToken:
+		if strings.TrimSpace(cfg.GitHubToken) == "" {
+			return fmt.Errorf("PP_GITHUB_TOKEN is required when PP_GITHUB_AUTH_MODE=%s", AuthModeToken)
+		}
+		if len(cfg.GitHubTokenRepositories) == 0 {
+			return fmt.Errorf("PP_GITHUB_TOKEN_REPOSITORIES is required when PP_GITHUB_AUTH_MODE=%s", AuthModeToken)
+		}
+		if appIDText != "" || cfg.PrivateKeyPath != "" || cfg.PrivateKeyPEM != "" {
+			return fmt.Errorf("PP_APP_ID and PP_PRIVATE_KEY_* must not be set when PP_GITHUB_AUTH_MODE=%s", AuthModeToken)
+		}
+	default:
+		return fmt.Errorf("unsupported auth mode %q", cfg.AuthMode)
+	}
+	return nil
 }
 
 func parseCSVList(input string) []string {
@@ -165,6 +238,30 @@ func parseLabelSelectors(input string) []string {
 		return nil
 	}
 	return selectors
+}
+
+func parseRepositoryAllowlist(input string) []string {
+	values := parseCSVList(input)
+	if len(values) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		normalized := normalizeRepoName(value)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, normalized)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func parseBoolEnv(key string) bool {

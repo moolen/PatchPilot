@@ -183,17 +183,27 @@ func runDoctor(stdout, stderr io.Writer) int {
 		check("PatchPilot binary", ensureBinary(cfg.PatchPilotBinary))
 		check("syft binary", ensureBinary("syft"))
 		check("grype binary", ensureBinary("grype"))
+		check("docker binary", ensureBinary("docker"))
 		check("go binary", ensureBinary("go"))
 		check("node binary", ensureBinary("node"))
 		check("npm binary", ensureBinary("npm"))
 		check("cargo binary", ensureBinary("cargo"))
 	}
 
-	if cfg.PrivateKeyPath != "" {
-		_, err := os.ReadFile(cfg.PrivateKeyPath)
-		check("private key file", err)
-	} else {
-		_, _ = fmt.Fprintln(stdout, "doctor: private key file: OK (using PP_PRIVATE_KEY_PEM)")
+	switch cfg.AuthMode {
+	case githubapp.AuthModeToken:
+		_, _ = fmt.Fprintln(stdout, "doctor: github token auth: OK")
+	default:
+		if cfg.PrivateKeyPath != "" {
+			_, err := os.ReadFile(cfg.PrivateKeyPath)
+			check("private key file", err)
+		} else {
+			_, _ = fmt.Fprintln(stdout, "doctor: private key file: OK (using PP_PRIVATE_KEY_PEM)")
+		}
+	}
+	if strings.TrimSpace(cfg.RuntimeConfigPath) != "" {
+		_, err := os.ReadFile(cfg.RuntimeConfigPath)
+		check("app runtime config file", err)
 	}
 
 	if errorsFound {
@@ -222,9 +232,13 @@ func runManifest(stdout, stderr io.Writer) int {
 		RedirectURL: appURL,
 		Public:      false,
 		DefaultPerm: map[string]string{
+			"actions":       "write",
+			"checks":        "read",
 			"contents":      "write",
-			"pull_requests": "write",
+			"issues":        "write",
 			"metadata":      "read",
+			"pull_requests": "write",
+			"statuses":      "read",
 		},
 		DefaultEvts: []string{},
 	}

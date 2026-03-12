@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v75/github"
 	"github.com/moolen/patchpilot/internal/policy"
 	"github.com/moolen/patchpilot/internal/vuln"
@@ -24,6 +23,7 @@ type Service struct {
 	logger    *log.Logger
 	slog      *structuredLogger
 	appClient *github.Client
+	runtime   *AppRuntimeConfig
 	metrics   *Metrics
 	state     *schedulerStateStore
 	jobRunner patchPilotJobRunner
@@ -37,6 +37,10 @@ type scanRunResult struct {
 	HeadSHA            string
 	FindingCount       int
 	FindingsBySeverity map[string]int
+	Report             *vuln.Report
+	OCIImage           string
+	OCIImageTag        string
+	OCIImageRepository string
 }
 
 type repositoryCronSchedule struct {
@@ -53,24 +57,26 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 	if logger == nil {
 		logger = log.New(os.Stderr, "[patchpilot-app] ", log.LstdFlags)
 	}
+	if strings.TrimSpace(cfg.AuthMode) == "" {
+		switch {
+		case strings.TrimSpace(cfg.GitHubToken) != "":
+			cfg.AuthMode = AuthModeToken
+		default:
+			cfg.AuthMode = AuthModeApp
+		}
+	}
 
-	privateKey, err := loadPrivateKey(cfg)
+	var appClient *github.Client
+	var err error
+	if cfg.AuthMode == AuthModeApp {
+		appClient, err = newAppClient(cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	runtimeCfg, err := LoadAppRuntimeConfig(cfg.RuntimeConfigPath)
 	if err != nil {
 		return nil, err
-	}
-
-	transport, err := ghinstallation.NewAppsTransport(http.DefaultTransport, cfg.AppID, privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("create app transport: %w", err)
-	}
-
-	httpClient := &http.Client{Transport: transport}
-	appClient := github.NewClient(httpClient)
-	if cfg.GitHubAPIBaseURL != "" {
-		appClient, err = appClient.WithEnterpriseURLs(cfg.GitHubAPIBaseURL, cfg.GitHubUploadAPIURL)
-		if err != nil {
-			return nil, fmt.Errorf("create app enterprise client: %w", err)
-		}
 	}
 
 	if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
@@ -86,6 +92,7 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 		logger:    logger,
 		slog:      newStructuredLogger(logger),
 		appClient: appClient,
+		runtime:   runtimeCfg,
 		metrics:   NewMetrics(),
 		state:     state,
 	}
@@ -135,76 +142,32 @@ func (service *Service) runSchedulerCycle(ctx context.Context) {
 		}
 	}()
 
-	installations, err := service.listInstallations(ctx)
+	repositories, err := service.listRepositoryContexts(ctx)
 	if err != nil {
 		if service.metrics != nil {
-			service.metrics.IncFailure("list_installations")
-			service.metrics.IncSchedulerRepositoryState("list_installations_failed")
+			service.metrics.IncFailure("list_repositories")
+			service.metrics.IncSchedulerRepositoryState("list_repositories_failed")
 		}
-		service.log("error", "list installations failed", map[string]interface{}{"error": err.Error()})
+		service.log("error", "list repositories failed", map[string]interface{}{"error": err.Error(), "auth_mode": service.cfg.AuthMode})
 		status = "failed"
 		return
 	}
 
-	service.log("info", "scheduler cycle started", map[string]interface{}{
-		"installations": len(installations),
-	})
-
-	for _, installation := range installations {
-		if ctx.Err() != nil {
-			status = "canceled"
-			return
-		}
-		service.runInstallationCycle(ctx, installation)
-	}
-
-	service.log("info", "scheduler cycle finished", map[string]interface{}{
-		"installations": len(installations),
-		"duration_ms":   time.Since(started).Milliseconds(),
-	})
-}
-
-func (service *Service) runInstallationCycle(ctx context.Context, installation *github.Installation) {
-	installationID := installation.GetID()
-	client, token, err := service.installationClient(ctx, installationID)
-	if err != nil {
-		if service.metrics != nil {
-			service.metrics.IncFailure("installation_client")
-		}
-		service.log("error", "installation client failed", map[string]interface{}{
-			"installation_id": installationID,
-			"error":           err.Error(),
-		})
-		return
-	}
-
-	repositories, err := service.listInstallationRepos(ctx, client)
-	if err != nil {
-		if service.metrics != nil {
-			service.metrics.IncFailure("list_repositories")
-		}
-		service.log("error", "list installation repositories failed", map[string]interface{}{
-			"installation_id": installationID,
-			"error":           err.Error(),
-		})
-		return
-	}
-
-	service.log("info", "resolved installation repositories", map[string]interface{}{
-		"installation_id": installationID,
-		"repositories":    len(repositories),
-	})
+	service.log("info", "scheduler cycle started", map[string]interface{}{"repositories": len(repositories), "auth_mode": service.cfg.AuthMode})
 
 	now := time.Now().UTC()
 	for _, repository := range repositories {
 		if ctx.Err() != nil {
+			status = "canceled"
 			return
 		}
 		if service.metrics != nil {
 			service.metrics.IncSchedulerRepositoryState("discovered")
 		}
-		service.runRepositoryCycle(ctx, client, token, repository, now)
+		service.runRepositoryCycle(ctx, repository.Client, repository.Token, repository.Repository, now)
 	}
+
+	service.log("info", "scheduler cycle finished", map[string]interface{}{"repositories": len(repositories), "duration_ms": time.Since(started).Milliseconds()})
 }
 
 func (service *Service) runRepositoryCycle(parentCtx context.Context, client *github.Client, token string, repository *github.Repository, now time.Time) {
@@ -231,6 +194,20 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 			"repo":  repo,
 			"error": err.Error(),
 		})
+	}
+	if handled, err := service.continueOpenRemediationPR(parentCtx, client, token, owner, repo, repoKey, now); err != nil {
+		if service.metrics != nil {
+			service.metrics.IncFailure("pr_continue")
+			service.metrics.IncRepositoryJob("pr", "failed")
+		}
+		service.log("warn", "continue remediation PR failed", map[string]interface{}{
+			"owner": owner,
+			"repo":  repo,
+			"error": err.Error(),
+		})
+		return
+	} else if handled {
+		return
 	}
 
 	if len(service.cfg.RepositoryLabelSelectors) > 0 || len(service.cfg.RepositoryIgnoreLabelSelectors) > 0 {
@@ -293,7 +270,7 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 		}
 	}
 
-	_, schedule, enabled, hasPolicyFile, err := service.loadRepositoryPolicy(parentCtx, client, owner, repo, defaultBranch)
+	cfg, schedule, enabled, hasPolicyFile, err := service.loadRepositoryPolicy(parentCtx, client, owner, repo, defaultBranch)
 	if err != nil {
 		if service.metrics != nil {
 			service.metrics.IncFailure("load_policy")
@@ -383,7 +360,7 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 	if service.metrics != nil {
 		service.metrics.IncRepositoryJobInFlight("scan")
 	}
-	scanResult, err := service.runScanWorkflow(ctx, owner, repo, defaultBranch, token)
+	scanResult, err := service.runScanWorkflow(ctx, owner, repo, repoKey, defaultBranch, token, cfg)
 	if service.metrics != nil {
 		service.metrics.DecRepositoryJobInFlight("scan")
 		service.metrics.ObserveRepositoryJobDuration("scan", time.Since(scanStarted))
@@ -459,7 +436,7 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 	if service.metrics != nil {
 		service.metrics.IncRepositoryJobInFlight("fix")
 	}
-	result, err := service.runFixWorkflow(ctx, owner, repo, defaultBranch, token, preferredBranch)
+	result, err := service.runFixWorkflow(ctx, owner, repo, repoKey, defaultBranch, token, preferredBranch, cfg, scanResult)
 	if service.metrics != nil {
 		service.metrics.DecRepositoryJobInFlight("fix")
 		service.metrics.ObserveRepositoryJobDuration("fix", time.Since(fixStarted))
@@ -553,6 +530,19 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 			"error": trackErr.Error(),
 		})
 	}
+	if err := service.manageRemediationPullRequest(ctx, client, token, owner, repo, repoKey, pr, now); err != nil {
+		if service.metrics != nil {
+			service.metrics.IncFailure("pr_manage")
+			service.metrics.IncRepositoryJob("pr", "failed")
+		}
+		service.log("warn", "manage remediation PR failed", map[string]interface{}{
+			"owner": owner,
+			"repo":  repo,
+			"pr":    pr.GetNumber(),
+			"error": err.Error(),
+		})
+		return
+	}
 	if service.metrics != nil {
 		service.metrics.IncFix("changed")
 		service.metrics.DecRepositoryJobInFlight("pr")
@@ -595,7 +585,7 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 	})
 }
 
-func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, defaultBranch, token string) (scanRunResult, error) {
+func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKey, defaultBranch, token string, cfg *policy.Config) (scanRunResult, error) {
 	if strings.TrimSpace(owner) == "" || strings.TrimSpace(repo) == "" {
 		return scanRunResult{}, fmt.Errorf("owner and repo must not be empty")
 	}
@@ -655,16 +645,27 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, defaul
 	if err != nil {
 		return scanRunResult{}, fmt.Errorf("read normalized scan findings: %w", err)
 	}
-	findingsBySeverity := countFindingsBySeverity(findingsReport)
+	relativizeFindingLocations(repoPath, findingsReport)
+	ociReport, resolvedImage, ociTag, ociRepository, err := service.scanMappedOCIImage(ctx, repoPath, repoKey, cfg)
+	if err != nil {
+		return scanRunResult{}, err
+	}
+	relativizeFindingLocations(repoPath, ociReport)
+	mergedReport := mergeVulnerabilityReports(findingsReport, ociReport)
+	findingsBySeverity := countFindingsBySeverity(mergedReport)
 
 	return scanRunResult{
 		ExitCode:           exitCode,
 		Stdout:             stdout,
 		Stderr:             stderr,
-		HasFindings:        len(findingsReport.Findings) > 0,
+		HasFindings:        len(mergedReport.Findings) > 0,
 		HeadSHA:            headSHA,
-		FindingCount:       len(findingsReport.Findings),
+		FindingCount:       len(mergedReport.Findings),
 		FindingsBySeverity: findingsBySeverity,
+		Report:             mergedReport,
+		OCIImage:           resolvedImage,
+		OCIImageTag:        ociTag,
+		OCIImageRepository: ociRepository,
 	}, nil
 }
 
@@ -904,11 +905,37 @@ func (service *Service) trackOpenRemediationPR(repoKey string, pr *github.PullRe
 	}
 	return service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
 		createdAt := pr.GetCreatedAt().UTC()
+		existing := state.OpenPR
+		attempts := 0
+		lastCIPollAt := time.Time{}
+		lastCIConclusion := ""
+		lastFailedChecks := []string(nil)
+		lastAIAssessment := ""
+		lastRerunAction := ""
+		lastClosureComment := ""
+		if existing != nil {
+			attempts = existing.CIAttemptCount
+			lastCIPollAt = existing.LastCIPollAt
+			lastCIConclusion = existing.LastCIConclusion
+			lastFailedChecks = append([]string(nil), existing.LastFailedChecks...)
+			lastAIAssessment = existing.LastAIAssessment
+			lastRerunAction = existing.LastRerunAction
+			lastClosureComment = existing.LastClosureComment
+		}
 		state.OpenPR = &trackedRemediationPRState{
-			Number:     pr.GetNumber(),
-			URL:        pr.GetHTMLURL(),
-			CreatedAt:  createdAt,
-			LastSeenAt: now.UTC(),
+			Number:             pr.GetNumber(),
+			URL:                pr.GetHTMLURL(),
+			Branch:             pr.GetHead().GetRef(),
+			HeadSHA:            pr.GetHead().GetSHA(),
+			CreatedAt:          createdAt,
+			LastSeenAt:         now.UTC(),
+			CIAttemptCount:     attempts,
+			LastCIPollAt:       lastCIPollAt,
+			LastCIConclusion:   lastCIConclusion,
+			LastFailedChecks:   lastFailedChecks,
+			LastAIAssessment:   lastAIAssessment,
+			LastRerunAction:    lastRerunAction,
+			LastClosureComment: lastClosureComment,
 		}
 	}, now)
 }
@@ -945,11 +972,37 @@ func (service *Service) reconcileTrackedPullRequest(ctx context.Context, client 
 
 	return service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
 		createdAt := pr.GetCreatedAt().UTC()
+		existing := state.OpenPR
+		attempts := 0
+		lastCIPollAt := time.Time{}
+		lastCIConclusion := ""
+		lastFailedChecks := []string(nil)
+		lastAIAssessment := ""
+		lastRerunAction := ""
+		lastClosureComment := ""
+		if existing != nil {
+			attempts = existing.CIAttemptCount
+			lastCIPollAt = existing.LastCIPollAt
+			lastCIConclusion = existing.LastCIConclusion
+			lastFailedChecks = append([]string(nil), existing.LastFailedChecks...)
+			lastAIAssessment = existing.LastAIAssessment
+			lastRerunAction = existing.LastRerunAction
+			lastClosureComment = existing.LastClosureComment
+		}
 		state.OpenPR = &trackedRemediationPRState{
-			Number:     pr.GetNumber(),
-			URL:        pr.GetHTMLURL(),
-			CreatedAt:  createdAt,
-			LastSeenAt: now.UTC(),
+			Number:             pr.GetNumber(),
+			URL:                pr.GetHTMLURL(),
+			Branch:             pr.GetHead().GetRef(),
+			HeadSHA:            pr.GetHead().GetSHA(),
+			CreatedAt:          createdAt,
+			LastSeenAt:         now.UTC(),
+			CIAttemptCount:     attempts,
+			LastCIPollAt:       lastCIPollAt,
+			LastCIConclusion:   lastCIConclusion,
+			LastFailedChecks:   lastFailedChecks,
+			LastAIAssessment:   lastAIAssessment,
+			LastRerunAction:    lastRerunAction,
+			LastClosureComment: lastClosureComment,
 		}
 	}, now)
 }
