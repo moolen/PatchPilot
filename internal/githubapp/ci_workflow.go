@@ -80,6 +80,21 @@ func (service *Service) continueOpenRemediationPR(ctx context.Context, client *g
 	if pr.GetState() != "open" {
 		return true, nil
 	}
+	meaningfulFiles, err := service.pullRequestMeaningfulFiles(ctx, client, owner, repo, pr.GetNumber())
+	if err != nil {
+		return true, err
+	}
+	if len(meaningfulFiles) == 0 {
+		service.log("warn", "closing remediation PR with only .patchpilot changes", map[string]interface{}{
+			"owner": owner,
+			"repo":  repo,
+			"pr":    pr.GetNumber(),
+		})
+		if err := service.closeArtifactOnlyRemediationPR(ctx, client, owner, repo, repoKey, pr, now); err != nil {
+			return true, err
+		}
+		return false, nil
+	}
 	return true, service.manageRemediationPullRequest(ctx, client, token, owner, repo, repoKey, pr, now)
 }
 

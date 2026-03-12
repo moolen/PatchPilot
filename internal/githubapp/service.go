@@ -436,7 +436,33 @@ func (service *Service) runRepositoryCycleWithOptions(parentCtx context.Context,
 			"error": err.Error(),
 		})
 	} else if existingPR != nil {
-		if trackErr := service.trackOpenRemediationPR(repoKey, existingPR, now); trackErr != nil {
+		meaningfulFiles, filesErr := service.pullRequestMeaningfulFiles(ctx, client, owner, repo, existingPR.GetNumber())
+		if filesErr != nil {
+			service.log("warn", "inspect remediation PR files failed", map[string]interface{}{
+				"owner": owner,
+				"repo":  repo,
+				"pr":    existingPR.GetNumber(),
+				"error": filesErr.Error(),
+			})
+			return
+		}
+		if len(meaningfulFiles) == 0 {
+			service.log("warn", "closing remediation PR with only .patchpilot changes", map[string]interface{}{
+				"owner": owner,
+				"repo":  repo,
+				"pr":    existingPR.GetNumber(),
+			})
+			if closeErr := service.closeArtifactOnlyRemediationPR(ctx, client, owner, repo, repoKey, existingPR, now); closeErr != nil {
+				service.log("warn", "close artifact-only remediation PR failed", map[string]interface{}{
+					"owner": owner,
+					"repo":  repo,
+					"pr":    existingPR.GetNumber(),
+					"error": closeErr.Error(),
+				})
+				return
+			}
+			existingPR = nil
+		} else if trackErr := service.trackOpenRemediationPR(repoKey, existingPR, now); trackErr != nil {
 			service.log("warn", "track existing remediation PR failed", map[string]interface{}{
 				"owner": owner,
 				"repo":  repo,

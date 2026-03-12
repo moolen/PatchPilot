@@ -163,6 +163,71 @@ func TestSchedulerCycleIgnoresPatchpilotArtifacts(t *testing.T) {
 	}
 }
 
+func TestSchedulerCycleClosesTrackedArtifactOnlyRemediationPR(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
+	oldPRNumber := fakeAPI.addOpenPR(remediationPRTitle, "patchpilot/auto-fix-existing", "master", []string{".patchpilot/generated.txt"})
+	oldPR, ok := fakeAPI.pullRequest(oldPRNumber)
+	if !ok {
+		t.Fatalf("expected seeded pull request")
+	}
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	repoKey := normalizeRepoName(owner + "/" + repo)
+	now := time.Now().UTC()
+	if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+		state.OpenPR = &trackedRemediationPRState{
+			Number:     oldPR.Number,
+			URL:        oldPR.HTMLURL,
+			Branch:     oldPR.Head,
+			HeadSHA:    oldPR.HeadSHA,
+			CreatedAt:  oldPR.CreatedAt,
+			LastSeenAt: now,
+		}
+	}, now); err != nil {
+		t.Fatalf("seed tracked pull request state: %v", err)
+	}
+
+	service.runSchedulerCycle(context.Background())
+
+	closedPR, ok := fakeAPI.pullRequest(oldPRNumber)
+	if !ok {
+		t.Fatalf("expected original pull request to remain addressable")
+	}
+	if closedPR.State != "closed" {
+		t.Fatalf("expected artifact-only remediation PR to be closed, got state=%q", closedPR.State)
+	}
+	created, _ := fakeAPI.counts()
+	if created != 1 {
+		t.Fatalf("expected replacement remediation PR to be created, got created=%d", created)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 1 {
+		t.Fatalf("scan count = %d, want 1", count)
+	}
+
+	state := service.state.Get(repoKey)
+	if state.OpenPR == nil {
+		t.Fatalf("expected replacement remediation PR to be tracked")
+	}
+	if state.OpenPR.Number == oldPRNumber {
+		t.Fatalf("expected a new remediation PR number, still tracking %d", oldPRNumber)
+	}
+	newPR, ok := fakeAPI.pullRequest(state.OpenPR.Number)
+	if !ok {
+		t.Fatalf("expected replacement pull request %d", state.OpenPR.Number)
+	}
+	if newPR.State != "open" {
+		t.Fatalf("expected replacement pull request to stay open, got state=%q", newPR.State)
+	}
+}
+
 func TestSchedulerCycleRequiresRepositoryOptInLabel(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
@@ -437,6 +502,7 @@ type fakePR struct {
 	HeadSHA   string
 	Base      string
 	Body      string
+	Files     []string
 	NodeID    string
 	HTMLURL   string
 	State     string
@@ -467,6 +533,35 @@ func (api *fakeSchedulerGitHubAPI) closeMergedPR(number int, mergedAt time.Time)
 	pr.State = "closed"
 	pr.MergedAt = mergedAt.UTC()
 	api.prs[number] = pr
+}
+
+func (api *fakeSchedulerGitHubAPI) addOpenPR(title, head, base string, files []string) int {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
+	prNumber := api.nextPRNumber
+	api.nextPRNumber++
+	api.prs[prNumber] = fakePR{
+		Number:    prNumber,
+		Title:     title,
+		Head:      head,
+		HeadSHA:   "fake-head-sha",
+		Base:      base,
+		Files:     append([]string(nil), files...),
+		NodeID:    "PR_node_" + strconv.Itoa(prNumber),
+		HTMLURL:   "https://example.com/" + api.owner + "/" + api.repo + "/pull/" + strconv.Itoa(prNumber),
+		State:     "open",
+		CreatedAt: time.Now().UTC(),
+	}
+	return prNumber
+}
+
+func (api *fakeSchedulerGitHubAPI) pullRequest(number int) (fakePR, bool) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
+	pr, ok := api.prs[number]
+	return pr, ok
 }
 
 func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -559,6 +654,29 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 
 	if strings.HasPrefix(path, basePullsPath+"/") && request.Method == http.MethodGet {
 		numberText := strings.TrimPrefix(path, basePullsPath+"/")
+		if strings.HasSuffix(numberText, "/files") {
+			numberText = strings.TrimSuffix(numberText, "/files")
+			number, err := strconv.Atoi(numberText)
+			if err != nil {
+				http.Error(writer, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			api.mu.Lock()
+			pr, ok := api.prs[number]
+			api.mu.Unlock()
+			if !ok {
+				http.Error(writer, "not found", http.StatusNotFound)
+				return
+			}
+
+			files := make([]map[string]interface{}, 0, len(pr.Files))
+			for _, file := range pr.Files {
+				files = append(files, map[string]interface{}{"filename": file})
+			}
+			writeJSON(writer, files)
+			return
+		}
 		number, err := strconv.Atoi(numberText)
 		if err != nil {
 			http.Error(writer, err.Error(), http.StatusBadRequest)
@@ -600,6 +718,7 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 			HeadSHA:   "fake-head-sha",
 			Base:      payload.Base,
 			Body:      payload.Body,
+			Files:     []string{"README.md"},
 			NodeID:    "PR_node_" + strconv.Itoa(prNumber),
 			HTMLURL:   "https://example.com/" + api.owner + "/" + api.repo + "/pull/" + strconv.Itoa(prNumber),
 			State:     "open",
@@ -624,6 +743,7 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 		var payload struct {
 			Title *string `json:"title"`
 			Body  *string `json:"body"`
+			State *string `json:"state"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
 			http.Error(writer, err.Error(), http.StatusBadRequest)
@@ -638,11 +758,21 @@ func (api *fakeSchedulerGitHubAPI) ServeHTTP(writer http.ResponseWriter, request
 		if payload.Body != nil {
 			pr.Body = *payload.Body
 		}
+		if payload.State != nil {
+			pr.State = *payload.State
+		}
 		api.prs[number] = pr
-		api.editedPRs++
+		if payload.Title != nil || payload.Body != nil {
+			api.editedPRs++
+		}
 		api.mu.Unlock()
 
 		writeJSON(writer, pullRequestPayload(pr))
+		return
+	}
+
+	if strings.HasPrefix(path, "/api/v3/repos/"+api.owner+"/"+api.repo+"/git/refs/heads/") && request.Method == http.MethodDelete {
+		writer.WriteHeader(http.StatusNoContent)
 		return
 	}
 

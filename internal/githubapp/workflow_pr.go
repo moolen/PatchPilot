@@ -27,6 +27,37 @@ func (service *Service) remediationPRBody(trigger, command string, result fixRun
 	)
 }
 
+func (service *Service) pullRequestMeaningfulFiles(ctx context.Context, client *github.Client, owner, repo string, number int) ([]string, error) {
+	if number <= 0 {
+		return nil, nil
+	}
+
+	options := &github.ListOptions{PerPage: 100}
+	files := make([]string, 0, 16)
+	for {
+		var responseFiles []*github.CommitFile
+		var response *github.Response
+		err := service.withGitHubRetry(ctx, "list_pull_request_files", func(callCtx context.Context) error {
+			var listErr error
+			responseFiles, response, listErr = client.PullRequests.ListFiles(callCtx, owner, repo, number, options)
+			return listErr
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		for _, file := range responseFiles {
+			files = append(files, file.GetFilename())
+		}
+		if response == nil || response.NextPage == 0 {
+			break
+		}
+		options.Page = response.NextPage
+	}
+
+	return filterMeaningfulPaths(files), nil
+}
+
 func (service *Service) findOpenRemediationPR(ctx context.Context, client *github.Client, owner, repo, baseBranch string) (*github.PullRequest, bool, error) {
 	options := &github.PullRequestListOptions{
 		State: "open",
@@ -57,6 +88,27 @@ func (service *Service) findOpenRemediationPR(ctx context.Context, client *githu
 		}
 	}
 	return nil, false, nil
+}
+
+func (service *Service) closeArtifactOnlyRemediationPR(ctx context.Context, client *github.Client, owner, repo, repoKey string, pr *github.PullRequest, now time.Time) error {
+	if pr == nil {
+		return nil
+	}
+
+	if err := service.withGitHubRetry(ctx, "close_pull_request_artifact_only", func(callCtx context.Context) error {
+		_, _, closeErr := client.PullRequests.Edit(callCtx, owner, repo, pr.GetNumber(), &github.PullRequest{
+			State: github.Ptr("closed"),
+		})
+		return closeErr
+	}); err != nil {
+		return err
+	}
+	if err := service.deleteBranch(ctx, client, owner, repo, pr.GetHead().GetRef()); err != nil && !isGitHubNotFound(err) {
+		return err
+	}
+	return service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+		state.OpenPR = nil
+	}, now)
 }
 
 func (service *Service) upsertRemediationPR(ctx context.Context, client *github.Client, owner, repo, baseBranch, headBranch, body string, existing *github.PullRequest) (*github.PullRequest, bool, error) {
