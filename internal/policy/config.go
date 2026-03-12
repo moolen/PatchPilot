@@ -30,16 +30,11 @@ const (
 	RegistryAuthNone   = "none"
 	RegistryAuthBearer = "bearer"
 
-	DockerPatchAuto     = "auto"
-	DockerPatchDisabled = "disabled"
-
 	GoRuntimePatchDisabled  = "disabled"
 	GoRuntimePatchToolchain = "toolchain"
 	GoRuntimePatchMinimum   = "minimum"
 
-	ArtifactsTargetsCommandModeReplace = "replace"
-	ArtifactsTargetsCommandModeAppend  = "append"
-	DefaultArtifactsTargetsTimeout     = "2m"
+	OCITagStrategyLatestSemver = "latest-semver"
 
 	ScanCronDisabled    = "disabled"
 	DefaultScanCron     = "0 0 * * *"
@@ -62,9 +57,8 @@ type Config struct {
 	Exclude       ExcludePolicy       `yaml:"exclude"`
 	Scan          ScanPolicy          `yaml:"scan"`
 	Registry      RegistryPolicy      `yaml:"registry"`
-	Docker        DockerPolicy        `yaml:"docker"`
 	Go            GoPolicy            `yaml:"go"`
-	Artifacts     ArtifactsPolicy     `yaml:"artifacts"`
+	OCI           OCIPolicy           `yaml:"oci"`
 	Agent         AgentPolicy         `yaml:"agent"`
 }
 
@@ -95,6 +89,7 @@ type AgentFixVulnerabilitiesPromptsPolicy struct {
 	ValidationFailed         []AgentRemediationPromptPolicy `yaml:"validation_failed"`
 	VulnerabilitiesRemaining []AgentRemediationPromptPolicy `yaml:"vulnerabilities_remaining"`
 	VerificationRegressed    []AgentRemediationPromptPolicy `yaml:"verification_regressed"`
+	ContainerOSPatching      []AgentRemediationPromptPolicy `yaml:"container_os_patching"`
 }
 
 type GoPolicy struct {
@@ -177,69 +172,33 @@ type RegistryAuthPolicy struct {
 	TokenEnv string `yaml:"token_env"`
 }
 
-type DockerPolicy struct {
-	AllowedBaseImages    []string              `yaml:"allowed_base_images"`
-	DisallowedBaseImages []string              `yaml:"disallowed_base_images"`
-	BaseImageRules       []DockerBaseImageRule `yaml:"base_image_rules"`
-	Patching             DockerPatchingPolicy  `yaml:"patching"`
+type OCIPolicy struct {
+	Policies       []OCIImagePolicy       `yaml:"policies"`
+	ExternalImages []OCIExternalImageSpec `yaml:"external_images"`
 }
 
-type DockerBaseImageRule struct {
-	Image   string                  `yaml:"image"`
-	TagSets []DockerBaseImageTagSet `yaml:"tag_sets"`
-	Deny    []string                `yaml:"deny"`
+type OCIImagePolicy struct {
+	Name   string       `yaml:"name"`
+	Source string       `yaml:"source"`
+	Tags   OCITagPolicy `yaml:"tags"`
 }
 
-type DockerBaseImageTagSet struct {
-	SemverRange string   `yaml:"semver_range"`
-	Allow       []string `yaml:"allow"`
+type OCITagPolicy struct {
+	Allow  []string          `yaml:"allow"`
+	Semver []OCISemverPolicy `yaml:"semver"`
+	Deny   []string          `yaml:"deny"`
 }
 
-type DockerPatchingPolicy struct {
-	BaseImages string `yaml:"base_images"`
-	OSPackages string `yaml:"os_packages"`
+type OCISemverPolicy struct {
+	Range             []string `yaml:"range"`
+	IncludePrerelease bool     `yaml:"includePrerelease"`
+	PrereleaseAllow   []string `yaml:"prereleaseAllow"`
 }
 
-type ArtifactsPolicy struct {
-	Targets        []ArtifactTargetPolicy        `yaml:"targets"`
-	TargetsCommand ArtifactsTargetsCommandPolicy `yaml:"targets_command"`
-}
-
-type ArtifactTargetPolicy struct {
-	ID         string              `yaml:"id"`
-	Dockerfile string              `yaml:"dockerfile"`
-	Context    string              `yaml:"context"`
-	Image      ArtifactImagePolicy `yaml:"image"`
-	Build      ArtifactBuildPolicy `yaml:"build"`
-	Scan       ArtifactScanPolicy  `yaml:"scan"`
-}
-
-type ArtifactImagePolicy struct {
-	Tag string `yaml:"tag"`
-}
-
-type ArtifactBuildPolicy struct {
-	Run     string `yaml:"run"`
-	Timeout string `yaml:"timeout"`
-}
-
-type ArtifactScanPolicy struct {
-	Enabled *bool `yaml:"enabled"`
-}
-
-func (policy ArtifactScanPolicy) EnabledOrDefault() bool {
-	return policy.Enabled == nil || *policy.Enabled
-}
-
-type ArtifactsTargetsCommandPolicy struct {
-	Run         string `yaml:"run"`
-	Timeout     string `yaml:"timeout"`
-	Mode        string `yaml:"mode"`
-	FailOnError *bool  `yaml:"fail_on_error"`
-}
-
-func (policy ArtifactsTargetsCommandPolicy) FailOnErrorOrDefault() bool {
-	return policy.FailOnError == nil || *policy.FailOnError
+type OCIExternalImageSpec struct {
+	Source      string   `yaml:"source"`
+	Dockerfiles []string `yaml:"dockerfiles"`
+	Tag         string   `yaml:"tag"`
 }
 
 type LoadOptions struct {
@@ -265,12 +224,6 @@ func Default() *Config {
 		Registry: RegistryPolicy{
 			Auth: RegistryAuthPolicy{
 				Mode: RegistryAuthAuto,
-			},
-		},
-		Docker: DockerPolicy{
-			Patching: DockerPatchingPolicy{
-				BaseImages: DockerPatchAuto,
-				OSPackages: DockerPatchAuto,
 			},
 		},
 		Go: GoPolicy{
@@ -561,7 +514,6 @@ func sanitizeUntrustedRepoPolicyMap(root map[string]any) map[string]any {
 	delete(sanitized, "verification")
 	delete(sanitized, "post_execution")
 	delete(sanitized, "registry")
-	delete(sanitized, "artifacts")
 	delete(sanitized, "agent")
 
 	return sanitized
@@ -809,52 +761,74 @@ func normalizeAndValidate(cfg *Config) error {
 		}
 	}
 
-	cfg.Docker.AllowedBaseImages = dedupeNonEmpty(cfg.Docker.AllowedBaseImages)
-	cfg.Docker.DisallowedBaseImages = dedupeNonEmpty(cfg.Docker.DisallowedBaseImages)
-	seenBaseImageRules := map[string]struct{}{}
-	for index := range cfg.Docker.BaseImageRules {
-		rule := &cfg.Docker.BaseImageRules[index]
-		rule.Image = strings.TrimSpace(rule.Image)
-		if rule.Image == "" {
-			return fmt.Errorf("docker.base_image_rules[%d].image must not be empty", index)
+	seenPolicies := map[string]struct{}{}
+	for index := range cfg.OCI.Policies {
+		ociPolicy := &cfg.OCI.Policies[index]
+		ociPolicy.Name = strings.TrimSpace(ociPolicy.Name)
+		if ociPolicy.Name == "" {
+			ociPolicy.Name = fmt.Sprintf("policy-%d", index+1)
 		}
-		if _, exists := seenBaseImageRules[rule.Image]; exists {
-			return fmt.Errorf("docker.base_image_rules[%d].image duplicates %q", index, rule.Image)
+		if _, exists := seenPolicies[ociPolicy.Name]; exists {
+			return fmt.Errorf("oci.policies[%d].name duplicates %q", index, ociPolicy.Name)
 		}
-		seenBaseImageRules[rule.Image] = struct{}{}
-		rule.Deny = dedupeNonEmpty(rule.Deny)
-		if len(rule.TagSets) == 0 {
-			return fmt.Errorf("docker.base_image_rules[%d].tag_sets must not be empty", index)
+		seenPolicies[ociPolicy.Name] = struct{}{}
+
+		ociPolicy.Source = strings.TrimSpace(ociPolicy.Source)
+		if ociPolicy.Source == "" {
+			return fmt.Errorf("oci.policies[%d].source must not be empty", index)
 		}
-		for denyIndex, pattern := range rule.Deny {
+		ociPolicy.Tags.Allow = dedupeNonEmpty(ociPolicy.Tags.Allow)
+		for allowIndex, pattern := range ociPolicy.Tags.Allow {
 			if _, err := regexp.Compile(pattern); err != nil {
-				return fmt.Errorf("docker.base_image_rules[%d].deny[%d] is invalid: %w", index, denyIndex, err)
+				return fmt.Errorf("oci.policies[%d].tags.allow[%d] is invalid: %w", index, allowIndex, err)
 			}
 		}
-		for tagSetIndex := range rule.TagSets {
-			tagSet := &rule.TagSets[tagSetIndex]
-			tagSet.SemverRange = strings.TrimSpace(tagSet.SemverRange)
-			tagSet.Allow = dedupeNonEmpty(tagSet.Allow)
-			for allowIndex, pattern := range tagSet.Allow {
+		ociPolicy.Tags.Deny = dedupeNonEmpty(ociPolicy.Tags.Deny)
+		for denyIndex, pattern := range ociPolicy.Tags.Deny {
+			if _, err := regexp.Compile(pattern); err != nil {
+				return fmt.Errorf("oci.policies[%d].tags.deny[%d] is invalid: %w", index, denyIndex, err)
+			}
+		}
+		for semverIndex := range ociPolicy.Tags.Semver {
+			semverRule := &ociPolicy.Tags.Semver[semverIndex]
+			semverRule.Range = dedupeNonEmpty(semverRule.Range)
+			for rangeIndex := range semverRule.Range {
+				semverRule.Range[rangeIndex] = strings.TrimSpace(semverRule.Range[rangeIndex])
+				if semverRule.Range[rangeIndex] == "" {
+					return fmt.Errorf("oci.policies[%d].tags.semver[%d].range[%d] must not be empty", index, semverIndex, rangeIndex)
+				}
+			}
+			semverRule.PrereleaseAllow = dedupeNonEmpty(semverRule.PrereleaseAllow)
+			for preIndex, pattern := range semverRule.PrereleaseAllow {
 				if _, err := regexp.Compile(pattern); err != nil {
-					return fmt.Errorf("docker.base_image_rules[%d].tag_sets[%d].allow[%d] is invalid: %w", index, tagSetIndex, allowIndex, err)
+					return fmt.Errorf("oci.policies[%d].tags.semver[%d].prereleaseAllow[%d] is invalid: %w", index, semverIndex, preIndex, err)
 				}
 			}
 		}
 	}
-	cfg.Docker.Patching.BaseImages = normalizeLower(cfg.Docker.Patching.BaseImages)
-	if cfg.Docker.Patching.BaseImages == "" {
-		cfg.Docker.Patching.BaseImages = DockerPatchAuto
-	}
-	if cfg.Docker.Patching.BaseImages != DockerPatchAuto && cfg.Docker.Patching.BaseImages != DockerPatchDisabled {
-		return fmt.Errorf("docker.patching.base_images must be %q or %q", DockerPatchAuto, DockerPatchDisabled)
-	}
-	cfg.Docker.Patching.OSPackages = normalizeLower(cfg.Docker.Patching.OSPackages)
-	if cfg.Docker.Patching.OSPackages == "" {
-		cfg.Docker.Patching.OSPackages = DockerPatchAuto
-	}
-	if cfg.Docker.Patching.OSPackages != DockerPatchAuto && cfg.Docker.Patching.OSPackages != DockerPatchDisabled {
-		return fmt.Errorf("docker.patching.os_packages must be %q or %q", DockerPatchAuto, DockerPatchDisabled)
+
+	for index := range cfg.OCI.ExternalImages {
+		image := &cfg.OCI.ExternalImages[index]
+		image.Source = strings.TrimSpace(image.Source)
+		if image.Source == "" {
+			return fmt.Errorf("oci.external_images[%d].source must not be empty", index)
+		}
+		cleanedDockerfiles := make([]string, 0, len(image.Dockerfiles))
+		for dockerfileIndex, dockerfile := range image.Dockerfiles {
+			cleaned := cleanRelativePath(dockerfile)
+			if cleaned == "" {
+				return fmt.Errorf("oci.external_images[%d].dockerfiles[%d] must not be empty", index, dockerfileIndex)
+			}
+			cleanedDockerfiles = append(cleanedDockerfiles, cleaned)
+		}
+		image.Dockerfiles = dedupeNonEmptyPaths(cleanedDockerfiles)
+		if len(image.Dockerfiles) == 0 {
+			return fmt.Errorf("oci.external_images[%d].dockerfiles must not be empty", index)
+		}
+		image.Tag = strings.TrimSpace(image.Tag)
+		if image.Tag == "" {
+			image.Tag = OCITagStrategyLatestSemver
+		}
 	}
 
 	cfg.Go.Patching.Runtime = normalizeLower(cfg.Go.Patching.Runtime)
@@ -863,35 +837,6 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 	if cfg.Go.Patching.Runtime != GoRuntimePatchDisabled && cfg.Go.Patching.Runtime != GoRuntimePatchToolchain && cfg.Go.Patching.Runtime != GoRuntimePatchMinimum {
 		return fmt.Errorf("go.patching.runtime must be %q, %q, or %q", GoRuntimePatchDisabled, GoRuntimePatchToolchain, GoRuntimePatchMinimum)
-	}
-
-	if err := normalizeArtifactTargets(cfg.Artifacts.Targets, "artifacts.targets"); err != nil {
-		return err
-	}
-
-	cfg.Artifacts.TargetsCommand.Run = strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run)
-	cfg.Artifacts.TargetsCommand.Mode = normalizeLower(cfg.Artifacts.TargetsCommand.Mode)
-	if cfg.Artifacts.TargetsCommand.Mode == "" {
-		cfg.Artifacts.TargetsCommand.Mode = ArtifactsTargetsCommandModeReplace
-	}
-	if cfg.Artifacts.TargetsCommand.Mode != ArtifactsTargetsCommandModeReplace && cfg.Artifacts.TargetsCommand.Mode != ArtifactsTargetsCommandModeAppend {
-		return fmt.Errorf(
-			"artifacts.targets_command.mode must be %q or %q",
-			ArtifactsTargetsCommandModeReplace,
-			ArtifactsTargetsCommandModeAppend,
-		)
-	}
-
-	cfg.Artifacts.TargetsCommand.Timeout = strings.TrimSpace(cfg.Artifacts.TargetsCommand.Timeout)
-	if cfg.Artifacts.TargetsCommand.Timeout == "" {
-		cfg.Artifacts.TargetsCommand.Timeout = DefaultArtifactsTargetsTimeout
-	}
-	timeout, err := time.ParseDuration(cfg.Artifacts.TargetsCommand.Timeout)
-	if err != nil {
-		return fmt.Errorf("artifacts.targets_command.timeout is invalid: %w", err)
-	}
-	if timeout <= 0 {
-		return fmt.Errorf("artifacts.targets_command.timeout must be > 0")
 	}
 
 	var promptBytes int
@@ -968,71 +913,16 @@ func normalizeAndValidate(cfg *Config) error {
 	if errPrompt != nil {
 		return errPrompt
 	}
+	cfg.Agent.RemediationPrompts.FixVulnerabilities.ContainerOSPatching, _, errPrompt = normalizePromptList(
+		cfg.Agent.RemediationPrompts.FixVulnerabilities.ContainerOSPatching,
+		"agent.remediation_prompts.fix_vulnerabilities.container_os_patching",
+		promptBytes,
+	)
+	if errPrompt != nil {
+		return errPrompt
+	}
 
 	return nil
-}
-
-func NormalizeArtifactTargets(targets []ArtifactTargetPolicy) ([]ArtifactTargetPolicy, error) {
-	normalized := append([]ArtifactTargetPolicy(nil), targets...)
-	if err := normalizeArtifactTargets(normalized, "artifacts.targets"); err != nil {
-		return nil, err
-	}
-	return normalized, nil
-}
-
-func normalizeArtifactTargets(targets []ArtifactTargetPolicy, field string) error {
-	for index := range targets {
-		target := &targets[index]
-		target.ID = strings.TrimSpace(target.ID)
-		if target.ID == "" {
-			target.ID = fmt.Sprintf("target-%d", index+1)
-		}
-
-		target.Dockerfile = cleanRelativePath(target.Dockerfile)
-		if target.Dockerfile == "" {
-			return fmt.Errorf("%s[%d].dockerfile must not be empty", field, index)
-		}
-
-		explicitRepoRootContext := isExplicitRepoRootArtifactContext(target.Context)
-		target.Context = cleanRelativePath(target.Context)
-		if target.Context == "" {
-			if explicitRepoRootContext {
-				target.Context = "."
-			} else {
-				target.Context = cleanRelativePath(filepath.Dir(target.Dockerfile))
-			}
-		}
-
-		target.Image.Tag = strings.TrimSpace(target.Image.Tag)
-		if target.Image.Tag == "" {
-			return fmt.Errorf("%s[%d].image.tag must not be empty", field, index)
-		}
-
-		target.Build.Run = strings.TrimSpace(target.Build.Run)
-		if target.Build.Run == "" {
-			return fmt.Errorf("%s[%d].build.run must not be empty", field, index)
-		}
-		target.Build.Timeout = strings.TrimSpace(target.Build.Timeout)
-		if target.Build.Timeout == "" {
-			target.Build.Timeout = "30m"
-		}
-		timeout, err := time.ParseDuration(target.Build.Timeout)
-		if err != nil {
-			return fmt.Errorf("%s[%d].build.timeout is invalid: %w", field, index, err)
-		}
-		if timeout <= 0 {
-			return fmt.Errorf("%s[%d].build.timeout must be > 0", field, index)
-		}
-	}
-	return nil
-}
-
-func isExplicitRepoRootArtifactContext(value string) bool {
-	trimmed := filepath.ToSlash(strings.TrimSpace(value))
-	if trimmed == "" {
-		return false
-	}
-	return strings.TrimRight(trimmed, "/") == "."
 }
 
 func (cfg *Config) ResolveScanSchedule() (cron.Schedule, *time.Location, bool, error) {

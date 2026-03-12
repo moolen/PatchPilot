@@ -53,7 +53,7 @@ Required:
 Common optional settings:
 
 - `PP_GITHUB_AUTH_MODE`: `app`, `token`, or `auto`. Defaults to `auto`.
-- `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE`: operator-managed YAML file for repository-to-OCI-image mappings and app remediation prompts.
+- `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE`: operator-managed YAML file for external OCI mappings (`oci.mappings`) and optional app remediation settings.
 - `PP_WORKDIR`: temporary working directory root.
 - `PP_PATCHPILOT_BINARY`: path to the PatchPilot binary.
 - `PP_AGENT_COMMAND`: external agent command used for container OS patching and CI failure triage/repair.
@@ -77,11 +77,14 @@ Common optional settings:
 Operator-managed app config example:
 
 ```yaml
-repositories:
-  acme/demo:
-    image_repository: ghcr.io/acme/demo
-    dockerfiles:
-      - Dockerfile
+oci:
+  mappings:
+    - repo: acme/demo
+      images:
+        - source: ghcr.io/acme/demo
+          dockerfiles:
+            - Dockerfile
+          tag: latest-semver
 remediation:
   max_ci_attempts: 3
   prompts:
@@ -90,6 +93,8 @@ remediation:
         template: |
           Return JSON only.
 ```
+
+`patchpilot-app` watches this file and hot-reloads it. Invalid updates are logged and ignored, and the last valid configuration remains active.
 
 Example gradual rollout:
 

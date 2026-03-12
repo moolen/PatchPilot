@@ -103,8 +103,9 @@ func (service *Service) manageRemediationPullRequest(ctx context.Context, client
 		return nil
 	}
 	maxAttempts := defaultMaxCIAttempts
-	if service.runtime != nil && service.runtime.Remediation.MaxCIAttempts > 0 {
-		maxAttempts = service.runtime.Remediation.MaxCIAttempts
+	runtimeCfg := service.runtimeSnapshot()
+	if runtimeCfg != nil && runtimeCfg.Remediation.MaxCIAttempts > 0 {
+		maxAttempts = runtimeCfg.Remediation.MaxCIAttempts
 	}
 	for {
 		state, err := service.fetchPullRequestCIState(ctx, client, owner, repo, pr)
@@ -320,13 +321,18 @@ func (service *Service) assessPullRequestFailure(ctx context.Context, token, own
 	if err != nil {
 		return ciAssessment{}, evidence, err
 	}
+	runtimeCfg := service.runtimeSnapshot()
+	ciAssessmentPrompts := []policy.AgentRemediationPromptPolicy(nil)
+	if runtimeCfg != nil {
+		ciAssessmentPrompts = runtimeCfg.Remediation.Prompts.CIFailureAssessment
+	}
 	responseText, err := service.runStructuredAgentAttempt(ctx, pr.GetHead().GetRef(), "ci-assessment", "github_app_ci_failure_assessment", "Classify the PR CI failure and respond with JSON only.", string(data), []string{
 		"Do not modify repository files.",
 		"Respond with JSON only.",
 	}, []string{
 		"Inspect failing checks and logs.",
 		"Output JSON with classification, summary, and recommended_action.",
-	}, service.runtime.Remediation.Prompts.CIFailureAssessment)
+	}, ciAssessmentPrompts)
 	if err != nil {
 		return ciAssessment{}, evidence, err
 	}
@@ -513,7 +519,13 @@ func (service *Service) repairPullRequestBranch(ctx context.Context, owner, repo
 		"Inspect the failing CI evidence.",
 		"Patch the repository branch only if the failure appears related to the remediation.",
 		"Do not run validation commands.",
-	}, service.runtime.Remediation.Prompts.CIFailureRepair); err != nil {
+	}, func() []policy.AgentRemediationPromptPolicy {
+		runtimeCfg := service.runtimeSnapshot()
+		if runtimeCfg == nil {
+			return nil
+		}
+		return runtimeCfg.Remediation.Prompts.CIFailureRepair
+	}()); err != nil {
 		return err
 	}
 	changed, err := hasRepositoryChanges(ctx, repoPath)

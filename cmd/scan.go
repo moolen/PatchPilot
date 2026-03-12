@@ -8,7 +8,7 @@ import (
 	"github.com/moolen/patchpilot/internal/report"
 )
 
-func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool) (runErr error) {
+func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool, ociContext ociScanContext) (runErr error) {
 	tracker := newRunTracker("scan", repo, jsonOutput)
 	defer func() {
 		failure := classifyRunFailure(runErr, nil, false, false, nil)
@@ -32,7 +32,7 @@ func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bo
 	tracker.endStageSuccess(stage, nil)
 
 	stage = tracker.beginStage("scan_vulnerabilities")
-	vulnReport, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "scan", "scan")
+	vulnReport, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "scan", "scan", ociContext)
 	if err != nil {
 		tracker.endStageFailure(stage, err, nil)
 		return err

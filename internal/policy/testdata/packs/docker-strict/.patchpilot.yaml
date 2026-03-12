@@ -1,12 +1,20 @@
 version: 1
-docker:
-  allowed_base_images:
-    - golang:*
-    - cgr.dev/chainguard/*
-    - golang:*
-  disallowed_base_images:
-    - ubuntu:latest
-    - ubuntu:latest
-  patching:
-    base_images: disabled
-    os_packages: auto
+oci:
+  policies:
+    - name: " strict "
+      source: ghcr.io/example/*
+      tags:
+        allow:
+          - '^v?\d+\.\d+\.\d+$'
+          - '^v?\d+\.\d+\.\d+$'
+        semver:
+          - range:
+              - " >=1.2.3 <2.0.0 "
+              - ">=1.2.3 <2.0.0"
+            includePrerelease: false
+            prereleaseAllow:
+              - '-rc\.'
+              - '-rc\.'
+        deny:
+          - '-debug$'
+          - '-debug$'

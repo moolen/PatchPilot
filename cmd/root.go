@@ -19,6 +19,7 @@ type cliOptions struct {
 	repoURL             string
 	policyPath          string
 	policyMode          string
+	ociMappingFile      string
 	untrustedRepoPolicy bool
 	jsonOutput          bool
 	enableAgent         bool
@@ -27,9 +28,6 @@ type cliOptions struct {
 	agentArtifactDir    string
 	findingsFile        string
 	repositoryKey       string
-	ociImage            string
-	ociImageTag         string
-	ociImageRepository  string
 }
 
 var (
@@ -81,6 +79,7 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&options.repoURL, "repo-url", "", "Git URL to clone into a temporary directory and use as the working repository")
 	root.PersistentFlags().StringVar(&options.policyPath, "policy", "", "Path to central policy file merged with in-repo .patchpilot.yaml")
 	root.PersistentFlags().StringVar(&options.policyMode, "policy-mode", "merge", "Policy layering mode when --policy is set (merge|override)")
+	root.PersistentFlags().StringVar(&options.ociMappingFile, "oci-mapping-file", "", "Path to external OCI image mapping file")
 	root.PersistentFlags().BoolVar(&options.untrustedRepoPolicy, "untrusted-repo-policy", false, "Treat repo-local .patchpilot.yaml as untrusted and ignore executable or secret-sensitive sections")
 	root.PersistentFlags().BoolVar(&options.jsonOutput, "json", false, "Emit structured JSON progress logs")
 	_ = root.PersistentFlags().MarkHidden("untrusted-repo-policy")
@@ -96,7 +95,7 @@ func NewRootCommand() *cobra.Command {
 }
 
 func newScanCommand(options *cliOptions) *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "scan [repo]",
 		Short: "Generate SBOM and scan for vulnerabilities",
 		Args:  cobra.MaximumNArgs(1),
@@ -109,9 +108,14 @@ func newScanCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runScan(command.Context(), repo, cfg, options.jsonOutput)
+			return runScan(command.Context(), repo, cfg, options.jsonOutput, ociScanContext{
+				RepositoryKey: options.repositoryKey,
+				MappingFile:   options.ociMappingFile,
+			})
 		},
 	}
+	command.Flags().StringVar(&options.repositoryKey, "repository-key", "", "Repository identifier for external OCI mapping lookups (owner/repo)")
+	return command
 }
 
 func newFixCommand(options *cliOptions) *cobra.Command {
@@ -137,9 +141,7 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 				JSONOutput:       options.jsonOutput,
 				FindingsFile:     options.findingsFile,
 				RepositoryKey:    options.repositoryKey,
-				OCIImage:         options.ociImage,
-				OCIImageTag:      options.ociImageTag,
-				OCIImageRepo:     options.ociImageRepository,
+				OCIMappingFile:   options.ociMappingFile,
 			})
 		},
 	}
@@ -150,19 +152,13 @@ func newFixCommand(options *cliOptions) *cobra.Command {
 	command.Flags().StringVar(&options.agentArtifactDir, "agent-artifact-dir", "", "Directory for agent attempt artifacts (default: <repo>/.patchpilot/agent state directory)")
 	command.Flags().StringVar(&options.findingsFile, "findings-file", "", "Path to normalized findings JSON (defaults to <repo>/.patchpilot/findings.json)")
 	command.Flags().StringVar(&options.repositoryKey, "repository-key", "", "Repository identifier used in agent state payloads")
-	command.Flags().StringVar(&options.ociImage, "oci-image", "", "Resolved OCI image reference for remediation context")
-	command.Flags().StringVar(&options.ociImageTag, "oci-image-tag", "", "Resolved OCI image tag for remediation context")
-	command.Flags().StringVar(&options.ociImageRepository, "oci-image-repository", "", "Resolved OCI image repository for remediation context")
 	_ = command.Flags().MarkHidden("repository-key")
-	_ = command.Flags().MarkHidden("oci-image")
-	_ = command.Flags().MarkHidden("oci-image-tag")
-	_ = command.Flags().MarkHidden("oci-image-repository")
 
 	return command
 }
 
 func newVerifyCommand(options *cliOptions) *cobra.Command {
-	return &cobra.Command{
+	command := &cobra.Command{
 		Use:   "verify [repo]",
 		Short: "Re-run scan and verification checks against saved baselines",
 		Args:  cobra.MaximumNArgs(1),
@@ -175,9 +171,14 @@ func newVerifyCommand(options *cliOptions) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runVerify(command.Context(), repo, cfg, options.jsonOutput)
+			return runVerify(command.Context(), repo, cfg, options.jsonOutput, ociScanContext{
+				RepositoryKey: options.repositoryKey,
+				MappingFile:   options.ociMappingFile,
+			})
 		},
 	}
+	command.Flags().StringVar(&options.repositoryKey, "repository-key", "", "Repository identifier for external OCI mapping lookups (owner/repo)")
+	return command
 }
 
 func resolveRepo(command *cobra.Command, options *cliOptions, args []string) (string, error) {

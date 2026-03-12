@@ -1,0 +1,8 @@
+oci:
+  mappings:
+    - repo: kong/kubernetes-ingress-controller
+      images:
+        - source: kong/kubernetes-ingress-controller
+          dockerfiles:
+            - Dockerfile
+          tag: latest-semver

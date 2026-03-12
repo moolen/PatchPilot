@@ -27,6 +27,7 @@ type DockerfileOptions struct {
 	AllowedBaseImages    []string
 	DisallowedBaseImages []string
 	BaseImageRules       []BaseImageRule
+	OCIPolicies          []OCIImagePolicy
 	BaseImagePatching    bool
 	OSPackagePatching    bool
 }
@@ -175,7 +176,7 @@ func patchDockerfileWithOptions(ctx context.Context, path string, need dockerNee
 
 	if options.BaseImagePatching {
 		for _, node := range fromNodes {
-			updatedLine, patch, ok := maybePatchFrom(ctx, node.Original, path, need.BasePackages, options.BaseImageRules)
+			updatedLine, patch, ok := maybePatchFrom(ctx, node.Original, path, options)
 			if !ok {
 				continue
 			}
@@ -276,7 +277,7 @@ func preferFixedVersion(current, candidate string) string {
 	return current
 }
 
-func maybePatchFrom(ctx context.Context, line, path string, versions map[string]string, rules []BaseImageRule) (string, Patch, bool) {
+func maybePatchFrom(ctx context.Context, line, path string, options DockerfileOptions) (string, Patch, bool) {
 	image, ok := extractFromImage(line)
 	if !ok {
 		return "", Patch{}, false
@@ -287,26 +288,17 @@ func maybePatchFrom(ctx context.Context, line, path string, versions map[string]
 		return "", Patch{}, false
 	}
 
-	if rule, ok := findMatchingBaseImageRule(repo, rules); ok {
-		updatedTag := resolveRuleDrivenImageTag(ctx, image, rule)
-		if updatedTag == "" || updatedTag == tag {
-			return "", Patch{}, false
+	updatedTag, reason := resolveOCIBaseImageTag(ctx, image, options.OCIPolicies)
+	if updatedTag == "" {
+		if rule, ok := findMatchingBaseImageRule(repo, options.BaseImageRules); ok {
+			updatedTag = resolveRuleDrivenImageTag(ctx, image, rule)
+			reason = repo
 		}
-		return buildPatchedFromLine(ctx, line, path, image, imageWithoutDigest, repo, tag, currentDigest, updatedTag, repo)
 	}
-
-	for pkg, fixed := range versions {
-		if !imageMatchesPackage(repo, pkg) {
-			continue
-		}
-		updatedTag := resolveUpdatedImageTag(ctx, image, fixed)
-		if updatedTag == "" || updatedTag == tag {
-			continue
-		}
-		return buildPatchedFromLine(ctx, line, path, image, imageWithoutDigest, repo, tag, currentDigest, updatedTag, pkg)
+	if updatedTag == "" || updatedTag == tag {
+		return "", Patch{}, false
 	}
-
-	return "", Patch{}, false
+	return buildPatchedFromLine(ctx, line, path, image, imageWithoutDigest, repo, tag, currentDigest, updatedTag, reason)
 }
 
 func buildPatchedFromLine(ctx context.Context, line, path, image, imageWithoutDigest, repo, currentTag, currentDigest, updatedTag, patchPackage string) (string, Patch, bool) {

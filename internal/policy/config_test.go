@@ -79,16 +79,19 @@ registry:
   auth:
     mode: bearer
     token_env: REGISTRY_TOKEN
-docker:
-  base_image_rules:
-    - image: registry.internal/platform/go-base
-      deny: [".*-debug$", ".*-debug$"]
-      tag_sets:
-        - semver_range: ">=1.21.1 <1.22.0"
-          allow: ["^v?\\d+\\.\\d+\\.\\d+-alpine$", "^v?\\d+\\.\\d+\\.\\d+-alpine$"]
-  patching:
-    base_images: disabled
-    os_packages: auto
+oci:
+  policies:
+    - name: platform-go
+      source: registry.internal/platform/go-base
+      tags:
+        deny: [".*-debug$", ".*-debug$"]
+        semver:
+          - range: [">=1.21.1 <1.22.0"]
+            includePrerelease: false
+        allow: ["^v?\\d+\\.\\d+\\.\\d+-alpine$", "^v?\\d+\\.\\d+\\.\\d+-alpine$"]
+  external_images:
+    - source: ghcr.io/example/app
+      dockerfiles: ["./images/Dockerfile", "./images/Dockerfile"]
 go:
   patching:
     runtime: toolchain
@@ -137,26 +140,23 @@ agent:
 	if cfg.Scan.Timezone != "Europe/Berlin" {
 		t.Fatalf("unexpected scan timezone: %q", cfg.Scan.Timezone)
 	}
-	if len(cfg.Docker.BaseImageRules) != 1 {
-		t.Fatalf("unexpected base image rules: %#v", cfg.Docker.BaseImageRules)
+	if len(cfg.OCI.Policies) != 1 {
+		t.Fatalf("unexpected OCI policies: %#v", cfg.OCI.Policies)
 	}
-	if cfg.Docker.BaseImageRules[0].Image != "registry.internal/platform/go-base" {
-		t.Fatalf("unexpected base image rule image: %#v", cfg.Docker.BaseImageRules[0])
+	if cfg.OCI.Policies[0].Source != "registry.internal/platform/go-base" {
+		t.Fatalf("unexpected OCI policy source: %#v", cfg.OCI.Policies[0])
 	}
-	if len(cfg.Docker.BaseImageRules[0].Deny) != 1 || cfg.Docker.BaseImageRules[0].Deny[0] != ".*-debug$" {
-		t.Fatalf("unexpected base image rule deny patterns: %#v", cfg.Docker.BaseImageRules[0].Deny)
+	if len(cfg.OCI.Policies[0].Tags.Deny) != 1 || cfg.OCI.Policies[0].Tags.Deny[0] != ".*-debug$" {
+		t.Fatalf("unexpected OCI policy deny patterns: %#v", cfg.OCI.Policies[0].Tags.Deny)
 	}
-	if len(cfg.Docker.BaseImageRules[0].TagSets) != 1 {
-		t.Fatalf("unexpected base image rule tag sets: %#v", cfg.Docker.BaseImageRules[0].TagSets)
+	if len(cfg.OCI.Policies[0].Tags.Semver) != 1 || len(cfg.OCI.Policies[0].Tags.Semver[0].Range) != 1 || cfg.OCI.Policies[0].Tags.Semver[0].Range[0] != ">=1.21.1 <1.22.0" {
+		t.Fatalf("unexpected OCI semver config: %#v", cfg.OCI.Policies[0].Tags.Semver)
 	}
-	if cfg.Docker.BaseImageRules[0].TagSets[0].SemverRange != ">=1.21.1 <1.22.0" {
-		t.Fatalf("unexpected base image rule semver range: %#v", cfg.Docker.BaseImageRules[0].TagSets[0])
+	if len(cfg.OCI.Policies[0].Tags.Allow) != 1 || cfg.OCI.Policies[0].Tags.Allow[0] != "^v?\\d+\\.\\d+\\.\\d+-alpine$" {
+		t.Fatalf("unexpected OCI allow patterns: %#v", cfg.OCI.Policies[0].Tags.Allow)
 	}
-	if len(cfg.Docker.BaseImageRules[0].TagSets[0].Allow) != 1 || cfg.Docker.BaseImageRules[0].TagSets[0].Allow[0] != "^v?\\d+\\.\\d+\\.\\d+-alpine$" {
-		t.Fatalf("unexpected base image rule allow patterns: %#v", cfg.Docker.BaseImageRules[0].TagSets[0].Allow)
-	}
-	if cfg.Docker.Patching.BaseImages != DockerPatchDisabled {
-		t.Fatalf("unexpected docker base patch mode: %q", cfg.Docker.Patching.BaseImages)
+	if len(cfg.OCI.ExternalImages) != 1 || len(cfg.OCI.ExternalImages[0].Dockerfiles) != 1 || cfg.OCI.ExternalImages[0].Dockerfiles[0] != "images/Dockerfile" {
+		t.Fatalf("unexpected OCI external images: %#v", cfg.OCI.ExternalImages)
 	}
 	if cfg.Go.Patching.Runtime != GoRuntimePatchToolchain {
 		t.Fatalf("unexpected go runtime patch mode: %q", cfg.Go.Patching.Runtime)
@@ -251,11 +251,12 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 		`"cve_rules"`,
 		`"go"`,
 		`"runtime"`,
-		`"artifacts"`,
-		`"targets_command"`,
-		`"dockerfile"`,
-		`"image"`,
-		`"build"`,
+		`"oci"`,
+		`"policies"`,
+		`"external_images"`,
+		`"dockerfiles"`,
+		`"source"`,
+		`"includePrerelease"`,
 		`"agent"`,
 		`"remediation_prompts"`,
 		`"fix_vulnerabilities"`,
@@ -478,9 +479,9 @@ registry:
   auth:
     mode: bearer
     token_env: CENTRAL_TOKEN
-docker:
-  allowed_base_images:
-    - cgr.dev/chainguard/*
+oci:
+  policies:
+    - source: ghcr.io/example/*
 `
 	if err := os.WriteFile(centralPath, []byte(centralPolicy), 0o644); err != nil {
 		t.Fatalf("write central policy: %v", err)
@@ -505,8 +506,8 @@ docker:
 	if cfg.Registry.Auth.Mode != RegistryAuthNone {
 		t.Fatalf("expected repo auth mode to take precedence, got %q", cfg.Registry.Auth.Mode)
 	}
-	if len(cfg.Docker.AllowedBaseImages) != 1 || cfg.Docker.AllowedBaseImages[0] != "cgr.dev/chainguard/*" {
-		t.Fatalf("expected central docker policy to be preserved, got %#v", cfg.Docker.AllowedBaseImages)
+	if len(cfg.OCI.Policies) != 1 || cfg.OCI.Policies[0].Source != "ghcr.io/example/*" {
+		t.Fatalf("expected central OCI policy to be preserved, got %#v", cfg.OCI.Policies)
 	}
 }
 
@@ -631,13 +632,11 @@ registry:
   auth:
     mode: bearer
     token_env: REGISTRY_TOKEN
-artifacts:
-  targets:
-    - dockerfile: Dockerfile
-      image:
-        tag: patchpilot/demo:${PP_RUN_ID}
-      build:
-        run: make image
+oci:
+  external_images:
+    - source: ghcr.io/example/app
+      dockerfiles:
+        - Dockerfile
 agent:
   remediation_prompts:
     all:
@@ -667,11 +666,11 @@ exclude:
 	if cfg.Registry.Auth.Mode != RegistryAuthAuto {
 		t.Fatalf("expected registry auth to fall back to default auto mode, got %q", cfg.Registry.Auth.Mode)
 	}
-	if len(cfg.Artifacts.Targets) != 0 {
-		t.Fatalf("expected artifacts to be stripped, got %#v", cfg.Artifacts.Targets)
-	}
 	if len(cfg.Agent.RemediationPrompts.All) != 0 {
 		t.Fatalf("expected agent prompts to be stripped, got %#v", cfg.Agent.RemediationPrompts.All)
+	}
+	if len(cfg.OCI.ExternalImages) != 1 || cfg.OCI.ExternalImages[0].Source != "ghcr.io/example/app" {
+		t.Fatalf("expected OCI mappings to remain in untrusted mode, got %#v", cfg.OCI.ExternalImages)
 	}
 	if cfg.Scan.Cron != "0 3 * * *" || cfg.Scan.Timezone != "Europe/Berlin" {
 		t.Fatalf("expected declarative scan policy to remain, got %#v", cfg.Scan)
@@ -776,19 +775,29 @@ agent:
 	}
 }
 
-func TestLoadNormalizesArtifactTargets(t *testing.T) {
+func TestLoadNormalizesOCIExternalImages(t *testing.T) {
 	repo := t.TempDir()
 	path := filepath.Join(repo, FileName)
 	content := `version: 1
-artifacts:
-  targets_command:
-    run: make patchpilot-targets
-  targets:
-    - dockerfile: ./images/backend/Dockerfile
-      image:
-        tag: patchpilot/backend:${PP_RUN_ID}
-      build:
-        run: APP=backend make container-image
+oci:
+  external_images:
+    - source: ghcr.io/example/backend
+      dockerfiles:
+        - ./images/backend/Dockerfile
+        - ./images/backend/Dockerfile
+  policies:
+    - source: ghcr.io/example/*
+      tags:
+        allow:
+          - '^v?\d+\.\d+\.\d+$'
+          - '^v?\d+\.\d+\.\d+$'
+        semver:
+          - range:
+              - ">=1.2.3 <2.0.0"
+              - ">=1.2.3 <2.0.0"
+            includePrerelease: true
+            prereleaseAllow:
+              - '^rc\..*'
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write policy file: %v", err)
@@ -798,73 +807,36 @@ artifacts:
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	if len(cfg.Artifacts.Targets) != 1 {
-		t.Fatalf("expected one artifact target, got %#v", cfg.Artifacts.Targets)
+	if len(cfg.OCI.ExternalImages) != 1 {
+		t.Fatalf("expected one OCI external image entry, got %#v", cfg.OCI.ExternalImages)
 	}
-	if cfg.Artifacts.TargetsCommand.Mode != ArtifactsTargetsCommandModeReplace {
-		t.Fatalf("expected default targets command mode %q, got %q", ArtifactsTargetsCommandModeReplace, cfg.Artifacts.TargetsCommand.Mode)
+	if cfg.OCI.ExternalImages[0].Tag != OCITagStrategyLatestSemver {
+		t.Fatalf("expected default OCI tag strategy %q, got %q", OCITagStrategyLatestSemver, cfg.OCI.ExternalImages[0].Tag)
 	}
-	if cfg.Artifacts.TargetsCommand.Timeout != DefaultArtifactsTargetsTimeout {
-		t.Fatalf("expected default targets command timeout %q, got %q", DefaultArtifactsTargetsTimeout, cfg.Artifacts.TargetsCommand.Timeout)
+	if len(cfg.OCI.ExternalImages[0].Dockerfiles) != 1 || cfg.OCI.ExternalImages[0].Dockerfiles[0] != "images/backend/Dockerfile" {
+		t.Fatalf("unexpected normalized dockerfile list: %#v", cfg.OCI.ExternalImages[0].Dockerfiles)
 	}
-	if !cfg.Artifacts.TargetsCommand.FailOnErrorOrDefault() {
-		t.Fatalf("expected default fail_on_error=true")
+	if len(cfg.OCI.Policies) != 1 {
+		t.Fatalf("expected one OCI policy, got %#v", cfg.OCI.Policies)
 	}
-	target := cfg.Artifacts.Targets[0]
-	if target.ID == "" {
-		t.Fatalf("expected default id to be set, got %#v", target)
+	if len(cfg.OCI.Policies[0].Tags.Allow) != 1 {
+		t.Fatalf("expected deduped allow list, got %#v", cfg.OCI.Policies[0].Tags.Allow)
 	}
-	if target.Dockerfile != "images/backend/Dockerfile" {
-		t.Fatalf("unexpected dockerfile path: %q", target.Dockerfile)
-	}
-	if target.Context != "images/backend" {
-		t.Fatalf("expected context to default from dockerfile dir, got %q", target.Context)
-	}
-	if target.Build.Timeout != "30m" {
-		t.Fatalf("expected default build timeout 30m, got %q", target.Build.Timeout)
-	}
-	if !target.Scan.EnabledOrDefault() {
-		t.Fatalf("expected scan to default to enabled")
+	if len(cfg.OCI.Policies[0].Tags.Semver) != 1 || len(cfg.OCI.Policies[0].Tags.Semver[0].Range) != 1 {
+		t.Fatalf("expected deduped semver ranges, got %#v", cfg.OCI.Policies[0].Tags.Semver)
 	}
 }
 
-func TestLoadPreservesExplicitArtifactRootContext(t *testing.T) {
+func TestLoadRejectsInvalidOCIPolicyRegex(t *testing.T) {
 	repo := t.TempDir()
 	path := filepath.Join(repo, FileName)
 	content := `version: 1
-artifacts:
-  targets:
-    - dockerfile: ./images/backend/Dockerfile
-      context: .
-      image:
-        tag: patchpilot/backend:${PP_RUN_ID}
-      build:
-        run: APP=backend make container-image
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write policy file: %v", err)
-	}
-
-	cfg, err := Load(repo, "")
-	if err != nil {
-		t.Fatalf("Load returned error: %v", err)
-	}
-	if len(cfg.Artifacts.Targets) != 1 {
-		t.Fatalf("expected one artifact target, got %#v", cfg.Artifacts.Targets)
-	}
-	if cfg.Artifacts.Targets[0].Context != "." {
-		t.Fatalf("expected explicit root context to be preserved, got %q", cfg.Artifacts.Targets[0].Context)
-	}
-}
-
-func TestLoadRejectsInvalidArtifactTargetsCommandMode(t *testing.T) {
-	repo := t.TempDir()
-	path := filepath.Join(repo, FileName)
-	content := `version: 1
-artifacts:
-  targets_command:
-    run: 'echo "targets: []"'
-    mode: nope
+oci:
+  policies:
+    - source: ghcr.io/example/*
+      tags:
+        allow:
+          - '['
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write policy file: %v", err)
@@ -872,9 +844,32 @@ artifacts:
 
 	_, err := Load(repo, "")
 	if err == nil {
-		t.Fatal("expected validation error for invalid mode")
+		t.Fatal("expected validation error for invalid OCI regex")
 	}
-	if !strings.Contains(err.Error(), "artifacts.targets_command.mode") {
+	if !strings.Contains(err.Error(), "oci.policies[0].tags.allow[0]") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsEmptyOCIExternalImageSource(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, FileName)
+	content := `version: 1
+oci:
+  external_images:
+    - source: ""
+      dockerfiles:
+        - Dockerfile
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write policy file: %v", err)
+	}
+
+	_, err := Load(repo, "")
+	if err == nil {
+		t.Fatal("expected validation error for empty source")
+	}
+	if !strings.Contains(err.Error(), "oci.external_images[0].source") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

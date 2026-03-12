@@ -14,19 +14,21 @@ func TestLoadAppRuntimeConfigDefaultsWithoutFile(t *testing.T) {
 	if cfg.Remediation.MaxCIAttempts != defaultMaxCIAttempts {
 		t.Fatalf("MaxCIAttempts = %d, want %d", cfg.Remediation.MaxCIAttempts, defaultMaxCIAttempts)
 	}
-	if len(cfg.Repositories) != 0 {
-		t.Fatalf("Repositories = %#v, want empty", cfg.Repositories)
+	if len(cfg.OCI.Mappings) != 0 {
+		t.Fatalf("Mappings = %#v, want empty", cfg.OCI.Mappings)
 	}
 }
 
-func TestLoadAppRuntimeConfigParsesRepositoriesAndPrompts(t *testing.T) {
+func TestLoadAppRuntimeConfigParsesMappingsAndPrompts(t *testing.T) {
 	temp := t.TempDir()
 	path := filepath.Join(temp, "app-config.yaml")
-	content := `repositories:
-  Acme/Demo:
-    image_repository: ghcr.io/example/demo
-    dockerfiles:
-      - Dockerfile
+	content := `oci:
+  mappings:
+    - repo: Acme/Demo
+      images:
+        - source: ghcr.io/example/demo
+          dockerfiles:
+            - Dockerfile
 remediation:
   max_ci_attempts: 5
   prompts:
@@ -45,25 +47,43 @@ remediation:
 	if cfg.Remediation.MaxCIAttempts != 5 {
 		t.Fatalf("MaxCIAttempts = %d, want 5", cfg.Remediation.MaxCIAttempts)
 	}
-	entry, ok := cfg.RepositoryConfig("acme/demo")
+	entry, ok := cfg.RepositoryMapping("acme/demo")
 	if !ok {
-		t.Fatalf("expected normalized repository entry")
+		t.Fatalf("expected normalized mapping entry")
 	}
-	if entry.ImageRepository != "ghcr.io/example/demo" {
-		t.Fatalf("ImageRepository = %q", entry.ImageRepository)
+	if entry.Repo != "acme/demo" {
+		t.Fatalf("Repo = %q", entry.Repo)
+	}
+	if len(entry.Images) != 1 || entry.Images[0].Source != "ghcr.io/example/demo" {
+		t.Fatalf("Images = %#v", entry.Images)
 	}
 	if len(cfg.Remediation.Prompts.CIFailureAssessment) != 1 {
 		t.Fatalf("CIFailureAssessment = %#v", cfg.Remediation.Prompts.CIFailureAssessment)
 	}
 }
 
+func TestLoadAppRuntimeConfigRejectsWildcardRepo(t *testing.T) {
+	temp := t.TempDir()
+	path := filepath.Join(temp, "app-config.yaml")
+	content := `oci:
+  mappings:
+    - repo: acme/*
+      images:
+        - source: ghcr.io/example/demo
+          dockerfiles: [Dockerfile]
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write app config: %v", err)
+	}
+	if _, err := LoadAppRuntimeConfig(path); err == nil {
+		t.Fatalf("expected wildcard repo validation error")
+	}
+}
+
 func TestLoadAppRuntimeConfigRejectsInvalidPromptMode(t *testing.T) {
 	temp := t.TempDir()
 	path := filepath.Join(temp, "app-config.yaml")
-	content := `repositories:
-  acme/demo:
-    image_repository: ghcr.io/example/demo
-remediation:
+	content := `remediation:
   prompts:
     ci_failure_assessment:
       - mode: invalid

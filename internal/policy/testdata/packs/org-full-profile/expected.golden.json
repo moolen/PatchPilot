@@ -38,13 +38,36 @@
   "registry_cache_ttl": "4h",
   "registry_auth_mode": "none",
   "registry_auth_token_env": "",
-  "docker_allowed_base_images": [
-    "cgr.dev/chainguard/*",
-    "golang:*"
+  "oci_policies": [
+    {
+      "Name": "stable-golang",
+      "Source": "docker.io/library/golang",
+      "Tags": {
+        "Allow": [
+          "^v?\\d+\\.\\d+\\.\\d+-alpine$"
+        ],
+        "Semver": [
+          {
+            "Range": [
+              "\u003e=1.24.3 \u003c2.0.0"
+            ],
+            "IncludePrerelease": false,
+            "PrereleaseAllow": null
+          }
+        ],
+        "Deny": [
+          ".*-debug$"
+        ]
+      }
+    }
   ],
-  "docker_disallowed_base_images": [
-    "ubuntu:latest"
-  ],
-  "docker_base_image_patching": "auto",
-  "docker_os_package_patching": "disabled"
+  "oci_external_images": [
+    {
+      "Source": "ghcr.io/external-secrets/external-secrets",
+      "Dockerfiles": [
+        "images/Dockerfile"
+      ],
+      "Tag": "latest-semver"
+    }
+  ]
 }

@@ -1,5 +1,8 @@
 version: 1
-docker:
-  patching:
-    base_images: AUTO
-    os_packages: DISABLED
+oci:
+  external_images:
+    - source: ghcr.io/example/demo
+      dockerfiles:
+        - ./images/Dockerfile
+        - images/Dockerfile
+      tag: latest-semver

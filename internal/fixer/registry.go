@@ -13,10 +13,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awsecr "github.com/aws/aws-sdk-go-v2/service/ecr"
 	"golang.org/x/mod/semver"
 )
 
@@ -44,6 +47,7 @@ var (
 	registryAuthMode         = "auto"
 	registryAuthToken        = ""
 	registryCacheDirOverride = ""
+	ecrAuthProvider          = fetchECRBasicCredential
 )
 
 type RegistryOptions struct {
@@ -308,7 +312,7 @@ func fetchRegistryAuthorization(ctx context.Context, requestURL, header string) 
 		}
 		return "Bearer " + token, nil
 	case "basic":
-		credential, err := lookupRegistryBasicCredential(requestURL, challenge.realm)
+		credential, err := lookupRegistryBasicCredential(ctx, requestURL, challenge.realm)
 		if err != nil {
 			return "", err
 		}
@@ -529,7 +533,7 @@ type dockerAuthEntry struct {
 	Password string `json:"password"`
 }
 
-func lookupRegistryBasicCredential(requestURL, realm string) (string, error) {
+func lookupRegistryBasicCredential(ctx context.Context, requestURL, realm string) (string, error) {
 	hosts := registryAuthHosts(requestURL, realm)
 	if len(hosts) == 0 {
 		return "", fmt.Errorf("registry basic auth challenge missing host information")
@@ -545,6 +549,17 @@ func lookupRegistryBasicCredential(requestURL, realm string) (string, error) {
 			return "", err
 		}
 		if ok {
+			logRegistryAuthPath("docker_credentials", host)
+			return credential, nil
+		}
+	}
+	for _, host := range hosts {
+		credential, ok, err := ecrAuthProvider(ctx, host)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			logRegistryAuthPath("aws_sdk_fallback", host)
 			return credential, nil
 		}
 	}
@@ -751,6 +766,62 @@ func decodeDockerAuthEntry(raw string) (basicAuthValue, bool) {
 
 func encodeBasicCredential(username, password string) string {
 	return base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+}
+
+func logRegistryAuthPath(mode, host string) {
+	_, _ = fmt.Fprintf(os.Stderr, "[patchpilot] oci: auth_path=%s registry=%q\n", mode, strings.TrimSpace(host))
+}
+
+var privateECRHostPattern = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$`)
+
+func fetchECRBasicCredential(ctx context.Context, host string) (string, bool, error) {
+	accountID, region, ok := parsePrivateECRHost(host)
+	if !ok {
+		return "", false, nil
+	}
+
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		return "", false, fmt.Errorf("load aws config for ecr host %q: %w", host, err)
+	}
+	client := awsecr.NewFromConfig(awsCfg)
+	response, err := client.GetAuthorizationToken(ctx, &awsecr.GetAuthorizationTokenInput{
+		RegistryIds: []string{accountID},
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("fetch ecr authorization token for host %q: %w", host, err)
+	}
+	for _, auth := range response.AuthorizationData {
+		token := ""
+		if auth.AuthorizationToken != nil {
+			token = strings.TrimSpace(*auth.AuthorizationToken)
+		}
+		if token == "" {
+			continue
+		}
+		if auth.ProxyEndpoint != nil {
+			endpointHost := normalizeDockerAuthHost(*auth.ProxyEndpoint)
+			if endpointHost != "" && endpointHost != normalizeDockerAuthHost(host) {
+				continue
+			}
+		}
+		return token, true, nil
+	}
+	return "", false, nil
+}
+
+func parsePrivateECRHost(host string) (string, string, bool) {
+	host = normalizeDockerAuthHost(host)
+	matches := privateECRHostPattern.FindStringSubmatch(host)
+	if len(matches) != 4 {
+		return "", "", false
+	}
+	accountID := strings.TrimSpace(matches[1])
+	region := strings.TrimSpace(matches[2])
+	if accountID == "" || region == "" {
+		return "", "", false
+	}
+	return accountID, region, true
 }
 
 func readRegistryTagsFromCache(ref imageReference) ([]string, bool) {

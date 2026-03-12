@@ -70,30 +70,33 @@ func fileOptionsFromPolicy(cfg *policy.Config, untrustedRepo bool) fixer.FileOpt
 
 func dockerOptionsFromPolicy(cfg *policy.Config) fixer.DockerfileOptions {
 	if cfg == nil {
-		return fixer.DockerfileOptions{BaseImagePatching: true, OSPackagePatching: true}
+		return fixer.DockerfileOptions{BaseImagePatching: true, OSPackagePatching: false}
 	}
-	baseImageRules := make([]fixer.BaseImageRule, 0, len(cfg.Docker.BaseImageRules))
-	for _, rule := range cfg.Docker.BaseImageRules {
-		tagSets := make([]fixer.BaseImageTagSet, 0, len(rule.TagSets))
-		for _, tagSet := range rule.TagSets {
-			tagSets = append(tagSets, fixer.BaseImageTagSet{
-				SemverRange: tagSet.SemverRange,
-				Allow:       append([]string(nil), tagSet.Allow...),
+	ociPolicies := make([]fixer.OCIImagePolicy, 0, len(cfg.OCI.Policies))
+	for _, policyRule := range cfg.OCI.Policies {
+		semverRules := make([]fixer.OCIImageSemverPolicy, 0, len(policyRule.Tags.Semver))
+		for _, semverRule := range policyRule.Tags.Semver {
+			semverRules = append(semverRules, fixer.OCIImageSemverPolicy{
+				Range:             append([]string(nil), semverRule.Range...),
+				IncludePrerelease: semverRule.IncludePrerelease,
+				PrereleaseAllow:   append([]string(nil), semverRule.PrereleaseAllow...),
 			})
 		}
-		baseImageRules = append(baseImageRules, fixer.BaseImageRule{
-			Image:   rule.Image,
-			TagSets: tagSets,
-			Deny:    append([]string(nil), rule.Deny...),
+		ociPolicies = append(ociPolicies, fixer.OCIImagePolicy{
+			Name:   policyRule.Name,
+			Source: policyRule.Source,
+			Tags: fixer.OCIImageTagPolicy{
+				Allow:  append([]string(nil), policyRule.Tags.Allow...),
+				Semver: semverRules,
+				Deny:   append([]string(nil), policyRule.Tags.Deny...),
+			},
 		})
 	}
 	return fixer.DockerfileOptions{
-		SkipPaths:            append([]string(nil), cfg.Scan.SkipPaths...),
-		AllowedBaseImages:    append([]string(nil), cfg.Docker.AllowedBaseImages...),
-		DisallowedBaseImages: append([]string(nil), cfg.Docker.DisallowedBaseImages...),
-		BaseImageRules:       baseImageRules,
-		BaseImagePatching:    cfg.Docker.Patching.BaseImages != policy.DockerPatchDisabled,
-		OSPackagePatching:    cfg.Docker.Patching.OSPackages != policy.DockerPatchDisabled,
+		SkipPaths:         append([]string(nil), cfg.Scan.SkipPaths...),
+		OCIPolicies:       ociPolicies,
+		BaseImagePatching: true,
+		OSPackagePatching: false,
 	}
 }
 

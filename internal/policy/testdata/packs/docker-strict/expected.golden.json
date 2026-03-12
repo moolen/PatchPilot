@@ -10,13 +10,30 @@
   "registry_cache_ttl": "",
   "registry_auth_mode": "auto",
   "registry_auth_token_env": "",
-  "docker_allowed_base_images": [
-    "cgr.dev/chainguard/*",
-    "golang:*"
+  "oci_policies": [
+    {
+      "Name": "strict",
+      "Source": "ghcr.io/example/*",
+      "Tags": {
+        "Allow": [
+          "^v?\\d+\\.\\d+\\.\\d+$"
+        ],
+        "Semver": [
+          {
+            "Range": [
+              "\u003e=1.2.3 \u003c2.0.0"
+            ],
+            "IncludePrerelease": false,
+            "PrereleaseAllow": [
+              "-rc\\."
+            ]
+          }
+        ],
+        "Deny": [
+          "-debug$"
+        ]
+      }
+    }
   ],
-  "docker_disallowed_base_images": [
-    "ubuntu:latest"
-  ],
-  "docker_base_image_patching": "disabled",
-  "docker_os_package_patching": "auto"
+  "oci_external_images": null
 }

@@ -10,6 +10,11 @@ import (
 	"github.com/moolen/patchpilot/internal/vuln"
 )
 
+type ociScanContext struct {
+	RepositoryKey string
+	MappingFile   string
+}
+
 func generateSBOM(ctx context.Context, repo string, cfg *policy.Config) error {
 	if _, err := sbom.GenerateWithOptions(ctx, repo, sbomOptionsFromPolicy(cfg)); err != nil {
 		return wrapWithExitCode(ExitCodeScanFailed, err)
@@ -17,15 +22,17 @@ func generateSBOM(ctx context.Context, repo string, cfg *policy.Config) error {
 	return nil
 }
 
-func scanVulnerabilitiesForRun(ctx context.Context, repo string, cfg *policy.Config, runID, phase, command string) (*vuln.Report, error) {
+func scanVulnerabilitiesForRun(ctx context.Context, repo string, cfg *policy.Config, runID, phase, command string, ociContext ociScanContext) (*vuln.Report, error) {
 	report, err := vuln.ScanWithOptions(ctx, repo, vulnOptionsFromPolicy(cfg))
 	if err != nil {
 		return nil, wrapWithExitCode(ExitCodeScanFailed, err)
 	}
 	artifactReport, err := scanArtifactVulnerabilities(ctx, repo, cfg, artifactScanOptions{
-		RunID:   runID,
-		Phase:   phase,
-		Command: command,
+		RunID:         runID,
+		Phase:         phase,
+		Command:       command,
+		RepositoryKey: ociContext.RepositoryKey,
+		MappingFile:   ociContext.MappingFile,
 	})
 	if err != nil {
 		return nil, wrapWithExitCode(ExitCodeScanFailed, err)

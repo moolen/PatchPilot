@@ -88,7 +88,6 @@ type checkDefinition struct {
 var standardChecks = []standardCheck{
 	{Name: "build", Args: []string{"build", "./..."}},
 	{Name: "compile-tests", Args: []string{"test", "-exec=true", "-run", "^$", "./..."}},
-	{Name: "vet", Args: []string{"vet", "./..."}},
 }
 
 var requirementsVerifyLinePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(\[[A-Za-z0-9_,.-]+\])?(\s*[<>=!~]{1,2}\s*[^\s#;]+)?(\s*;.*)?$`)

@@ -82,6 +82,7 @@ func runAgentRepairLoop(
 	repo string,
 	cfg *policy.Config,
 	options fixOptions,
+	ociContext ociScanContext,
 	deterministicIssues []string,
 	before *vuln.Report,
 	validation validationCycle,
@@ -128,7 +129,7 @@ func runAgentRepairLoop(
 		ValidationPlan:           validationCommandsForPrompt(cfg),
 		Validate: func(validateCtx context.Context, attemptNumber int) (agentpkg.ValidationResult, error) {
 			phase := fmt.Sprintf("agent-attempt-%d", attemptNumber)
-			next, err := runValidationCycle(validateCtx, repo, cfg, verificationBaseline, verificationDirs, runID, phase)
+			next, err := runValidationCycle(validateCtx, repo, cfg, verificationBaseline, verificationDirs, runID, phase, ociContext)
 			if err != nil {
 				lastValidationErr = err
 			}
@@ -184,6 +185,7 @@ func runBaselineRepairLoop(
 	repo string,
 	cfg *policy.Config,
 	options fixOptions,
+	ociContext ociScanContext,
 	runID string,
 	failedStage string,
 	initialErr error,
@@ -222,7 +224,7 @@ func runBaselineRepairLoop(
 		ValidationPlan:           baselineValidationPlan(cfg),
 		Validate: func(validateCtx context.Context, attemptNumber int) (agentpkg.ValidationResult, error) {
 			phase := fmt.Sprintf("baseline-agent-attempt-%d", attemptNumber)
-			next, err := runBaselineScanCycle(validateCtx, repo, cfg, runID, phase)
+			next, err := runBaselineScanCycle(validateCtx, repo, cfg, runID, phase, ociContext)
 			if err != nil {
 				lastErr = err
 				if strings.TrimSpace(next.FailedStage) != "" {
@@ -266,7 +268,7 @@ func runBaselineRepairLoop(
 	return nil, loopResult.Attempts, errors.New("baseline scan did not succeed within agent attempts")
 }
 
-func runBaselineScanCycle(ctx context.Context, repo string, cfg *policy.Config, runID, phase string) (baselineScanCycle, error) {
+func runBaselineScanCycle(ctx context.Context, repo string, cfg *policy.Config, runID, phase string, ociContext ociScanContext) (baselineScanCycle, error) {
 	result := baselineScanCycle{}
 	var logs strings.Builder
 
@@ -279,7 +281,7 @@ func runBaselineScanCycle(ctx context.Context, repo string, cfg *policy.Config, 
 
 	result.FailedStage = "scan_baseline"
 	logs.WriteString("scan baseline vulnerabilities\n")
-	baseline, err := scanVulnerabilitiesForRun(ctx, repo, cfg, runID, phase, "fix")
+	baseline, err := scanVulnerabilitiesForRun(ctx, repo, cfg, runID, phase, "fix", ociContext)
 	if err != nil {
 		result.Logs = strings.TrimSpace(logs.String())
 		return result, err
@@ -292,7 +294,7 @@ func runBaselineScanCycle(ctx context.Context, repo string, cfg *policy.Config, 
 	return result, nil
 }
 
-func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, verificationBaseline verifycheck.Report, verificationDirs []string, runID, phase string) (validationCycle, error) {
+func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, verificationBaseline verifycheck.Report, verificationDirs []string, runID, phase string, ociContext ociScanContext) (validationCycle, error) {
 	result := validationCycle{}
 	var logs strings.Builder
 
@@ -303,7 +305,7 @@ func runValidationCycle(ctx context.Context, repo string, cfg *policy.Config, ve
 	}
 
 	logs.WriteString("scan vulnerabilities\n")
-	after, err := scanVulnerabilitiesForRun(ctx, repo, cfg, runID, phase, "fix")
+	after, err := scanVulnerabilitiesForRun(ctx, repo, cfg, runID, phase, "fix", ociContext)
 	if err != nil {
 		result.Logs = logs.String()
 		return result, err
@@ -442,6 +444,21 @@ func fixRemediationPromptGuidance(
 	return prompts
 }
 
+func containerOSRemediationPromptGuidance(cfg *policy.Config) []agentpkg.RemediationPrompt {
+	if cfg == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	prompts := make([]agentpkg.RemediationPrompt, 0)
+	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.All)
+	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.FixVulnerabilities.All)
+	prompts = appendPromptGuidance(prompts, seen, cfg.Agent.RemediationPrompts.FixVulnerabilities.ContainerOSPatching)
+	if len(prompts) == 0 {
+		return nil
+	}
+	return prompts
+}
+
 func appendPromptGuidance(
 	dst []agentpkg.RemediationPrompt,
 	seen map[string]struct{},
@@ -478,8 +495,8 @@ func baselinePromptConstraints() []string {
 	return []string{
 		"prefer minimal, repository-specific fixes",
 		"preserve the repository's intended build and scan behavior",
-		"do not disable scanning or artifact target execution to make the baseline pass",
-		"if artifact target discovery or builds fail, fix the relevant repository scripts, Dockerfiles, build contexts, or source files instead",
+		"do not disable scanning or external OCI image scanning to make the baseline pass",
+		"if external OCI scans fail, fix the relevant image mappings, credentials, or Dockerfile targets instead of bypassing scanning",
 		"do not modify .patchpilot/ artifacts or .patchpilot.yaml",
 	}
 }
@@ -489,10 +506,10 @@ func baselineValidationPlan(cfg *policy.Config) []string {
 		"generate the repository SBOM",
 		"run the repository vulnerability scan",
 	}
-	if cfg != nil && (len(cfg.Artifacts.Targets) > 0 || strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run) != "") {
+	if cfg != nil && len(cfg.OCI.ExternalImages) > 0 {
 		plan = append(plan,
-			"resolve configured artifact targets and validate their build contexts",
-			"build and scan configured artifact images",
+			"resolve configured external OCI image mappings",
+			"pull and scan mapped external OCI images",
 		)
 	}
 	return plan
@@ -512,15 +529,7 @@ func buildBaselineAgentState(cfg *policy.Config, failedStage string, lastErr err
 		state["findings_with_fix_versions"] = len(baseline.Findings)
 	}
 	if cfg != nil {
-		artifactScanConfigured := len(cfg.Artifacts.Targets) > 0 || strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run) != ""
-		state["artifact_scanning_configured"] = artifactScanConfigured
-		state["static_artifact_targets"] = len(cfg.Artifacts.Targets)
-		if strings.TrimSpace(cfg.Artifacts.TargetsCommand.Run) != "" {
-			state["targets_command_configured"] = true
-			state["targets_command_mode"] = strings.TrimSpace(cfg.Artifacts.TargetsCommand.Mode)
-		} else {
-			state["targets_command_configured"] = false
-		}
+		state["external_oci_images_configured"] = len(cfg.OCI.ExternalImages)
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {

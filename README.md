@@ -38,14 +38,14 @@ When multiple failure conditions apply, precedence is: scan/patch failures first
 4. Apply direct Go fixes with `golang.org/x/mod/modfile`.
 5. Apply transitive Go fixes with `go list -m all` plus `go get module@fixedVersion` when a vulnerable module is present in the module build list.
 6. Automatically bump each `go.mod` `go` directive to the latest supported patch release on the same Go major/minor line (or the oldest currently supported line if the current line is no longer supported).
-7. Parse Dockerfiles and add minimal OS package remediation from findings; when `docker.base_image_rules` are configured, also update matching `FROM` images to the highest newer registry tag allowed by policy.
+7. Parse Dockerfiles and update each `FROM` base image according to `oci.policies`; container OS package remediation is handled through agent mode.
 8. Patch `package.json` dependencies for npm findings and automatically sync `package-lock.json` / `npm-shrinkwrap.json` when present.
 9. Patch `requirements*.txt` entries for Python/PyPI findings.
 10. Patch `pom.xml` and `build.gradle*` dependency versions for Maven/Gradle findings.
 11. Patch `Cargo.toml` dependencies for Cargo findings.
 12. Patch `.csproj` package references for NuGet findings.
 13. Patch `composer.json` requirements for Composer findings.
-14. Run standard verification checks: Go build/test/vet for discovered Go modules plus manifest syntax/parse checks for npm, pip, Maven, Gradle, Cargo, NuGet, and Composer.
+14. Run standard verification checks: Go build/test-compile for discovered Go modules plus manifest syntax/parse checks for npm, pip, Maven, Gradle, Cargo, NuGet, and Composer.
 15. Re-scan and report before/fixed/remaining counts plus any verification regressions.
 
 When `.patchpilot.yaml` is present, scan/fix/verify also apply repo-specific policy.
@@ -105,7 +105,7 @@ docker run --rm \
 
 The app image includes `patchpilot-app`, `patchpilot`, `git`, `syft`, `grype`, `go`, `node`, `npm`, and `cargo` so the default local job runner can scan and remediate repositories without additional sidecar tooling.
 The scheduler service can also run in explicit-allowlist token mode with `PP_GITHUB_AUTH_MODE=token`, `PP_GITHUB_TOKEN`, and `PP_GITHUB_TOKEN_REPOSITORIES`.
-For mapped OCI image scanning and app-specific AI prompts, point `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE` at an operator-managed YAML file.
+For operator-managed external OCI mappings (and optional app-level remediation settings), point `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE` at a YAML file.
 Set `PP_FORCE_RECONCILE_ON_START=true` or run `./bin/patchpilot-app run --force-reconcile-on-start` to force one immediate reconciliation cycle at process start.
 
 GitHub App utility commands:
@@ -214,23 +214,25 @@ registry:
     mode: bearer # auto | none | bearer
     token_env: REGISTRY_TOKEN # required when mode=bearer
 
-docker:
-  allowed_base_images:
-    - golang:1.24-alpine
-    - cgr.dev/chainguard/*
-  disallowed_base_images:
-    - ubuntu:latest
-  base_image_rules:
-    - image: golang
-      tag_sets:
-        - semver_range: ">=1.24.3 <1.25.0"
-          allow:
-            - '^v?\d+\.\d+\.\d+-alpine$'
-      deny:
-        - '.*-debug$'
-  patching:
-    base_images: auto # auto | disabled
-    os_packages: auto # auto | disabled
+oci:
+  policies:
+    - name: golang-alpine-stable
+      source: docker.io/library/golang
+      tags:
+        allow:
+          - '^v?\d+\.\d+\.\d+-alpine$'
+        semver:
+          - range:
+              - ">=1.24.3 <2.0.0"
+            includePrerelease: false
+            prereleaseAllow: []
+        deny:
+          - '.*-debug$'
+  external_images:
+    - source: ghcr.io/external-secrets/external-secrets
+      dockerfiles:
+        - Dockerfile
+      tag: latest-semver
 
 go:
   patching:
@@ -284,104 +286,89 @@ Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a pat
 
 Policy parsing is strict after applying built-in legacy migrations (for example `postExecution` -> `post_execution`, `verification.commands[].command` -> `run`, and top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
 
-## Docker Base Image Rules
+### OCI v2 Migration Notes
 
-`docker.base_image_rules` provides rule-driven updates for `FROM` images. Rules are matched by image repository, PatchPilot lists tags from that same registry/repository, filters candidates by `tag_sets` and `deny`, and rewrites the tag to the highest newer match. This path is independent of vulnerability package-name matching.
+Removed configuration keys:
 
-Example:
+- `.patchpilot.yaml`: `docker`, `artifacts`
+- app runtime config: `repositories`
 
-```yaml
-docker:
-  base_image_rules:
-    - image: registry.internal/platform/go-base
-      tag_sets:
-        - semver_range: ">=1.21.1 <1.22.0"
-          allow:
-            - '^v?\d+\.\d+\.\d+-alpine$'
-        - semver_range: ">=1.21.1-0 <1.22.0"
-          allow:
-            - '^v?\d+\.\d+\.\d+-rc\.\d+-alpine$'
-      deny:
-        - '.*-debug$'
-```
+Replacement keys:
 
-Rule behavior:
+- `.patchpilot.yaml`: `oci.policies`, `oci.external_images`
+- app/runtime mapping file: `oci.mappings`
 
-- `image` matches the repository in the Dockerfile `FROM` reference. Matching is exact in the current implementation.
-- `tag_sets` are OR-ed. A tag is eligible when it matches at least one tag set.
-- `tag_sets[].semver_range` constrains the parsed version. Supported operators are `>`, `>=`, `<`, `<=`, and `=`.
-- `tag_sets[].allow` applies regex matching to the full raw tag.
-- `deny` applies regex matching to the full raw tag after allow/range evaluation and excludes matching tags.
-- PatchPilot only considers tags newer than the current tag and always selects the highest matching candidate.
-- If the `FROM` reference is digest-pinned, PatchPilot also resolves the digest for the selected tag and rewrites `@sha256:...`.
+If removed keys are still present, policy parsing fails fast with an unknown-field validation error.
 
-Tag parsing:
+## OCI Base Image Policies
 
-- PatchPilot extracts a semver-like version from common Docker tags such as `1.21`, `1.21.3`, `v1.21.3`, and prerelease tags like `1.21.3-rc.1`.
-- Extra flavor suffixes such as `-alpine` are not part of the semver comparison. Keep those families stable with `allow` regexes.
-- If a tag cannot be parsed into a version, it is ignored for `base_image_rules`.
-
-## Container Image Targets
-
-PatchPilot can scan container images built during the run (ephemeral tags) and map container package findings back to a source Dockerfile.
-
-Use `artifacts.targets` for a static mapping:
+PatchPilot uses `oci.policies` to decide how each `FROM <image>` should be bumped.
 
 ```yaml
-artifacts:
-  targets:
-    - id: backend-foo
-      dockerfile: services/backend-foo/Dockerfile
-      context: services/backend-foo
-      image:
-        tag: patchpilot/backend-foo:${PP_RUN_ID}
-      build:
-        run: APP=backend-foo IMAGE_TAG=${PP_IMAGE_TAG} make container-image
-        timeout: 30m
-      scan:
-        enabled: true
+oci:
+  policies:
+    - name: kyverno-stable
+      source: ghcr.io/kyverno/**
+      tags:
+        allow:
+          - '^v?\d+\.\d+\.\d+(-alpine\d+\.\d+)?$'
+        semver:
+          - range:
+              - ">=1.15.0 <2.0.0"
+            includePrerelease: false
+            prereleaseAllow: []
+        deny:
+          - '.*-debug$'
 ```
 
-Use `artifacts.targets_command` for dynamic discovery. The command must print YAML/JSON to `stdout` with a top-level `targets:` key and the same target schema:
+Behavior:
+
+- `source` supports doublestar wildcard matching (`**`).
+- First matching policy wins. If multiple policies match, PatchPilot logs a warning and still uses the first.
+- Filter order is `allow -> semver/prerelease -> deny`.
+- If no policy matches, PatchPilot picks latest semver by default.
+- If current tag has a prerelease/suffix family, default mode keeps that exact family.
+- If the `FROM` reference is digest-pinned, PatchPilot updates both tag and digest.
+
+## External OCI Image Scanning
+
+External image scanning is configured via `oci.external_images` in `.patchpilot.yaml`:
 
 ```yaml
-artifacts:
-  targets_command:
-    run: make patchpilot-targets
-    timeout: 2m
-    mode: replace # replace | append
-    fail_on_error: true
+oci:
+  external_images:
+    - source: ghcr.io/external-secrets/external-secrets
+      dockerfiles:
+        - Dockerfile
+      tag: latest-semver
 ```
 
-Example command output:
+You can also provide an operator-managed mapping file and select by repository:
 
 ```yaml
-targets:
-  - id: backend-foo
-    dockerfile: services/backend-foo/Dockerfile
-    context: services/backend-foo
-    image:
-      tag: patchpilot/backend-foo:${PP_RUN_ID}
-    build:
-      run: APP=backend-foo IMAGE_TAG=${PP_IMAGE_TAG} make container-image
-      timeout: 30m
+oci:
+  mappings:
+    - repo: external-secrets/external-secrets
+      images:
+        - source: ghcr.io/external-secrets/external-secrets
+          dockerfiles:
+            - Dockerfile
+          tag: latest-semver
 ```
 
-Behavior and defaults:
+CLI usage:
 
-- `targets_command.mode` defaults to `replace` (command output becomes the full target set).
-- `targets_command.mode: append` merges static + discovered targets by `id` (discovered target overrides static target on conflict).
-- `targets_command.timeout` defaults to `2m`.
-- `targets_command.fail_on_error` defaults to `true`. When set to `false`, PatchPilot logs and continues with static targets if the command fails.
-- Command output parsing is strict: unknown fields fail fast, and `targets` must exist at the top level.
-- Resolved targets are written to `.patchpilot/artifacts/targets.resolved.yaml`.
+```bash
+patchpilot scan --dir <repo> --repository-key external-secrets/external-secrets --oci-mapping-file ./oci-mappings.yaml
+patchpilot fix --dir <repo> --repository-key external-secrets/external-secrets --oci-mapping-file ./oci-mappings.yaml
+```
 
-Runtime environment variables:
+Behavior:
 
-- For `targets_command.run`: `PP_RUN_ID`, `PP_REPO_ROOT`, `PP_COMMAND`, `PP_PHASE`.
-- For each `build.run`: `PP_RUN_ID`, `PP_TARGET_ID`, `PP_IMAGE_TAG`, `PP_DOCKERFILE`, `PP_CONTEXT`, `PP_REPO_ROOT`, `PP_COMMAND`, `PP_PHASE`.
-
-Container image scans currently feed OS/container ecosystems (`deb`, `apk`, `rpm`) and map findings to the configured `dockerfile` target.
+- No local image build step is performed for external OCI scanning.
+- PatchPilot pulls each mapped image, generates an SBOM, and scans it.
+- Only container ecosystems (`deb`, `apk`, `rpm`) are mapped back to configured Dockerfiles.
+- Repo-local `.patchpilot.yaml` mappings take precedence over mapping-file entries for the same image source.
 
 ## Output
 

@@ -2,7 +2,6 @@ package githubapp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/go-github/v75/github"
@@ -25,6 +25,7 @@ type Service struct {
 	slog      *structuredLogger
 	appClient *github.Client
 	runtime   *AppRuntimeConfig
+	runtimeMu sync.RWMutex
 	metrics   *Metrics
 	state     *schedulerStateStore
 	jobRunner patchPilotJobRunner
@@ -43,9 +44,6 @@ type scanRunResult struct {
 	FindingCount       int
 	FindingsBySeverity map[string]int
 	Report             *vuln.Report
-	OCIImage           string
-	OCIImageTag        string
-	OCIImageRepository string
 }
 
 type repositoryCronSchedule struct {
@@ -118,6 +116,7 @@ func (service *Service) Run(ctx context.Context) error {
 	})
 
 	service.runSchedulerCycleWithOptions(ctx, schedulerCycleOptions{ForceReconcile: service.cfg.ForceReconcileOnStart})
+	service.startRuntimeConfigWatcher(ctx)
 
 	ticker := time.NewTicker(service.cfg.SchedulerTick)
 	defer ticker.Stop()
@@ -374,7 +373,7 @@ func (service *Service) runRepositoryCycleWithOptions(parentCtx context.Context,
 	if service.metrics != nil {
 		service.metrics.IncRepositoryJobInFlight("scan")
 	}
-	scanResult, err := service.runScanWorkflow(ctx, owner, repo, repoKey, defaultBranch, token, cfg)
+	scanResult, err := service.runScanWorkflow(ctx, owner, repo, repoKey, defaultBranch, token)
 	if service.metrics != nil {
 		service.metrics.DecRepositoryJobInFlight("scan")
 		service.metrics.ObserveRepositoryJobDuration("scan", time.Since(scanStarted))
@@ -625,7 +624,7 @@ func (service *Service) runRepositoryCycleWithOptions(parentCtx context.Context,
 	})
 }
 
-func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKey, defaultBranch, token string, cfg *policy.Config) (scanRunResult, error) {
+func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKey, defaultBranch, token string) (scanRunResult, error) {
 	if strings.TrimSpace(owner) == "" || strings.TrimSpace(repo) == "" {
 		return scanRunResult{}, fmt.Errorf("owner and repo must not be empty")
 	}
@@ -660,7 +659,14 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKe
 		return scanRunResult{}, err
 	}
 
-	args := []string{"scan", "--dir", repoPath, "--untrusted-repo-policy"}
+	args := []string{"scan", "--dir", repoPath, "--untrusted-repo-policy", "--repository-key", repoKey}
+	runtimeMappingPath, err := service.materializeRepositoryOCIMapping(repoPath, repoKey)
+	if err != nil {
+		return scanRunResult{}, err
+	}
+	if strings.TrimSpace(runtimeMappingPath) != "" {
+		args = append(args, "--oci-mapping-file", runtimeMappingPath)
+	}
 	service.log("info", "running patchpilot scan", map[string]interface{}{
 		"owner": owner,
 		"repo":  repo,
@@ -685,49 +691,18 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKe
 	if err != nil {
 		return scanRunResult{}, fmt.Errorf("read normalized scan findings: %w", err)
 	}
-	relativizeFindingLocations(repoPath, findingsReport)
-	ociReport, resolvedImage, ociTag, ociRepository, err := service.scanMappedOCIImage(ctx, repoPath, repoKey, cfg)
-	if err != nil {
-		return scanRunResult{}, err
-	}
-	relativizeFindingLocations(repoPath, ociReport)
-	mergedReport := mergeVulnerabilityReports(findingsReport, ociReport)
-	if err := writeMergedFindingsReport(repoPath, mergedReport); err != nil {
-		return scanRunResult{}, err
-	}
-	findingsBySeverity := countFindingsBySeverity(mergedReport)
+	findingsBySeverity := countFindingsBySeverity(findingsReport)
 
 	return scanRunResult{
 		ExitCode:           exitCode,
 		Stdout:             stdout,
 		Stderr:             stderr,
-		HasFindings:        len(mergedReport.Findings) > 0,
+		HasFindings:        len(findingsReport.Findings) > 0,
 		HeadSHA:            headSHA,
-		FindingCount:       len(mergedReport.Findings),
+		FindingCount:       len(findingsReport.Findings),
 		FindingsBySeverity: findingsBySeverity,
-		Report:             mergedReport,
-		OCIImage:           resolvedImage,
-		OCIImageTag:        ociTag,
-		OCIImageRepository: ociRepository,
+		Report:             findingsReport,
 	}, nil
-}
-
-func writeMergedFindingsReport(repoPath string, report *vuln.Report) error {
-	if report == nil {
-		return fmt.Errorf("merged findings report is nil")
-	}
-	stateDir := filepath.Join(repoPath, ".patchpilot")
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal merged findings report: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(stateDir, "findings.json"), data, 0o644); err != nil {
-		return fmt.Errorf("write merged findings report: %w", err)
-	}
-	return nil
 }
 
 func (service *Service) loadRepositoryPolicy(ctx context.Context, client *github.Client, owner, repo, defaultBranch string) (*policy.Config, *repositoryCronSchedule, bool, bool, error) {

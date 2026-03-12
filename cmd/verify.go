@@ -11,7 +11,7 @@ import (
 	"github.com/moolen/patchpilot/internal/verifycheck"
 )
 
-func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool) (runErr error) {
+func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bool, ociContext ociScanContext) (runErr error) {
 	tracker := newRunTracker("verify", repo, jsonOutput)
 	defer func() {
 		failure := classifyRunFailure(runErr, nil, false, false, nil)
@@ -43,7 +43,7 @@ func runVerify(ctx context.Context, repo string, cfg *policy.Config, jsonOutput 
 	tracker.endStageSuccess(stage, nil)
 
 	stage = tracker.beginStage("scan_vulnerabilities")
-	after, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "verify", "verify")
+	after, err := scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "verify", "verify", ociContext)
 	if err != nil {
 		tracker.endStageFailure(stage, err, nil)
 		return err

@@ -143,3 +143,54 @@ func TestPatchDockerfileBaseImageRulesApplyWithoutFindings(t *testing.T) {
 		t.Fatalf("unexpected Dockerfile contents:\n%s", string(updated))
 	}
 }
+
+func TestMatchingOCIPoliciesWildcardFirstMatchPrecedence(t *testing.T) {
+	policies := []OCIImagePolicy{
+		{Name: "broad", Source: "ghcr.io/kyverno/**"},
+		{Name: "exact", Source: "ghcr.io/kyverno/kyverno"},
+	}
+	matches := matchingOCIPolicies("ghcr.io/kyverno/kyverno", policies)
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d", len(matches))
+	}
+	if matches[0].Name != "broad" || matches[1].Name != "exact" {
+		t.Fatalf("unexpected match order: %#v", matches)
+	}
+}
+
+func TestSelectLatestSemverTagByDefaultJumpsFromNonSemver(t *testing.T) {
+	got := selectLatestSemverTagByDefault("latest", []string{"1.2.0", "2.0.1", "1.9.9-alpine"})
+	if got != "2.0.1" {
+		t.Fatalf("expected latest semver tag, got %q", got)
+	}
+}
+
+func TestSelectLatestSemverTagByDefaultKeepsPrereleaseFamily(t *testing.T) {
+	got := selectLatestSemverTagByDefault(
+		"1.2.0-alpine3.20",
+		[]string{"1.3.0-alpine3.20", "1.4.0-alpine3.21", "1.5.0"},
+	)
+	if got != "1.3.0-alpine3.20" {
+		t.Fatalf("expected same prerelease family, got %q", got)
+	}
+}
+
+func TestSelectLatestSemverTagByPolicyRespectsPrereleaseAllow(t *testing.T) {
+	policy := OCIImagePolicy{
+		Name:   "prerelease-rc-only",
+		Source: "ghcr.io/acme/demo",
+		Tags: OCIImageTagPolicy{
+			Semver: []OCIImageSemverPolicy{
+				{
+					Range:             []string{">=1.3.0-0 <2.0.0"},
+					IncludePrerelease: true,
+					PrereleaseAllow:   []string{`-rc\.`},
+				},
+			},
+		},
+	}
+	got := selectLatestSemverTagByPolicy("1.2.0", []string{"1.3.0-rc.1", "1.3.0-beta.1", "1.2.9"}, policy)
+	if got != "1.3.0-rc.1" {
+		t.Fatalf("expected rc tag, got %q", got)
+	}
+}

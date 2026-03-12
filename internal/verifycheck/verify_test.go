@@ -106,18 +106,18 @@ func TestRunStandardRecordsRelativeDirsAndStatuses(t *testing.T) {
 	}
 
 	report := RunStandard(context.Background(), repo, []string{moduleDir})
-	if len(report.Modules) != 1 || len(report.Modules[0].Checks) != 3 {
+	if len(report.Modules) != 1 || len(report.Modules[0].Checks) != 2 {
 		t.Fatalf("unexpected report: %#v", report)
 	}
 	if report.Modules[0].Dir != "a" {
 		t.Fatalf("expected relative module dir, got %#v", report.Modules[0])
 	}
 	checks := report.Modules[0].Checks
-	if checks[0].Status != StatusOK || checks[1].Status != StatusFailed || checks[2].Status != StatusTimeout {
+	if checks[0].Status != StatusOK || checks[1].Status != StatusFailed {
 		t.Fatalf("unexpected check statuses: %#v", checks)
 	}
-	if len(calls) != 3 {
-		t.Fatalf("expected 3 calls, got %#v", calls)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %#v", calls)
 	}
 }
 
@@ -280,10 +280,10 @@ func TestRunWithCommandsAppendIncludesCustomChecks(t *testing.T) {
 	if report.Mode != "standard+custom" {
 		t.Fatalf("expected standard+custom mode, got %q", report.Mode)
 	}
-	if len(report.Modules) != 1 || len(report.Modules[0].Checks) != 4 {
+	if len(report.Modules) != 1 || len(report.Modules[0].Checks) != 3 {
 		t.Fatalf("unexpected report: %#v", report)
 	}
-	if goCalls != 3 || shellCalls != 1 {
+	if goCalls != 2 || shellCalls != 1 {
 		t.Fatalf("unexpected call counts: go=%d shell=%d", goCalls, shellCalls)
 	}
 }

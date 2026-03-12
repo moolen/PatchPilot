@@ -3,6 +3,7 @@ package githubapp
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/moolen/patchpilot/internal/agent/prompts"
@@ -13,13 +14,18 @@ import (
 const defaultMaxCIAttempts = 3
 
 type AppRuntimeConfig struct {
-	Repositories map[string]AppRepositoryRuntimeConfig `yaml:"repositories"`
-	Remediation  AppRemediationRuntimeConfig           `yaml:"remediation"`
+	OCI         AppRuntimeOCIConfig         `yaml:"oci"`
+	Remediation AppRemediationRuntimeConfig `yaml:"remediation"`
+	repoMapping map[string]AppOCIMappingSpec
 }
 
-type AppRepositoryRuntimeConfig struct {
-	ImageRepository string   `yaml:"image_repository"`
-	Dockerfiles     []string `yaml:"dockerfiles"`
+type AppRuntimeOCIConfig struct {
+	Mappings []AppOCIMappingSpec `yaml:"mappings"`
+}
+
+type AppOCIMappingSpec struct {
+	Repo   string                        `yaml:"repo"`
+	Images []policy.OCIExternalImageSpec `yaml:"images"`
 }
 
 type AppRemediationRuntimeConfig struct {
@@ -36,12 +42,7 @@ type AppRemediationPromptSet struct {
 func LoadAppRuntimeConfig(path string) (*AppRuntimeConfig, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return &AppRuntimeConfig{
-			Repositories: map[string]AppRepositoryRuntimeConfig{},
-			Remediation: AppRemediationRuntimeConfig{
-				MaxCIAttempts: defaultMaxCIAttempts,
-			},
-		}, nil
+		return defaultAppRuntimeConfig(), nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -54,8 +55,8 @@ func LoadAppRuntimeConfig(path string) (*AppRuntimeConfig, error) {
 	if err := decoder.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("decode app runtime config: %w", err)
 	}
-	if cfg.Repositories == nil {
-		cfg.Repositories = map[string]AppRepositoryRuntimeConfig{}
+	if cfg.OCI.Mappings == nil {
+		cfg.OCI.Mappings = []AppOCIMappingSpec{}
 	}
 	if cfg.Remediation.MaxCIAttempts <= 0 {
 		cfg.Remediation.MaxCIAttempts = defaultMaxCIAttempts
@@ -66,33 +67,76 @@ func LoadAppRuntimeConfig(path string) (*AppRuntimeConfig, error) {
 	return &cfg, nil
 }
 
+func defaultAppRuntimeConfig() *AppRuntimeConfig {
+	return &AppRuntimeConfig{
+		OCI: AppRuntimeOCIConfig{
+			Mappings: []AppOCIMappingSpec{},
+		},
+		Remediation: AppRemediationRuntimeConfig{
+			MaxCIAttempts: defaultMaxCIAttempts,
+		},
+		repoMapping: map[string]AppOCIMappingSpec{},
+	}
+}
+
 func validateAppRuntimeConfig(cfg *AppRuntimeConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("app runtime config is nil")
 	}
-	for repoKey, entry := range cfg.Repositories {
-		normalized := normalizeRepoName(repoKey)
-		if normalized == "" {
-			return fmt.Errorf("repositories.%q must be a repository full name", repoKey)
+
+	normalizedMappings := make([]AppOCIMappingSpec, 0, len(cfg.OCI.Mappings))
+	repoMapping := make(map[string]AppOCIMappingSpec, len(cfg.OCI.Mappings))
+	for index, mapping := range cfg.OCI.Mappings {
+		repoKey := strings.TrimSpace(mapping.Repo)
+		if containsRuntimeWildcard(repoKey) {
+			return fmt.Errorf("oci.mappings[%d].repo must be an exact owner/repo match (wildcards are not allowed)", index)
 		}
-		entry.ImageRepository = strings.TrimSpace(entry.ImageRepository)
-		if entry.ImageRepository == "" {
-			return fmt.Errorf("repositories.%q.image_repository must not be empty", repoKey)
+		normalizedRepo := normalizeRepoName(repoKey)
+		if normalizedRepo == "" {
+			return fmt.Errorf("oci.mappings[%d].repo must be a repository full name", index)
 		}
-		cleanDockerfiles := make([]string, 0, len(entry.Dockerfiles))
-		for _, dockerfile := range entry.Dockerfiles {
-			dockerfile = strings.TrimSpace(dockerfile)
-			if dockerfile == "" {
-				continue
+		if _, exists := repoMapping[normalizedRepo]; exists {
+			return fmt.Errorf("oci.mappings[%d].repo duplicates %q", index, normalizedRepo)
+		}
+
+		cleanImages := make([]policy.OCIExternalImageSpec, 0, len(mapping.Images))
+		for imageIndex, image := range mapping.Images {
+			image.Source = strings.TrimSpace(image.Source)
+			if image.Source == "" {
+				return fmt.Errorf("oci.mappings[%d].images[%d].source must not be empty", index, imageIndex)
 			}
-			cleanDockerfiles = append(cleanDockerfiles, dockerfile)
+			dockerfiles := make([]string, 0, len(image.Dockerfiles))
+			seenDockerfiles := map[string]struct{}{}
+			for dockerfileIndex, dockerfile := range image.Dockerfiles {
+				dockerfile = filepath.ToSlash(strings.TrimSpace(dockerfile))
+				if dockerfile == "" {
+					return fmt.Errorf("oci.mappings[%d].images[%d].dockerfiles[%d] must not be empty", index, imageIndex, dockerfileIndex)
+				}
+				if _, exists := seenDockerfiles[dockerfile]; exists {
+					continue
+				}
+				seenDockerfiles[dockerfile] = struct{}{}
+				dockerfiles = append(dockerfiles, dockerfile)
+			}
+			if len(dockerfiles) == 0 {
+				return fmt.Errorf("oci.mappings[%d].images[%d].dockerfiles must not be empty", index, imageIndex)
+			}
+			image.Dockerfiles = dockerfiles
+			image.Tag = strings.TrimSpace(image.Tag)
+			if image.Tag == "" {
+				image.Tag = policy.OCITagStrategyLatestSemver
+			}
+			cleanImages = append(cleanImages, image)
 		}
-		entry.Dockerfiles = cleanDockerfiles
-		if normalized != repoKey {
-			delete(cfg.Repositories, repoKey)
-		}
-		cfg.Repositories[normalized] = entry
+
+		mapping.Repo = normalizedRepo
+		mapping.Images = cleanImages
+		normalizedMappings = append(normalizedMappings, mapping)
+		repoMapping[normalizedRepo] = mapping
 	}
+	cfg.OCI.Mappings = normalizedMappings
+	cfg.repoMapping = repoMapping
+
 	for _, promptList := range [][]policy.AgentRemediationPromptPolicy{
 		cfg.Remediation.Prompts.ContainerOSPatching,
 		cfg.Remediation.Prompts.CIFailureAssessment,
@@ -113,10 +157,14 @@ func validateAppRuntimeConfig(cfg *AppRuntimeConfig) error {
 	return nil
 }
 
-func (cfg *AppRuntimeConfig) RepositoryConfig(repoKey string) (AppRepositoryRuntimeConfig, bool) {
-	if cfg == nil {
-		return AppRepositoryRuntimeConfig{}, false
+func (cfg *AppRuntimeConfig) RepositoryMapping(repoKey string) (AppOCIMappingSpec, bool) {
+	if cfg == nil || cfg.repoMapping == nil {
+		return AppOCIMappingSpec{}, false
 	}
-	entry, ok := cfg.Repositories[normalizeRepoName(repoKey)]
+	entry, ok := cfg.repoMapping[normalizeRepoName(repoKey)]
 	return entry, ok
+}
+
+func containsRuntimeWildcard(value string) bool {
+	return strings.ContainsAny(value, "*?[]")
 }

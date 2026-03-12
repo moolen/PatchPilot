@@ -10,8 +10,14 @@
   "registry_cache_ttl": "",
   "registry_auth_mode": "auto",
   "registry_auth_token_env": "",
-  "docker_allowed_base_images": null,
-  "docker_disallowed_base_images": null,
-  "docker_base_image_patching": "auto",
-  "docker_os_package_patching": "disabled"
+  "oci_policies": null,
+  "oci_external_images": [
+    {
+      "Source": "ghcr.io/example/demo",
+      "Dockerfiles": [
+        "images/Dockerfile"
+      ],
+      "Tag": "latest-semver"
+    }
+  ]
 }

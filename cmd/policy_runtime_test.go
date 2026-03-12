@@ -29,24 +29,19 @@ func TestOptionsFromPolicy(t *testing.T) {
 				},
 			},
 		},
-		Docker: policy.DockerPolicy{
-			AllowedBaseImages:    []string{"golang:*"},
-			DisallowedBaseImages: []string{"ubuntu:latest"},
-			BaseImageRules: []policy.DockerBaseImageRule{
+		OCI: policy.OCIPolicy{
+			Policies: []policy.OCIImagePolicy{
 				{
-					Image: "registry.internal/platform/go-base",
-					Deny:  []string{".*-debug$"},
-					TagSets: []policy.DockerBaseImageTagSet{
-						{
-							SemverRange: ">=1.21.1 <1.22.0",
-							Allow:       []string{`^v?\d+\.\d+\.\d+-alpine$`},
+					Name:   "go-base",
+					Source: "registry.internal/platform/go-base",
+					Tags: policy.OCITagPolicy{
+						Allow: []string{`^v?\d+\.\d+\.\d+-alpine$`},
+						Deny:  []string{".*-debug$"},
+						Semver: []policy.OCISemverPolicy{
+							{Range: []string{">=1.21.1 <1.22.0"}},
 						},
 					},
 				},
-			},
-			Patching: policy.DockerPatchingPolicy{
-				BaseImages: policy.DockerPatchDisabled,
-				OSPackages: policy.DockerPatchAuto,
 			},
 		},
 		Go: policy.GoPolicy{
@@ -73,35 +68,29 @@ func TestOptionsFromPolicy(t *testing.T) {
 	}
 
 	dockerOptions := dockerOptionsFromPolicy(cfg)
-	if dockerOptions.BaseImagePatching {
-		t.Fatalf("expected base image patching disabled")
+	if !dockerOptions.BaseImagePatching {
+		t.Fatalf("expected base image patching enabled")
 	}
-	if !dockerOptions.OSPackagePatching {
-		t.Fatalf("expected OS package patching enabled")
+	if dockerOptions.OSPackagePatching {
+		t.Fatalf("expected OS package patching disabled")
 	}
-	if !reflect.DeepEqual(dockerOptions.AllowedBaseImages, []string{"golang:*"}) {
-		t.Fatalf("unexpected allowed base images: %#v", dockerOptions.AllowedBaseImages)
+	if len(dockerOptions.OCIPolicies) != 1 {
+		t.Fatalf("unexpected OCI policies: %#v", dockerOptions.OCIPolicies)
 	}
-	if !reflect.DeepEqual(dockerOptions.DisallowedBaseImages, []string{"ubuntu:latest"}) {
-		t.Fatalf("unexpected disallowed base images: %#v", dockerOptions.DisallowedBaseImages)
+	if dockerOptions.OCIPolicies[0].Source != "registry.internal/platform/go-base" {
+		t.Fatalf("unexpected OCI policy source: %#v", dockerOptions.OCIPolicies)
 	}
-	if len(dockerOptions.BaseImageRules) != 1 {
-		t.Fatalf("unexpected base image rules: %#v", dockerOptions.BaseImageRules)
+	if !reflect.DeepEqual(dockerOptions.OCIPolicies[0].Tags.Deny, []string{".*-debug$"}) {
+		t.Fatalf("unexpected OCI deny patterns: %#v", dockerOptions.OCIPolicies[0].Tags.Deny)
 	}
-	if dockerOptions.BaseImageRules[0].Image != "registry.internal/platform/go-base" {
-		t.Fatalf("unexpected base image rule image: %#v", dockerOptions.BaseImageRules)
+	if len(dockerOptions.OCIPolicies[0].Tags.Semver) != 1 {
+		t.Fatalf("unexpected OCI semver rules: %#v", dockerOptions.OCIPolicies[0].Tags.Semver)
 	}
-	if !reflect.DeepEqual(dockerOptions.BaseImageRules[0].Deny, []string{".*-debug$"}) {
-		t.Fatalf("unexpected base image rule deny patterns: %#v", dockerOptions.BaseImageRules[0].Deny)
+	if dockerOptions.OCIPolicies[0].Tags.Semver[0].Range[0] != ">=1.21.1 <1.22.0" {
+		t.Fatalf("unexpected OCI semver range: %#v", dockerOptions.OCIPolicies[0].Tags.Semver[0])
 	}
-	if len(dockerOptions.BaseImageRules[0].TagSets) != 1 {
-		t.Fatalf("unexpected base image rule tag sets: %#v", dockerOptions.BaseImageRules[0].TagSets)
-	}
-	if dockerOptions.BaseImageRules[0].TagSets[0].SemverRange != ">=1.21.1 <1.22.0" {
-		t.Fatalf("unexpected base image rule semver range: %#v", dockerOptions.BaseImageRules[0].TagSets[0])
-	}
-	if !reflect.DeepEqual(dockerOptions.BaseImageRules[0].TagSets[0].Allow, []string{`^v?\d+\.\d+\.\d+-alpine$`}) {
-		t.Fatalf("unexpected base image rule allow patterns: %#v", dockerOptions.BaseImageRules[0].TagSets[0].Allow)
+	if !reflect.DeepEqual(dockerOptions.OCIPolicies[0].Tags.Allow, []string{`^v?\d+\.\d+\.\d+-alpine$`}) {
+		t.Fatalf("unexpected OCI allow patterns: %#v", dockerOptions.OCIPolicies[0].Tags.Allow)
 	}
 
 	goRuntimeOptions := goRuntimeOptionsFromPolicy(cfg)
@@ -289,19 +278,6 @@ func TestRunVerificationChecksInvalidTimeout(t *testing.T) {
 	}
 }
 
-func TestResolveArtifactTemplate(t *testing.T) {
-	resolved := resolveArtifactTemplate(
-		"patchpilot/$PP_TARGET_ID:${PP_RUN_ID}",
-		map[string]string{
-			"PP_TARGET_ID": "backend",
-			"PP_RUN_ID":    "run-1",
-		},
-	)
-	if resolved != "patchpilot/backend:run-1" {
-		t.Fatalf("unexpected resolved template: %q", resolved)
-	}
-}
-
 func TestMergeVulnerabilityReportsDeduplicatesFindings(t *testing.T) {
 	left := &vuln.Report{
 		RawMatches: 2,
@@ -341,113 +317,5 @@ func TestMergeVulnerabilityReportsDeduplicatesFindings(t *testing.T) {
 	}
 	if len(merged.Findings) != 2 {
 		t.Fatalf("unexpected merged findings: %#v", merged.Findings)
-	}
-}
-
-func TestParseArtifactTargetsCommandOutputNormalizesTargets(t *testing.T) {
-	targets, err := parseArtifactTargetsCommandOutput(`
-targets:
-  - dockerfile: ./images/backend/Dockerfile
-    image:
-      tag: patchpilot/backend:${PP_RUN_ID}
-    build:
-      run: make image
-`)
-	if err != nil {
-		t.Fatalf("parseArtifactTargetsCommandOutput returned error: %v", err)
-	}
-	if len(targets) != 1 {
-		t.Fatalf("expected one target, got %#v", targets)
-	}
-	if targets[0].Context != "images/backend" {
-		t.Fatalf("expected context defaulted from dockerfile dir, got %q", targets[0].Context)
-	}
-}
-
-func TestParseArtifactTargetsCommandOutputPreservesExplicitRootContext(t *testing.T) {
-	targets, err := parseArtifactTargetsCommandOutput(`
-targets:
-  - dockerfile: ./images/backend/Dockerfile
-    context: .
-    image:
-      tag: patchpilot/backend:${PP_RUN_ID}
-    build:
-      run: make image
-`)
-	if err != nil {
-		t.Fatalf("parseArtifactTargetsCommandOutput returned error: %v", err)
-	}
-	if len(targets) != 1 {
-		t.Fatalf("expected one target, got %#v", targets)
-	}
-	if targets[0].Context != "." {
-		t.Fatalf("expected explicit root context to be preserved, got %q", targets[0].Context)
-	}
-}
-
-func TestParseArtifactTargetsCommandOutputRequiresTopLevelTargets(t *testing.T) {
-	_, err := parseArtifactTargetsCommandOutput(`{}`)
-	if err == nil {
-		t.Fatal("expected error for missing targets key")
-	}
-	if !strings.Contains(err.Error(), "top-level targets key") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestParseArtifactTargetsCommandOutputRejectsUnknownFields(t *testing.T) {
-	_, err := parseArtifactTargetsCommandOutput(`
-targets:
-  - dockerfile: Dockerfile
-    image:
-      tag: example:latest
-    build:
-      run: make image
-    no_such_field: true
-`)
-	if err == nil {
-		t.Fatal("expected error for unknown field")
-	}
-	if !strings.Contains(err.Error(), "field no_such_field not found") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestMergeArtifactTargetPoliciesOverlayWinsByID(t *testing.T) {
-	base := []policy.ArtifactTargetPolicy{
-		{
-			ID:         "backend",
-			Dockerfile: "old/Dockerfile",
-			Context:    "old",
-			Image:      policy.ArtifactImagePolicy{Tag: "example/backend:old"},
-			Build:      policy.ArtifactBuildPolicy{Run: "make old", Timeout: "30m"},
-		},
-	}
-	overlay := []policy.ArtifactTargetPolicy{
-		{
-			ID:         "backend",
-			Dockerfile: "new/Dockerfile",
-			Context:    "new",
-			Image:      policy.ArtifactImagePolicy{Tag: "example/backend:new"},
-			Build:      policy.ArtifactBuildPolicy{Run: "make new", Timeout: "30m"},
-		},
-		{
-			ID:         "worker",
-			Dockerfile: "worker/Dockerfile",
-			Context:    "worker",
-			Image:      policy.ArtifactImagePolicy{Tag: "example/worker:new"},
-			Build:      policy.ArtifactBuildPolicy{Run: "make worker", Timeout: "30m"},
-		},
-	}
-
-	merged := mergeArtifactTargetPolicies(base, overlay)
-	if len(merged) != 2 {
-		t.Fatalf("expected two merged targets, got %#v", merged)
-	}
-	if merged[0].Dockerfile != "new/Dockerfile" {
-		t.Fatalf("expected overlay target to replace by id, got %#v", merged[0])
-	}
-	if merged[1].ID != "worker" {
-		t.Fatalf("expected new overlay target appended, got %#v", merged[1])
 	}
 }

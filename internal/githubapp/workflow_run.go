@@ -64,9 +64,6 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 		"--untrusted-repo-policy",
 		"--enable-agent=" + strconv.FormatBool(strings.TrimSpace(service.cfg.AgentCommand) != ""),
 		"--repository-key", repoKey,
-		"--oci-image", scan.OCIImage,
-		"--oci-image-tag", scan.OCIImageTag,
-		"--oci-image-repository", scan.OCIImageRepository,
 	}
 	if command := strings.TrimSpace(service.cfg.AgentCommand); command != "" {
 		args = append(args, "--agent-command", command)

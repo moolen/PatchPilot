@@ -5,7 +5,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"os"
+	"fmt"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"golang.org/x/mod/semver"
 )
 
@@ -24,6 +27,24 @@ type semverConstraint struct {
 	version  string
 }
 
+type OCIImagePolicy struct {
+	Name   string
+	Source string
+	Tags   OCIImageTagPolicy
+}
+
+type OCIImageTagPolicy struct {
+	Allow  []string
+	Semver []OCIImageSemverPolicy
+	Deny   []string
+}
+
+type OCIImageSemverPolicy struct {
+	Range             []string
+	IncludePrerelease bool
+	PrereleaseAllow   []string
+}
+
 func findMatchingBaseImageRule(repo string, rules []BaseImageRule) (BaseImageRule, bool) {
 	repo = normalizeRuleImageRepository(repo)
 	for _, rule := range rules {
@@ -32,6 +53,245 @@ func findMatchingBaseImageRule(repo string, rules []BaseImageRule) (BaseImageRul
 		}
 	}
 	return BaseImageRule{}, false
+}
+
+func resolveOCIBaseImageTag(ctx context.Context, image string, policies []OCIImagePolicy) (string, string) {
+	ref, ok := parseImageReference(image)
+	if !ok {
+		return "", ""
+	}
+	source := ref.OriginalRepository
+	matches := matchingOCIPolicies(source, policies)
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, policy := range matches {
+			name := strings.TrimSpace(policy.Name)
+			if name == "" {
+				name = strings.TrimSpace(policy.Source)
+			}
+			names = append(names, name)
+		}
+		logOCIDecision("warning: multiple OCI policies matched source=%q, using first match: %s", source, strings.Join(names, ", "))
+	}
+	var selected *OCIImagePolicy
+	if len(matches) > 0 {
+		selected = &matches[0]
+		logOCIDecision("from=%q selected OCI policy=%q source_pattern=%q", image, strings.TrimSpace(selected.Name), strings.TrimSpace(selected.Source))
+	} else {
+		logOCIDecision("from=%q no OCI policy matched source=%q, applying default latest-semver behavior", image, source)
+	}
+
+	tags, err := listRegistryTags(ctx, ref)
+	if err != nil {
+		logOCIDecision("from=%q tag lookup failed for %s/%s: %v", image, ref.Registry, ref.Repository, err)
+		return "", ""
+	}
+	logOCIDecision("from=%q discovered %d tags for source=%q", image, len(tags), source)
+	if len(tags) > 0 {
+		logOCIDecision("from=%q tags=%s", image, strings.Join(tags, ","))
+	}
+
+	if selected == nil {
+		tag := selectLatestSemverTagByDefault(ref.Tag, tags)
+		return tag, source
+	}
+	tag := selectLatestSemverTagByPolicy(ref.Tag, tags, *selected)
+	return tag, source
+}
+
+func matchingOCIPolicies(source string, policies []OCIImagePolicy) []OCIImagePolicy {
+	source = strings.TrimSpace(source)
+	result := make([]OCIImagePolicy, 0)
+	for _, policy := range policies {
+		pattern := strings.TrimSpace(policy.Source)
+		if pattern == "" {
+			continue
+		}
+		matched, err := doublestar.PathMatch(pattern, source)
+		if err != nil {
+			logOCIDecision("warning: invalid OCI source pattern=%q: %v", pattern, err)
+			continue
+		}
+		if matched {
+			result = append(result, policy)
+		}
+	}
+	return result
+}
+
+func selectLatestSemverTagByDefault(currentTag string, tags []string) string {
+	candidates := make([]tagCandidate, 0, len(tags))
+	currentCore, currentSuffix := splitTagSuffix(currentTag)
+	currentVersion, currentHasSemver := extractImageTagSemver(currentCore)
+	_ = currentVersion
+	for _, tag := range tags {
+		core, suffix := splitTagSuffix(tag)
+		version, ok := extractImageTagSemver(core)
+		if !ok {
+			continue
+		}
+		// Default guardrail: when current tag has a prerelease/suffix family, keep exact suffix.
+		if currentHasSemver && strings.TrimSpace(currentSuffix) != "" && suffix != currentSuffix {
+			continue
+		}
+		candidates = append(candidates, tagCandidate{Tag: tag, Version: version})
+	}
+	logOCIDecision("default-filter current_tag=%q semver_candidates=%d", currentTag, len(candidates))
+	return bestTagCandidate(candidates)
+}
+
+func selectLatestSemverTagByPolicy(currentTag string, tags []string, policy OCIImagePolicy) string {
+	allowMatchers := compileRegexps(policy.Tags.Allow)
+	denyMatchers := compileRegexps(policy.Tags.Deny)
+
+	stageAllow := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if len(allowMatchers) == 0 {
+			stageAllow = append(stageAllow, tag)
+			continue
+		}
+		if matchesAnyRegexp(allowMatchers, tag) {
+			stageAllow = append(stageAllow, tag)
+		}
+	}
+
+	stageSemver := make([]tagCandidate, 0, len(stageAllow))
+	for _, tag := range stageAllow {
+		core, _ := splitTagSuffix(tag)
+		version, ok := extractImageTagSemver(core)
+		if !ok {
+			continue
+		}
+		if !matchesSemverPolicy(tag, version, policy.Tags.Semver) {
+			continue
+		}
+		stageSemver = append(stageSemver, tagCandidate{Tag: tag, Version: version})
+	}
+
+	stageDeny := make([]tagCandidate, 0, len(stageSemver))
+	for _, candidate := range stageSemver {
+		if len(denyMatchers) > 0 && matchesAnyRegexp(denyMatchers, candidate.Tag) {
+			continue
+		}
+		stageDeny = append(stageDeny, candidate)
+	}
+	logOCIDecision(
+		"policy-filter policy=%q current_tag=%q allow_in=%d allow_out=%d semver_out=%d deny_out=%d final=%d",
+		strings.TrimSpace(policy.Name),
+		currentTag,
+		len(tags),
+		len(stageAllow),
+		len(stageSemver),
+		len(stageSemver)-len(stageDeny),
+		len(stageDeny),
+	)
+	return bestTagCandidate(stageDeny)
+}
+
+type tagCandidate struct {
+	Tag     string
+	Version string
+}
+
+func bestTagCandidate(candidates []tagCandidate) string {
+	bestTag := ""
+	bestVersion := ""
+	for _, candidate := range candidates {
+		if bestVersion == "" || semver.Compare(candidate.Version, bestVersion) > 0 || (semver.Compare(candidate.Version, bestVersion) == 0 && candidate.Tag > bestTag) {
+			bestTag = candidate.Tag
+			bestVersion = candidate.Version
+		}
+	}
+	return bestTag
+}
+
+func matchesSemverPolicy(tag, version string, rules []OCIImageSemverPolicy) bool {
+	if len(rules) == 0 {
+		return true
+	}
+	isPrerelease := strings.Contains(version, "-")
+	for _, rule := range rules {
+		if isPrerelease && !rule.IncludePrerelease {
+			continue
+		}
+		if isPrerelease && len(rule.PrereleaseAllow) > 0 {
+			matchers := compileRegexps(rule.PrereleaseAllow)
+			if !matchesAnyRegexp(matchers, tag) {
+				continue
+			}
+		}
+		if len(rule.Range) == 0 {
+			return true
+		}
+		for _, rawRange := range rule.Range {
+			constraints, err := parseSemverRange(rawRange)
+			if err != nil {
+				logOCIDecision("warning: invalid semver range %q: %v", rawRange, err)
+				continue
+			}
+			if matchesSemverConstraints(version, constraints) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchesSemverConstraints(version string, constraints []semverConstraint) bool {
+	for _, constraint := range constraints {
+		comparison := semver.Compare(version, constraint.version)
+		switch constraint.operator {
+		case ">":
+			if comparison <= 0 {
+				return false
+			}
+		case ">=":
+			if comparison < 0 {
+				return false
+			}
+		case "<":
+			if comparison >= 0 {
+				return false
+			}
+		case "<=":
+			if comparison > 0 {
+				return false
+			}
+		case "=":
+			if comparison != 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func compileRegexps(patterns []string) []*regexp.Regexp {
+	result := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		matcher, err := regexp.Compile(pattern)
+		if err != nil {
+			logOCIDecision("warning: invalid regex pattern=%q: %v", pattern, err)
+			continue
+		}
+		result = append(result, matcher)
+	}
+	return result
+}
+
+func matchesAnyRegexp(matchers []*regexp.Regexp, value string) bool {
+	for _, matcher := range matchers {
+		if matcher.MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func logOCIDecision(format string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stderr, "[patchpilot] oci: "+format+"\n", args...)
 }
 
 func resolveRuleDrivenImageTag(ctx context.Context, image string, rule BaseImageRule) string {

@@ -135,14 +135,14 @@ func TestMaybePatchFromUsesRegistryTagResolution(t *testing.T) {
 	defer server.Close()
 	registryBaseURL = func(host string) string { return server.URL }
 
-	updated, patch, ok := maybePatchFrom(context.Background(), "FROM localhost:5000/golang:1.21-alpine", filepath.Join(cacheDir, "Dockerfile"), map[string]string{"golang": "1.21.1"}, nil)
+	updated, patch, ok := maybePatchFrom(context.Background(), "FROM localhost:5000/golang:1.21-alpine", filepath.Join(cacheDir, "Dockerfile"), DockerfileOptions{})
 	if !ok {
 		t.Fatalf("expected patch")
 	}
-	if !strings.Contains(updated, "1.21.1-alpine") {
+	if !strings.Contains(updated, "1.22.0-alpine") {
 		t.Fatalf("unexpected updated line: %q", updated)
 	}
-	if patch.To != "1.21.1-alpine" {
+	if patch.To != "1.22.0-alpine" {
 		t.Fatalf("unexpected patch: %+v", patch)
 	}
 }
@@ -285,5 +285,64 @@ printf '{"Username":"AWS","Secret":"secret"}'
 	}
 	if len(tags) != 1 || tags[0] != "1.2.4" {
 		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestParsePrivateECRHost(t *testing.T) {
+	account, region, ok := parsePrivateECRHost("123456789012.dkr.ecr.eu-central-1.amazonaws.com")
+	if !ok {
+		t.Fatalf("expected private ECR host match")
+	}
+	if account != "123456789012" || region != "eu-central-1" {
+		t.Fatalf("unexpected parse result account=%q region=%q", account, region)
+	}
+	if _, _, ok := parsePrivateECRHost("ghcr.io"); ok {
+		t.Fatalf("expected non-ECR host to be rejected")
+	}
+}
+
+func TestLookupRegistryBasicCredentialFallsBackToECR(t *testing.T) {
+	t.Setenv("DOCKER_AUTH_CONFIG", `{"auths":{}}`)
+	originalProvider := ecrAuthProvider
+	t.Cleanup(func() { ecrAuthProvider = originalProvider })
+
+	expected := base64.StdEncoding.EncodeToString([]byte("AWS:token"))
+	ecrAuthProvider = func(ctx context.Context, host string) (string, bool, error) {
+		if host != "123456789012.dkr.ecr.eu-central-1.amazonaws.com" {
+			return "", false, nil
+		}
+		return expected, true, nil
+	}
+
+	credential, err := lookupRegistryBasicCredential(context.Background(), "https://123456789012.dkr.ecr.eu-central-1.amazonaws.com/v2/test/tags/list", "")
+	if err != nil {
+		t.Fatalf("lookupRegistryBasicCredential returned error: %v", err)
+	}
+	if credential != expected {
+		t.Fatalf("unexpected credential: got %q want %q", credential, expected)
+	}
+}
+
+func TestLookupRegistryBasicCredentialPrefersDockerCredentials(t *testing.T) {
+	dockerCredential := base64.StdEncoding.EncodeToString([]byte("AWS:docker-secret"))
+	t.Setenv("DOCKER_AUTH_CONFIG", fmt.Sprintf(`{"auths":{"123456789012.dkr.ecr.eu-central-1.amazonaws.com":{"auth":"%s"}}}`, dockerCredential))
+	originalProvider := ecrAuthProvider
+	t.Cleanup(func() { ecrAuthProvider = originalProvider })
+
+	fallbackCalled := false
+	ecrAuthProvider = func(ctx context.Context, host string) (string, bool, error) {
+		fallbackCalled = true
+		return "", false, nil
+	}
+
+	credential, err := lookupRegistryBasicCredential(context.Background(), "https://123456789012.dkr.ecr.eu-central-1.amazonaws.com/v2/test/tags/list", "")
+	if err != nil {
+		t.Fatalf("lookupRegistryBasicCredential returned error: %v", err)
+	}
+	if credential != dockerCredential {
+		t.Fatalf("unexpected credential: got %q want %q", credential, dockerCredential)
+	}
+	if fallbackCalled {
+		t.Fatalf("expected AWS fallback not to be called when Docker credentials are available")
 	}
 }

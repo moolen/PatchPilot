@@ -15,29 +15,64 @@ import (
 )
 
 func TestMaybePatchFromUpdatesPatchTagWithSuffix(t *testing.T) {
+	cacheDir := t.TempDir()
+	oldCacheDir := registryCacheDir
+	oldBaseURL := registryBaseURL
+	defer func() {
+		registryCacheDir = oldCacheDir
+		registryBaseURL = oldBaseURL
+	}()
+	registryCacheDir = func() (string, error) { return cacheDir, nil }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
+	}))
+	defer server.Close()
+	registryBaseURL = func(host string) string { return server.URL }
+
 	updated, patch, ok := maybePatchFrom(context.Background(),
 		"FROM golang:1.21-alpine",
 		"/tmp/Dockerfile",
-		map[string]string{"golang": "1.21.1"},
-		nil,
+		DockerfileOptions{},
 	)
 	if !ok {
 		t.Fatalf("expected FROM line to be patched")
 	}
-	if updated != "FROM golang:1.21.1-alpine" {
+	if updated != "FROM golang:1.22.0-alpine" {
 		t.Fatalf("unexpected updated line: %q", updated)
 	}
-	if patch.Manager != "dockerfile" || patch.Package != "golang" || patch.From != "1.21-alpine" || patch.To != "1.21.1-alpine" {
+	if patch.Manager != "dockerfile" || patch.Package != "golang" || patch.From != "1.21-alpine" || patch.To != "1.22.0-alpine" {
 		t.Fatalf("unexpected patch: %+v", patch)
 	}
 }
 
 func TestMaybePatchFromSkipsWhenAlreadyFixed(t *testing.T) {
+	cacheDir := t.TempDir()
+	oldCacheDir := registryCacheDir
+	oldBaseURL := registryBaseURL
+	defer func() {
+		registryCacheDir = oldCacheDir
+		registryBaseURL = oldBaseURL
+	}()
+	registryCacheDir = func() (string, error) { return cacheDir, nil }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.2-alpine"]}`)
+	}))
+	defer server.Close()
+	registryBaseURL = func(host string) string { return server.URL }
+
 	updated, patch, ok := maybePatchFrom(context.Background(),
 		"FROM golang:1.21.2-alpine",
 		"/tmp/Dockerfile",
-		map[string]string{"golang": "1.21.1"},
-		nil,
+		DockerfileOptions{
+			OCIPolicies: []OCIImagePolicy{
+				{
+					Source: "golang",
+					Tags: OCIImageTagPolicy{
+						Semver: []OCIImageSemverPolicy{{Range: []string{"<=1.21.2"}}},
+					},
+				},
+			},
+		},
 	)
 	if ok {
 		t.Fatalf("expected no patch, got updated=%q patch=%+v", updated, patch)
@@ -58,7 +93,7 @@ func TestMaybePatchFromUpdatesDigestPinnedBaseImage(t *testing.T) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v2/library/golang/tags/list"):
 			_, _ = fmt.Fprint(w, `{"tags":["1.21.1-alpine","1.21.3-alpine","1.22.0-alpine"]}`)
-		case r.URL.Path == "/v2/library/golang/manifests/1.21.1-alpine":
+		case r.URL.Path == "/v2/library/golang/manifests/1.22.0-alpine":
 			w.Header().Set("Docker-Content-Digest", "sha256:newdigest")
 			if r.Method != http.MethodHead {
 				_, _ = fmt.Fprint(w, `{"schemaVersion":2}`)
@@ -73,16 +108,15 @@ func TestMaybePatchFromUpdatesDigestPinnedBaseImage(t *testing.T) {
 	updated, patch, ok := maybePatchFrom(context.Background(),
 		"FROM golang:1.21-alpine@sha256:olddigest",
 		"/tmp/Dockerfile",
-		map[string]string{"golang": "1.21.1"},
-		nil,
+		DockerfileOptions{},
 	)
 	if !ok {
 		t.Fatalf("expected FROM line to be patched")
 	}
-	if updated != "FROM golang:1.21.1-alpine@sha256:newdigest" {
+	if updated != "FROM golang:1.22.0-alpine@sha256:newdigest" {
 		t.Fatalf("unexpected updated line: %q", updated)
 	}
-	if patch.Manager != "dockerfile" || patch.Package != "golang" || patch.From != "1.21-alpine@sha256:olddigest" || patch.To != "1.21.1-alpine@sha256:newdigest" {
+	if patch.Manager != "dockerfile" || patch.Package != "golang" || patch.From != "1.21-alpine@sha256:olddigest" || patch.To != "1.22.0-alpine@sha256:newdigest" {
 		t.Fatalf("unexpected patch: %+v", patch)
 	}
 }
@@ -224,14 +258,14 @@ func TestPatchDockerfileUpdatesFromUsingRegistryCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first patchDockerfile error: %v", err)
 	}
-	if !changed || len(patches) != 1 || patches[0].To != "1.21.1-alpine" {
+	if !changed || len(patches) != 1 || patches[0].To != "1.22.0-alpine" {
 		t.Fatalf("unexpected first patch result: changed=%v patches=%#v", changed, patches)
 	}
 	firstUpdated, err := os.ReadFile(firstPath)
 	if err != nil {
 		t.Fatalf("read first Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(firstUpdated), "FROM golang:1.21.1-alpine") {
+	if !strings.Contains(string(firstUpdated), "FROM golang:1.22.0-alpine") {
 		t.Fatalf("unexpected first Dockerfile contents:\n%s", string(firstUpdated))
 	}
 
@@ -243,7 +277,7 @@ func TestPatchDockerfileUpdatesFromUsingRegistryCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second patchDockerfile error: %v", err)
 	}
-	if !changed || len(patches) != 1 || patches[0].To != "1.21.1-alpine" {
+	if !changed || len(patches) != 1 || patches[0].To != "1.22.0-alpine" {
 		t.Fatalf("unexpected second patch result: changed=%v patches=%#v", changed, patches)
 	}
 	if calls != 1 {
@@ -302,14 +336,14 @@ func TestPatchDockerfileUsesStaleRegistryCacheOnFetchFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected stale cache fallback, got error: %v", err)
 	}
-	if !changed || len(patches) != 1 || patches[0].To != "1.21.1-alpine" {
+	if !changed || len(patches) != 1 || patches[0].To != "1.21.3-alpine" {
 		t.Fatalf("unexpected stale-cache patch result: changed=%v patches=%#v", changed, patches)
 	}
 	secondUpdated, err := os.ReadFile(secondPath)
 	if err != nil {
 		t.Fatalf("read second Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(secondUpdated), "FROM golang:1.21.1-alpine") {
+	if !strings.Contains(string(secondUpdated), "FROM golang:1.21.3-alpine") {
 		t.Fatalf("unexpected second Dockerfile contents:\n%s", string(secondUpdated))
 	}
 	if calls != 2 {

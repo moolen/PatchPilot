@@ -10,21 +10,19 @@ import (
 )
 
 type packSnapshot struct {
-	Version                   int                     `json:"version"`
-	VerificationMode          string                  `json:"verification_mode"`
-	VerificationCommands      []CommandPolicy         `json:"verification_commands"`
-	PostExecutionHooks        []HookPolicy            `json:"post_execution_hooks"`
-	ExcludedCVEs              []string                `json:"excluded_cves"`
-	ExcludedVulnerabilities   []VulnerabilitySelector `json:"excluded_vulnerabilities"`
-	ScanSkipPaths             []string                `json:"scan_skip_paths"`
-	RegistryCacheDir          string                  `json:"registry_cache_dir"`
-	RegistryCacheTTL          string                  `json:"registry_cache_ttl"`
-	RegistryAuthMode          string                  `json:"registry_auth_mode"`
-	RegistryAuthTokenEnv      string                  `json:"registry_auth_token_env"`
-	DockerAllowedBaseImages   []string                `json:"docker_allowed_base_images"`
-	DockerDisallowedBaseImage []string                `json:"docker_disallowed_base_images"`
-	DockerBaseImagePatching   string                  `json:"docker_base_image_patching"`
-	DockerOSPackagePatching   string                  `json:"docker_os_package_patching"`
+	Version                 int                     `json:"version"`
+	VerificationMode        string                  `json:"verification_mode"`
+	VerificationCommands    []CommandPolicy         `json:"verification_commands"`
+	PostExecutionHooks      []HookPolicy            `json:"post_execution_hooks"`
+	ExcludedCVEs            []string                `json:"excluded_cves"`
+	ExcludedVulnerabilities []VulnerabilitySelector `json:"excluded_vulnerabilities"`
+	ScanSkipPaths           []string                `json:"scan_skip_paths"`
+	RegistryCacheDir        string                  `json:"registry_cache_dir"`
+	RegistryCacheTTL        string                  `json:"registry_cache_ttl"`
+	RegistryAuthMode        string                  `json:"registry_auth_mode"`
+	RegistryAuthTokenEnv    string                  `json:"registry_auth_token_env"`
+	OCIPolicies             []OCIImagePolicy        `json:"oci_policies"`
+	OCIExternalImages       []OCIExternalImageSpec  `json:"oci_external_images"`
 }
 
 func TestPolicyPackGolden(t *testing.T) {
@@ -54,21 +52,19 @@ func TestPolicyPackGolden(t *testing.T) {
 			}
 
 			snapshot := packSnapshot{
-				Version:                   cfg.Version,
-				VerificationMode:          cfg.Verification.Mode,
-				VerificationCommands:      cfg.Verification.Commands,
-				PostExecutionHooks:        cfg.PostExecution.Commands,
-				ExcludedCVEs:              cfg.Exclude.CVEs,
-				ExcludedVulnerabilities:   cfg.Exclude.Vulnerabilities,
-				ScanSkipPaths:             cfg.Scan.SkipPaths,
-				RegistryCacheDir:          cfg.Registry.Cache.Dir,
-				RegistryCacheTTL:          cfg.Registry.Cache.TTL,
-				RegistryAuthMode:          cfg.Registry.Auth.Mode,
-				RegistryAuthTokenEnv:      cfg.Registry.Auth.TokenEnv,
-				DockerAllowedBaseImages:   cfg.Docker.AllowedBaseImages,
-				DockerDisallowedBaseImage: cfg.Docker.DisallowedBaseImages,
-				DockerBaseImagePatching:   cfg.Docker.Patching.BaseImages,
-				DockerOSPackagePatching:   cfg.Docker.Patching.OSPackages,
+				Version:                 cfg.Version,
+				VerificationMode:        cfg.Verification.Mode,
+				VerificationCommands:    cfg.Verification.Commands,
+				PostExecutionHooks:      cfg.PostExecution.Commands,
+				ExcludedCVEs:            cfg.Exclude.CVEs,
+				ExcludedVulnerabilities: cfg.Exclude.Vulnerabilities,
+				ScanSkipPaths:           cfg.Scan.SkipPaths,
+				RegistryCacheDir:        cfg.Registry.Cache.Dir,
+				RegistryCacheTTL:        cfg.Registry.Cache.TTL,
+				RegistryAuthMode:        cfg.Registry.Auth.Mode,
+				RegistryAuthTokenEnv:    cfg.Registry.Auth.TokenEnv,
+				OCIPolicies:             cfg.OCI.Policies,
+				OCIExternalImages:       cfg.OCI.ExternalImages,
 			}
 			data, err := json.MarshalIndent(snapshot, "", "  ")
 			if err != nil {
@@ -87,7 +83,6 @@ func TestPolicyPackInvalidConfigurations(t *testing.T) {
 		errorSubstr string
 	}{
 		{name: "registry-bearer-no-token", errorSubstr: "token_env"},
-		{name: "docker-invalid-mode", errorSubstr: "docker.patching.base_images"},
 		{name: "verification-invalid-timeout", errorSubstr: "verification.commands[0].timeout"},
 	}
 

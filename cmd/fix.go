@@ -27,9 +27,7 @@ type fixOptions struct {
 	JSONOutput       bool
 	FindingsFile     string
 	RepositoryKey    string
-	OCIImage         string
-	OCIImageTag      string
-	OCIImageRepo     string
+	OCIMappingFile   string
 }
 
 type validationCycle struct {
@@ -74,6 +72,10 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	}()
 
 	logProgress("starting fix workflow for %s", repo)
+	ociContext := ociScanContext{
+		RepositoryKey: strings.TrimSpace(options.RepositoryKey),
+		MappingFile:   strings.TrimSpace(options.OCIMappingFile),
+	}
 
 	stage := tracker.beginStage("pre_execution_hooks")
 	if err := runPreExecutionHooks(ctx, repo, cfg); err != nil {
@@ -125,7 +127,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 			stage = tracker.beginStage("baseline_scan_repair_loop")
 			var attempts int
-			before, attempts, err = runBaselineRepairLoop(ctx, repo, cfg, options, tracker.record.RunID, "generate_baseline_sbom", err)
+			before, attempts, err = runBaselineRepairLoop(ctx, repo, cfg, options, ociContext, tracker.record.RunID, "generate_baseline_sbom", err)
 			if err != nil {
 				tracker.endStageFailure(stage, err, nil)
 				return err
@@ -140,7 +142,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 			logProgress("scanning baseline vulnerabilities")
 			stage = tracker.beginStage("scan_baseline")
-			before, err = scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "baseline", "fix")
+			before, err = scanVulnerabilitiesForRun(ctx, repo, cfg, tracker.record.RunID, "baseline", "fix", ociContext)
 			if err != nil {
 				if !options.EnableAgent {
 					tracker.endStageFailure(stage, err, nil)
@@ -153,7 +155,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 				stage = tracker.beginStage("baseline_scan_repair_loop")
 				var attempts int
-				before, attempts, err = runBaselineRepairLoop(ctx, repo, cfg, options, tracker.record.RunID, "scan_baseline", err)
+				before, attempts, err = runBaselineRepairLoop(ctx, repo, cfg, options, ociContext, tracker.record.RunID, "scan_baseline", err)
 				if err != nil {
 					tracker.endStageFailure(stage, err, nil)
 					return err
@@ -253,7 +255,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 
 	logProgress("validating post-fix state")
 	stage = tracker.beginStage("validate_post_fix")
-	finalValidation, validationErr := runValidationCycle(ctx, repo, cfg, verificationBaseline, verificationDirs, tracker.record.RunID, "post-fix")
+	finalValidation, validationErr := runValidationCycle(ctx, repo, cfg, verificationBaseline, verificationDirs, tracker.record.RunID, "post-fix", ociContext)
 	if validationErr != nil {
 		if !options.EnableAgent {
 			tracker.endStageFailure(stage, validationErr, nil)
@@ -285,6 +287,7 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 			repo,
 			cfg,
 			options,
+			ociContext,
 			deterministicIssues,
 			before,
 			finalValidation,
@@ -437,12 +440,9 @@ func applyContainerOSPatchingWithAgent(ctx context.Context, repo string, cfg *po
 		repository = filepath.Base(repo)
 	}
 	state := map[string]any{
-		"repository":           repository,
-		"dockerfiles":          dockerfiles,
-		"container_findings":   containerFindings,
-		"oci_image":            strings.TrimSpace(options.OCIImage),
-		"oci_image_tag":        strings.TrimSpace(options.OCIImageTag),
-		"oci_image_repository": strings.TrimSpace(options.OCIImageRepo),
+		"repository":         repository,
+		"dockerfiles":        dockerfiles,
+		"container_findings": containerFindings,
 	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
@@ -478,8 +478,9 @@ func applyContainerOSPatchingWithAgent(ctx context.Context, repo string, cfg *po
 			"Apply OS package remediation only where it is actually needed.",
 			"Do not run validation commands.",
 		},
-		WorkingDirectory: repo,
-		PromptFilePath:   filepath.Join(artifactDir, "prompt.txt"),
+		RemediationPrompts: containerOSRemediationPromptGuidance(cfg),
+		WorkingDirectory:   repo,
+		PromptFilePath:     filepath.Join(artifactDir, "prompt.txt"),
 	})
 	if err != nil {
 		return fmt.Errorf("run agent patch attempt: %w", err)

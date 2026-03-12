@@ -141,42 +141,57 @@ func SchemaJSON() []byte {
         }
       }
     },
-    "docker": {
+    "oci": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "allowed_base_images": { "type": "array", "items": { "type": "string" } },
-        "disallowed_base_images": { "type": "array", "items": { "type": "string" } },
-        "base_image_rules": {
+        "policies": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["image", "tag_sets"],
+            "required": ["source"],
             "properties": {
-              "image": { "type": "string", "minLength": 1 },
-              "deny": { "type": "array", "items": { "type": "string" } },
-              "tag_sets": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "semver_range": { "type": "string" },
-                    "allow": { "type": "array", "items": { "type": "string" } }
+              "name": { "type": "string" },
+              "source": { "type": "string", "minLength": 1 },
+              "tags": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "allow": { "type": "array", "items": { "type": "string" } },
+                  "deny": { "type": "array", "items": { "type": "string" } },
+                  "semver": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "range": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                        "includePrerelease": { "type": "boolean" },
+                        "prereleaseAllow": { "type": "array", "items": { "type": "string" } }
+                      }
+                    }
                   }
                 }
               }
             }
           }
         },
-        "patching": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "base_images": { "type": "string", "enum": ["auto", "disabled"] },
-            "os_packages": { "type": "string", "enum": ["auto", "disabled"] }
+        "external_images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "dockerfiles"],
+            "properties": {
+              "source": { "type": "string", "minLength": 1 },
+              "dockerfiles": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "tag": { "type": "string" }
+            }
           }
         }
       }
@@ -220,61 +235,8 @@ func SchemaJSON() []byte {
                 "deterministic_fix_failed": { "$ref": "#/$defs/remediation_prompt_list" },
                 "validation_failed": { "$ref": "#/$defs/remediation_prompt_list" },
                 "vulnerabilities_remaining": { "$ref": "#/$defs/remediation_prompt_list" },
-                "verification_regressed": { "$ref": "#/$defs/remediation_prompt_list" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "artifacts": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "targets_command": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["run"],
-          "properties": {
-            "run": { "type": "string", "minLength": 1 },
-            "timeout": { "type": "string" },
-            "mode": { "type": "string", "enum": ["replace", "append"] },
-            "fail_on_error": { "type": "boolean" }
-          }
-        },
-        "targets": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["dockerfile", "image", "build"],
-            "properties": {
-              "id": { "type": "string" },
-              "dockerfile": { "type": "string", "minLength": 1 },
-              "context": { "type": "string" },
-              "image": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["tag"],
-                "properties": {
-                  "tag": { "type": "string", "minLength": 1 }
-                }
-              },
-              "build": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["run"],
-                "properties": {
-                  "run": { "type": "string", "minLength": 1 },
-                  "timeout": { "type": "string" }
-                }
-              },
-              "scan": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "enabled": { "type": "boolean" }
-                }
+                "verification_regressed": { "$ref": "#/$defs/remediation_prompt_list" },
+                "container_os_patching": { "$ref": "#/$defs/remediation_prompt_list" }
               }
             }
           }

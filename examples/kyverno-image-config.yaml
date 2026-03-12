@@ -1,0 +1,8 @@
+oci:
+  mappings:
+    - repo: kyverno/kyverno
+      images:
+        - source: ghcr.io/kyverno/kyverno
+          dockerfiles:
+            - Dockerfile
+          tag: latest-semver

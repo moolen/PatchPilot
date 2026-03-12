@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/moolen/patchpilot/internal/fixer"
 	"github.com/moolen/patchpilot/internal/policy"
 	"github.com/moolen/patchpilot/internal/sbom"
 	"github.com/moolen/patchpilot/internal/vuln"
@@ -20,132 +21,121 @@ import (
 )
 
 type artifactScanOptions struct {
-	RunID   string
-	Phase   string
-	Command string
+	RunID         string
+	Phase         string
+	Command       string
+	RepositoryKey string
+	MappingFile   string
 }
 
-type artifactTarget struct {
-	ID           string
-	Dockerfile   string
-	Context      string
-	ImageTagTmpl string
-	BuildRun     string
-	BuildTimeout time.Duration
+type externalImageScanTarget struct {
+	Source      string
+	Dockerfiles []string
+	TagStrategy string
+	Origin      string
+}
+
+type ociMappingFile struct {
+	OCI ociMappingSection `yaml:"oci"`
+}
+
+type ociMappingSection struct {
+	Mappings []ociRepositoryMapping `yaml:"mappings"`
+}
+
+type ociRepositoryMapping struct {
+	Repo   string                        `yaml:"repo"`
+	Images []policy.OCIExternalImageSpec `yaml:"images"`
 }
 
 func scanArtifactVulnerabilities(ctx context.Context, repo string, cfg *policy.Config, options artifactScanOptions) (*vuln.Report, error) {
-	targets, err := artifactTargetsFromPolicy(ctx, repo, cfg, options)
+	targets, err := resolveExternalImageScanTargets(repo, cfg, options)
 	if err != nil {
 		return nil, err
 	}
 	if len(targets) == 0 {
+		logProgress("external OCI scan mapping: no configured images")
 		return nil, nil
 	}
-
-	runID := strings.TrimSpace(options.RunID)
-	if runID == "" {
-		runID = newRunID()
-	}
-	phase := strings.TrimSpace(options.Phase)
-	if phase == "" {
-		phase = "scan"
-	}
-	phaseLabel := sanitizeArtifactName(phase)
-	if phaseLabel == "" {
-		phaseLabel = "scan"
-	}
+	logProgress("external OCI scan mapping: resolved %d image target(s)", len(targets))
 
 	reports := make([]*vuln.Report, 0, len(targets))
-	for _, target := range targets {
-		resolvedTag := resolveArtifactTemplate(target.ImageTagTmpl, map[string]string{
-			"PP_RUN_ID":    runID,
-			"PP_TARGET_ID": target.ID,
-		})
-		resolvedTag = strings.TrimSpace(resolvedTag)
-		if resolvedTag == "" {
-			return nil, fmt.Errorf("artifact target %q resolved empty image tag", target.ID)
+	for index, target := range targets {
+		tag, err := resolveExternalImageTag(ctx, target)
+		if err != nil {
+			return nil, fmt.Errorf("resolve tag for external OCI image %q: %w", target.Source, err)
+		}
+		resolvedImage := target.Source + ":" + tag
+		logProgress(
+			"external OCI image %q (%s): selected tag=%q dockerfiles=%s",
+			target.Source,
+			target.Origin,
+			tag,
+			strings.Join(target.Dockerfiles, ","),
+		)
+
+		if _, stderr, err := runBinaryCommand(ctx, repo, nil, 10*time.Minute, "docker", "pull", resolvedImage); err != nil {
+			return nil, fmt.Errorf("pull external OCI image %q: %w%s", resolvedImage, err, formatCommandStderr(stderr))
 		}
 
-		logProgress("artifact target %q: building image %q", target.ID, resolvedTag)
-		buildEnv := map[string]string{
-			"PP_RUN_ID":     runID,
-			"PP_TARGET_ID":  target.ID,
-			"PP_IMAGE_TAG":  resolvedTag,
-			"PP_DOCKERFILE": target.Dockerfile,
-			"PP_CONTEXT":    target.Context,
-			"PP_REPO_ROOT":  repo,
-			"PP_COMMAND":    strings.TrimSpace(options.Command),
-			"PP_PHASE":      phase,
-		}
-		if _, stderr, err := runShellCommand(ctx, repo, target.BuildRun, buildEnv, target.BuildTimeout); err != nil {
-			return nil, fmt.Errorf("artifact target %q build failed: %w%s", target.ID, err, formatCommandStderr(stderr))
-		}
-
-		logProgress("artifact target %q: validating image tag %q", target.ID, resolvedTag)
-		if _, stderr, err := runBinaryCommand(ctx, repo, nil, 2*time.Minute, "docker", "image", "inspect", resolvedTag); err != nil {
-			return nil, fmt.Errorf("artifact target %q image inspect failed for %q: %w%s", target.ID, resolvedTag, err, formatCommandStderr(stderr))
-		}
-
-		prefix := fmt.Sprintf("%s-%s", sanitizeArtifactName(target.ID), phaseLabel)
-		sbomPath := filepath.Join(repo, ".patchpilot", "artifacts", prefix+"-sbom.json")
-		if _, err := sbom.GenerateForSourceWithOptions(ctx, repo, "image:"+resolvedTag, sbomPath, sbom.Options{}); err != nil {
-			return nil, fmt.Errorf("artifact target %q sbom generation failed: %w", target.ID, err)
+		sbomName := fmt.Sprintf("%02d-%s-sbom.json", index+1, sanitizeArtifactName(target.Source))
+		sbomPath := filepath.Join(repo, ".patchpilot", "oci", sbomName)
+		if _, err := sbom.GenerateForSourceWithOptions(ctx, repo, "image:"+resolvedImage, sbomPath, sbom.Options{}); err != nil {
+			return nil, fmt.Errorf("generate SBOM for external OCI image %q: %w", resolvedImage, err)
 		}
 
 		scanOptions := vulnOptionsFromPolicy(cfg)
-		scanOptions.OutputPrefix = "artifact-" + prefix
-		artifactReport, err := vuln.ScanSBOMWithOptions(ctx, repo, sbomPath, scanOptions)
+		scanOptions.OutputPrefix = fmt.Sprintf("oci-external-%02d", index+1)
+		imageReport, err := vuln.ScanSBOMWithOptions(ctx, repo, sbomPath, scanOptions)
 		if err != nil {
-			return nil, fmt.Errorf("artifact target %q vulnerability scan failed: %w", target.ID, err)
+			return nil, fmt.Errorf("scan SBOM for external OCI image %q: %w", resolvedImage, err)
 		}
 
-		mappedFindings := make([]vuln.Finding, 0, len(artifactReport.Findings))
-		for _, finding := range artifactReport.Findings {
+		mappedFindings := make([]vuln.Finding, 0, len(imageReport.Findings))
+		for _, finding := range imageReport.Findings {
 			if !isContainerPackageEcosystem(finding.Ecosystem) {
 				continue
 			}
-			finding.Locations = []string{target.Dockerfile}
+			finding.Locations = append([]string(nil), target.Dockerfiles...)
 			mappedFindings = append(mappedFindings, finding)
 		}
-		artifactReport.Findings = mappedFindings
-		logProgress("artifact target %q: %d container finding(s) with fix versions", target.ID, len(mappedFindings))
-		reports = append(reports, artifactReport)
+		imageReport.Findings = mappedFindings
+		logProgress("external OCI image %q: mapped %d container finding(s)", resolvedImage, len(mappedFindings))
+		reports = append(reports, imageReport)
 	}
-
 	return mergeVulnerabilityReports(reports...), nil
 }
 
-type artifactTargetsCommandOutput struct {
-	Targets *[]policy.ArtifactTargetPolicy `yaml:"targets"`
+func resolveExternalImageTag(ctx context.Context, target externalImageScanTarget) (string, error) {
+	strategy := strings.TrimSpace(target.TagStrategy)
+	if strategy == "" || strings.EqualFold(strategy, policy.OCITagStrategyLatestSemver) {
+		tag, err := fixer.ResolveLatestSemverImageTag(ctx, target.Source)
+		if err != nil {
+			return "", err
+		}
+		return tag, nil
+	}
+	return strategy, nil
 }
 
-func artifactTargetsFromPolicy(ctx context.Context, repo string, cfg *policy.Config, options artifactScanOptions) ([]artifactTarget, error) {
-	if cfg == nil {
-		return nil, nil
+func resolveExternalImageScanTargets(repo string, cfg *policy.Config, options artifactScanOptions) ([]externalImageScanTarget, error) {
+	repositoryKey := normalizeRepositoryKey(options.RepositoryKey)
+	if strings.TrimSpace(options.MappingFile) != "" && repositoryKey == "" {
+		return nil, errors.New("repository key is required when --oci-mapping-file is set")
 	}
-	targetConfigs := append([]policy.ArtifactTargetPolicy(nil), cfg.Artifacts.Targets...)
-	commandCfg := cfg.Artifacts.TargetsCommand
-	if strings.TrimSpace(commandCfg.Run) != "" {
-		resolvedFromCommand, err := resolveArtifactTargetsFromCommand(ctx, repo, commandCfg, options)
-		if err != nil {
-			if commandCfg.FailOnErrorOrDefault() {
-				return nil, err
-			}
-			logProgress("artifact targets_command failed (ignored): %v", err)
-		} else {
-			switch commandCfg.Mode {
-			case policy.ArtifactsTargetsCommandModeAppend:
-				targetConfigs = mergeArtifactTargetPolicies(targetConfigs, resolvedFromCommand)
-			default:
-				targetConfigs = resolvedFromCommand
-			}
-		}
-	}
-	if err := writeResolvedArtifactTargets(repo, targetConfigs); err != nil {
+
+	fromMapping, err := loadExternalImageSpecsFromMappingFile(options.MappingFile, repositoryKey)
+	if err != nil {
 		return nil, err
 	}
-	if len(targetConfigs) == 0 {
+
+	fromPolicy := []policy.OCIExternalImageSpec(nil)
+	if cfg != nil {
+		fromPolicy = append(fromPolicy, cfg.OCI.ExternalImages...)
+	}
+
+	merged := mergeExternalImageSpecs(fromMapping, fromPolicy)
+	if len(merged) == 0 {
 		return nil, nil
 	}
 
@@ -154,142 +144,163 @@ func artifactTargetsFromPolicy(ctx context.Context, repo string, cfg *policy.Con
 		return nil, fmt.Errorf("resolve repo path: %w", err)
 	}
 
-	targets := make([]artifactTarget, 0, len(targetConfigs))
-	for index, targetCfg := range targetConfigs {
-		if !targetCfg.Scan.EnabledOrDefault() {
-			continue
+	targets := make([]externalImageScanTarget, 0, len(merged))
+	for index, mergedSpec := range merged {
+		spec := mergedSpec.Spec
+		if strings.TrimSpace(spec.Source) == "" {
+			return nil, fmt.Errorf("external OCI image source at index %d must not be empty", index)
+		}
+		if len(spec.Dockerfiles) == 0 {
+			return nil, fmt.Errorf("external OCI image %q must configure at least one dockerfile", spec.Source)
 		}
 
-		dockerfilePath, err := resolvePathInsideRepo(repoAbs, targetCfg.Dockerfile)
-		if err != nil {
-			return nil, fmt.Errorf("artifacts.targets[%d].dockerfile: %w", index, err)
+		dockerfiles := make([]string, 0, len(spec.Dockerfiles))
+		seen := map[string]struct{}{}
+		for fileIndex, dockerfile := range spec.Dockerfiles {
+			resolved, err := resolvePathInsideRepo(repoAbs, dockerfile)
+			if err != nil {
+				return nil, fmt.Errorf("external OCI image %q dockerfiles[%d]: %w", spec.Source, fileIndex, err)
+			}
+			if _, err := os.Stat(resolved); err != nil {
+				return nil, fmt.Errorf("external OCI image %q dockerfiles[%d]: %w", spec.Source, fileIndex, err)
+			}
+			relative, err := filepath.Rel(repoAbs, resolved)
+			if err != nil {
+				return nil, fmt.Errorf("external OCI image %q dockerfiles[%d]: %w", spec.Source, fileIndex, err)
+			}
+			normalized := filepath.ToSlash(relative)
+			if _, exists := seen[normalized]; exists {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			dockerfiles = append(dockerfiles, normalized)
 		}
-		if _, err := os.Stat(dockerfilePath); err != nil {
-			return nil, fmt.Errorf("artifacts.targets[%d].dockerfile: %w", index, err)
+		sort.Strings(dockerfiles)
+		if len(dockerfiles) == 0 {
+			return nil, fmt.Errorf("external OCI image %q has no usable dockerfiles", spec.Source)
 		}
 
-		contextPath, err := resolvePathInsideRepo(repoAbs, targetCfg.Context)
-		if err != nil {
-			return nil, fmt.Errorf("artifacts.targets[%d].context: %w", index, err)
+		tagStrategy := strings.TrimSpace(spec.Tag)
+		if tagStrategy == "" {
+			tagStrategy = policy.OCITagStrategyLatestSemver
 		}
-		info, err := os.Stat(contextPath)
-		if err != nil {
-			return nil, fmt.Errorf("artifacts.targets[%d].context: %w", index, err)
-		}
-		if !info.IsDir() {
-			return nil, fmt.Errorf("artifacts.targets[%d].context must be a directory", index)
-		}
-
-		timeout, err := time.ParseDuration(targetCfg.Build.Timeout)
-		if err != nil {
-			return nil, fmt.Errorf("artifacts.targets[%d].build.timeout: %w", index, err)
-		}
-		targets = append(targets, artifactTarget{
-			ID:           targetCfg.ID,
-			Dockerfile:   dockerfilePath,
-			Context:      contextPath,
-			ImageTagTmpl: targetCfg.Image.Tag,
-			BuildRun:     targetCfg.Build.Run,
-			BuildTimeout: timeout,
+		targets = append(targets, externalImageScanTarget{
+			Source:      strings.TrimSpace(spec.Source),
+			Dockerfiles: dockerfiles,
+			TagStrategy: tagStrategy,
+			Origin:      mergedSpec.Origin,
 		})
 	}
-
 	return targets, nil
 }
 
-func resolveArtifactTargetsFromCommand(ctx context.Context, repo string, command policy.ArtifactsTargetsCommandPolicy, options artifactScanOptions) ([]policy.ArtifactTargetPolicy, error) {
-	env := map[string]string{
-		"PP_RUN_ID":    strings.TrimSpace(options.RunID),
-		"PP_REPO_ROOT": repo,
-		"PP_COMMAND":   strings.TrimSpace(options.Command),
-		"PP_PHASE":     strings.TrimSpace(options.Phase),
-	}
-	if env["PP_RUN_ID"] == "" {
-		env["PP_RUN_ID"] = newRunID()
-	}
-
-	timeout, err := time.ParseDuration(command.Timeout)
-	if err != nil {
-		return nil, fmt.Errorf("parse artifacts.targets_command.timeout: %w", err)
-	}
-	stdout, stderr, err := runShellCommand(ctx, repo, command.Run, env, timeout)
-	if err != nil {
-		return nil, fmt.Errorf("run artifacts.targets_command: %w%s", err, formatCommandStderr(stderr))
-	}
-
-	targets, err := parseArtifactTargetsCommandOutput(stdout)
-	if err != nil {
-		return nil, fmt.Errorf("parse artifacts.targets_command output: %w%s", err, formatCommandStderr(stderr))
-	}
-	return targets, nil
+type mappedExternalImageSpec struct {
+	Spec   policy.OCIExternalImageSpec
+	Origin string
 }
 
-func parseArtifactTargetsCommandOutput(raw string) ([]policy.ArtifactTargetPolicy, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, errors.New("empty stdout")
+func mergeExternalImageSpecs(base []policy.OCIExternalImageSpec, overlay []policy.OCIExternalImageSpec) []mappedExternalImageSpec {
+	result := make([]mappedExternalImageSpec, 0, len(base)+len(overlay))
+	indexBySource := map[string]int{}
+	add := func(spec policy.OCIExternalImageSpec, origin string) {
+		key := normalizeImageSourceKey(spec.Source)
+		if key == "" {
+			return
+		}
+		if index, exists := indexBySource[key]; exists {
+			logProgress("external OCI mapping: source=%q overridden by %s (previous=%s)", strings.TrimSpace(spec.Source), origin, result[index].Origin)
+			result[index] = mappedExternalImageSpec{Spec: spec, Origin: origin}
+			return
+		}
+		indexBySource[key] = len(result)
+		result = append(result, mappedExternalImageSpec{Spec: spec, Origin: origin})
 	}
-	decoder := yaml.NewDecoder(strings.NewReader(raw))
+	for _, spec := range base {
+		add(spec, "mapping-file")
+	}
+	for _, spec := range overlay {
+		add(spec, "repo-policy")
+	}
+	return result
+}
+
+func normalizeImageSourceKey(source string) string {
+	return strings.ToLower(strings.TrimSpace(source))
+}
+
+func loadExternalImageSpecsFromMappingFile(path, repoKey string) ([]policy.OCIExternalImageSpec, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read OCI mapping file %s: %w", path, err)
+	}
+
+	var cfg ociMappingFile
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
-
-	var payload artifactTargetsCommandOutput
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, err
-	}
-	if payload.Targets == nil {
-		return nil, errors.New("expected top-level targets key")
+	if err := decoder.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("decode OCI mapping file %s: %w", path, err)
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != nil {
-		if !errors.Is(err, io.EOF) {
-			return nil, err
+	if err := decoder.Decode(&extra); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("decode OCI mapping file %s: %w", path, err)
+	}
+	if extra != nil {
+		return nil, fmt.Errorf("decode OCI mapping file %s: expected a single YAML document", path)
+	}
+
+	normalizedRepo := normalizeRepositoryKey(repoKey)
+	if normalizedRepo == "" {
+		return nil, fmt.Errorf("invalid repository key %q for OCI mapping lookup", repoKey)
+	}
+
+	result := []policy.OCIExternalImageSpec(nil)
+	for index, mapping := range cfg.OCI.Mappings {
+		rawRepo := strings.TrimSpace(mapping.Repo)
+		if containsWildcard(rawRepo) {
+			return nil, fmt.Errorf("oci.mappings[%d].repo must be an exact owner/repo match (wildcards are not allowed)", index)
 		}
-	} else {
-		return nil, errors.New("expected single YAML document")
-	}
-
-	normalized, err := policy.NormalizeArtifactTargets(*payload.Targets)
-	if err != nil {
-		return nil, err
-	}
-	return normalized, nil
-}
-
-func mergeArtifactTargetPolicies(base, overlay []policy.ArtifactTargetPolicy) []policy.ArtifactTargetPolicy {
-	merged := append([]policy.ArtifactTargetPolicy(nil), base...)
-	indexByID := map[string]int{}
-	for index := range merged {
-		indexByID[merged[index].ID] = index
-	}
-	for _, target := range overlay {
-		if index, ok := indexByID[target.ID]; ok {
-			merged[index] = target
+		normalizedMappingRepo := normalizeRepositoryKey(rawRepo)
+		if normalizedMappingRepo == "" {
+			return nil, fmt.Errorf("oci.mappings[%d].repo must be an exact owner/repo match", index)
+		}
+		if normalizedMappingRepo != normalizedRepo {
 			continue
 		}
-		indexByID[target.ID] = len(merged)
-		merged = append(merged, target)
+		for imageIndex, image := range mapping.Images {
+			image.Source = strings.TrimSpace(image.Source)
+			if image.Source == "" {
+				return nil, fmt.Errorf("oci.mappings[%d].images[%d].source must not be empty", index, imageIndex)
+			}
+			if len(image.Dockerfiles) == 0 {
+				return nil, fmt.Errorf("oci.mappings[%d].images[%d].dockerfiles must not be empty", index, imageIndex)
+			}
+			image.Tag = strings.TrimSpace(image.Tag)
+			result = append(result, image)
+		}
 	}
-	return merged
+	return result, nil
 }
 
-func writeResolvedArtifactTargets(repo string, targets []policy.ArtifactTargetPolicy) error {
-	path := filepath.Join(repo, ".patchpilot", "artifacts", "targets.resolved.yaml")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create artifacts state dir: %w", err)
+func containsWildcard(value string) bool {
+	return strings.ContainsAny(value, "*?[]")
+}
+
+func normalizeRepositoryKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return ""
 	}
-	payload := struct {
-		Targets []policy.ArtifactTargetPolicy `yaml:"targets"`
-	}{
-		Targets: targets,
+	owner := strings.TrimSpace(parts[0])
+	repo := strings.TrimSpace(parts[1])
+	if owner == "" || repo == "" {
+		return ""
 	}
-	content, err := yaml.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("marshal resolved artifact targets: %w", err)
-	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
-		return fmt.Errorf("write resolved artifact targets: %w", err)
-	}
-	return nil
+	return owner + "/" + repo
 }
 
 func resolvePathInsideRepo(repoAbs, path string) (string, error) {
@@ -315,27 +326,6 @@ func resolvePathInsideRepo(repoAbs, path string) (string, error) {
 	return abs, nil
 }
 
-func resolveArtifactTemplate(template string, values map[string]string) string {
-	resolved := template
-	for key, value := range values {
-		resolved = strings.ReplaceAll(resolved, "${"+key+"}", value)
-		resolved = strings.ReplaceAll(resolved, "$"+key, value)
-	}
-	for _, entry := range os.Environ() {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok || key == "" {
-			continue
-		}
-		resolved = strings.ReplaceAll(resolved, "${"+key+"}", value)
-		resolved = strings.ReplaceAll(resolved, "$"+key, value)
-	}
-	return resolved
-}
-
-func runShellCommand(ctx context.Context, dir, command string, env map[string]string, timeout time.Duration) (string, string, error) {
-	return runBinaryCommand(ctx, dir, env, timeout, "sh", "-c", command)
-}
-
 func runBinaryCommand(ctx context.Context, dir string, env map[string]string, timeout time.Duration, name string, args ...string) (string, string, error) {
 	runCtx := ctx
 	cancel := func() {}
@@ -344,9 +334,9 @@ func runBinaryCommand(ctx context.Context, dir string, env map[string]string, ti
 	}
 	defer cancel()
 
-	cmd := exec.CommandContext(runCtx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = append([]string{}, os.Environ()...)
+	command := exec.CommandContext(runCtx, name, args...)
+	command.Dir = dir
+	command.Env = append([]string{}, os.Environ()...)
 	if len(env) > 0 {
 		keys := make([]string, 0, len(env))
 		for key := range env {
@@ -354,15 +344,15 @@ func runBinaryCommand(ctx context.Context, dir string, env map[string]string, ti
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			cmd.Env = append(cmd.Env, key+"="+env[key])
+			command.Env = append(command.Env, key+"="+env[key])
 		}
 	}
 
 	var stdoutBuffer bytes.Buffer
 	var stderrBuffer bytes.Buffer
-	cmd.Stdout = &stdoutBuffer
-	cmd.Stderr = &stderrBuffer
-	err := cmd.Run()
+	command.Stdout = &stdoutBuffer
+	command.Stderr = &stderrBuffer
+	err := command.Run()
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 		return stdoutBuffer.String(), stderrBuffer.String(), fmt.Errorf("timed out after %s", timeout)
 	}
