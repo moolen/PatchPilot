@@ -1,21 +1,5 @@
 {
   "version": 1,
-  "verification_mode": "append",
-  "verification_commands": [
-    {
-      "Name": "custom-1",
-      "Run": "make lint",
-      "Timeout": ""
-    }
-  ],
-  "post_execution_hooks": [
-    {
-      "Name": "hook-1",
-      "Run": "echo cleanup",
-      "When": "always",
-      "FailOnError": false
-    }
-  ],
   "excluded_cves": null,
   "excluded_vulnerabilities": null,
   "scan_skip_paths": null,

@@ -179,7 +179,8 @@ The most important scheduler-capacity metrics for a single replica are:
 Security note:
 
 - In GitHub App mode, repo-local `.patchpilot.yaml` is treated as untrusted input.
-- Repo-local `pre_execution`, `verification`, `post_execution`, `registry`, `artifacts`, and `agent` sections are ignored.
+- Repo-local `pre_execution`, `verification`, and `post_execution` are no longer supported policy keys and are dropped during policy migration.
+- Repo-local `registry`, `artifacts`, and `agent` sections are ignored in app mode.
 - OCI image mappings and remediation prompt overrides come from the operator-managed app config file, not from repo-local policy.
 - This prevents repository owners from using policy to execute arbitrary host commands or read operator-managed environment secrets.
 - For stronger isolation, set `PP_JOB_RUNNER=container` so `scan` and `fix` run inside a short-lived container with a read-only root filesystem, dropped capabilities, and only the cloned repository mounted in.

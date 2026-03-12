@@ -1,21 +1,5 @@
 {
   "version": 1,
-  "verification_mode": "replace",
-  "verification_commands": [
-    {
-      "Name": "custom-1",
-      "Run": "make ci",
-      "Timeout": ""
-    }
-  ],
-  "post_execution_hooks": [
-    {
-      "Name": "hook-1",
-      "Run": "echo migrated",
-      "When": "always",
-      "FailOnError": false
-    }
-  ],
   "excluded_cves": [
     "CVE-1234"
   ],

@@ -369,27 +369,8 @@ func readFileOrDefault(path, fallback string) string {
 }
 
 func validationCommandsForPrompt(cfg *policy.Config) []string {
-	standard := []string{"go build ./...", "go test -run=^$ ./..."}
-	if cfg == nil || len(cfg.Verification.Commands) == 0 {
-		return standard
-	}
-
-	mode := strings.ToLower(strings.TrimSpace(cfg.Verification.Mode))
-	commands := make([]string, 0)
-	if mode != policy.VerificationModeReplace {
-		commands = append(commands, standard...)
-	}
-	for _, command := range cfg.Verification.Commands {
-		run := strings.TrimSpace(command.Run)
-		if run == "" {
-			continue
-		}
-		commands = append(commands, run)
-	}
-	if len(commands) == 0 {
-		return standard
-	}
-	return commands
+	_ = cfg
+	return []string{"go build ./...", "go test -run=^$ ./..."}
 }
 
 func baselineRemediationPromptGuidance(cfg *policy.Config, failedStage string) []agentpkg.RemediationPrompt {

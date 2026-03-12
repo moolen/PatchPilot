@@ -58,9 +58,6 @@ Repo-local policy always has precedence over central policy when both are consid
 
 Policy controls include:
 
-- pre-execution hooks before `scan` / `fix` / `verify`,
-- custom verification commands (append or replace mode),
-- post-execution hooks after `fix`,
 - vulnerability/CVE excludes,
 - skip-paths for scanning/module discovery/fixers,
 - registry cache/auth configuration for Docker tag/digest resolution,
@@ -149,34 +146,6 @@ Full example (`.patchpilot.yaml`, all supported top-level keys):
 
 ```yaml
 version: 1
-
-pre_execution:
-  commands:
-    - name: prepare-env
-      run: ./scripts/setup-scan-env.sh
-      timeout: 2m
-      fail_on_error: true
-
-verification:
-  mode: append # append | replace
-  commands:
-    - name: lint
-      run: make lint
-      timeout: 4m
-    - name: integration
-      run: make test-integration
-      timeout: 15m
-
-post_execution:
-  commands:
-    - name: cleanup
-      run: rm -rf .tmp-work
-      when: always # always | success | failure
-      fail_on_error: false
-    - name: notify-on-failure
-      run: ./scripts/notify-slack.sh
-      when: failure
-      fail_on_error: true
 
 exclude:
   cves:
@@ -284,13 +253,13 @@ Remediation prompt templates receive the current prompt context, including field
 
 Use `go.patching.runtime: toolchain` for OSS libraries that want to prefer a patched local toolchain without hard-raising the declared minimum Go version. Use `minimum` for applications or enterprise environments that want to require the patched Go version everywhere.
 
-Policy parsing is strict after applying built-in legacy migrations (for example `postExecution` -> `post_execution`, `verification.commands[].command` -> `run`, and top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
+Policy parsing is strict after applying built-in legacy migrations (for example top-level `skip_paths` -> `scan.skip_paths`). Unknown keys still fail fast to avoid silent misconfiguration.
 
 ### OCI v2 Migration Notes
 
 Removed configuration keys:
 
-- `.patchpilot.yaml`: `docker`, `artifacts`
+- `.patchpilot.yaml`: `docker`, `artifacts`, `pre_execution`, `verification`, `post_execution`
 - app runtime config: `repositories`
 
 Replacement keys:

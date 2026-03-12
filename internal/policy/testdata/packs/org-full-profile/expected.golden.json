@@ -1,21 +1,5 @@
 {
   "version": 1,
-  "verification_mode": "append",
-  "verification_commands": [
-    {
-      "Name": "lint",
-      "Run": "make lint",
-      "Timeout": "4m"
-    }
-  ],
-  "post_execution_hooks": [
-    {
-      "Name": "cleanup",
-      "Run": "rm -rf .tmp-work",
-      "When": "always",
-      "FailOnError": false
-    }
-  ],
   "excluded_cves": [
     "CVE-2025-12345"
   ],

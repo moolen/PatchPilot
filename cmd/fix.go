@@ -59,32 +59,13 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 		}
 	}()
 
-	defer func() {
-		hookErr := runPostExecutionHooks(ctx, repo, cfg, resultErr == nil)
-		if hookErr == nil {
-			return
-		}
-		if resultErr == nil {
-			resultErr = wrapWithExitCode(ExitCodePatchFailed, hookErr)
-			return
-		}
-		resultErr = fmt.Errorf("%w; %v", resultErr, hookErr)
-	}()
-
 	logProgress("starting fix workflow for %s", repo)
 	ociContext := ociScanContext{
 		RepositoryKey: strings.TrimSpace(options.RepositoryKey),
 		MappingFile:   strings.TrimSpace(options.OCIMappingFile),
 	}
 
-	stage := tracker.beginStage("pre_execution_hooks")
-	if err := runPreExecutionHooks(ctx, repo, cfg); err != nil {
-		tracker.endStageFailure(stage, err, nil)
-		return wrapWithExitCode(ExitCodePatchFailed, err)
-	}
-	tracker.endStageSuccess(stage, nil)
-
-	stage = tracker.beginStage("configure_registry")
+	stage := tracker.beginStage("configure_registry")
 	restoreRegistry, err := configureRegistryFromPolicy(repo, cfg)
 	if err != nil {
 		tracker.endStageFailure(stage, err, nil)

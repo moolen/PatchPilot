@@ -292,24 +292,16 @@ func TestFixScenarios(t *testing.T) {
 			},
 		},
 		{
-			name: "go mod vendor regression does not count fix",
+			name: "verification policy config ignored",
 			files: map[string]string{
 				"go.mod":                                 "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.0.0\n",
 				".scenario/fail-vendor-when-lib-updated": "1\n",
 			},
 			policy:           "version: 1\nverification:\n  commands:\n    - name: vendor\n      run: go mod vendor\n",
-			expectedExitCode: 22,
-			expectSummary: &summarySnapshot{
-				Before: 1,
-				Fixed:  0,
-				After:  1,
-				Verification: &struct {
-					Mode        string `json:"mode"`
-					Regressions int    `json:"regressions"`
-				}{Mode: "standard+custom", Regressions: 1},
-			},
-			extraAssertions: func(t *testing.T, repo string) {
-				assertSummaryFindingReason(t, repo, "GHSA-go-lib", false, "verification regressed after patch")
+			expectedExitCode: 0,
+			expectSummary:    &summarySnapshot{Before: 1, Fixed: 1, After: 0},
+			expectContains: map[string]string{
+				"go.mod": "github.com/example/lib v1.2.3",
 			},
 		},
 		{
@@ -318,7 +310,7 @@ func TestFixScenarios(t *testing.T) {
 				"go.mod": "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.2.3\n",
 			},
 			policy:           "version: 1\npost_execution:\n  commands:\n    - name: break\n      run: exit 9\n      when: always\n      fail_on_error: true\n",
-			expectedExitCode: 21,
+			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 0, Fixed: 0, After: 0},
 		},
 		{

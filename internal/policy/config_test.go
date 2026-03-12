@@ -17,9 +17,6 @@ func TestLoadMissingPolicyReturnsDefaults(t *testing.T) {
 	if cfg.Version != 1 {
 		t.Fatalf("expected version 1, got %d", cfg.Version)
 	}
-	if cfg.Verification.Mode != VerificationModeAppend {
-		t.Fatalf("expected verification append mode, got %q", cfg.Verification.Mode)
-	}
 	if cfg.Registry.Auth.Mode != RegistryAuthAuto {
 		t.Fatalf("expected registry auth auto mode, got %q", cfg.Registry.Auth.Mode)
 	}
@@ -54,14 +51,6 @@ func TestLoadNormalizesAndValidatesConfig(t *testing.T) {
 	repo := t.TempDir()
 	path := filepath.Join(repo, FileName)
 	content := `version: 1
-verification:
-  mode: REPLACE
-  commands:
-    - run: "make verify"
-      timeout: 2m
-post_execution:
-  commands:
-    - run: "echo done"
 exclude:
   cves: ["CVE-1", "CVE-1", ""]
   vulnerabilities:
@@ -118,15 +107,6 @@ agent:
 	cfg, err := Load(repo, "")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
-	}
-	if cfg.Verification.Mode != VerificationModeReplace {
-		t.Fatalf("expected replace mode, got %q", cfg.Verification.Mode)
-	}
-	if len(cfg.Verification.Commands) != 1 || cfg.Verification.Commands[0].Name == "" {
-		t.Fatalf("expected command default name, got %#v", cfg.Verification.Commands)
-	}
-	if len(cfg.PostExecution.Commands) != 1 || cfg.PostExecution.Commands[0].When != HookWhenAlways {
-		t.Fatalf("expected post command defaults, got %#v", cfg.PostExecution.Commands)
 	}
 	if len(cfg.Exclude.CVEs) != 1 || cfg.Exclude.CVEs[0] != "CVE-1" {
 		t.Fatalf("unexpected cve excludes: %#v", cfg.Exclude.CVEs)
@@ -219,16 +199,6 @@ excludes:
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-
-	if cfg.Verification.Mode != VerificationModeReplace {
-		t.Fatalf("expected migrated verification mode replace, got %q", cfg.Verification.Mode)
-	}
-	if len(cfg.Verification.Commands) != 1 || cfg.Verification.Commands[0].Run != "make verify" {
-		t.Fatalf("expected migrated verification command run field, got %#v", cfg.Verification.Commands)
-	}
-	if len(cfg.PostExecution.Commands) != 1 {
-		t.Fatalf("expected migrated post execution commands, got %#v", cfg.PostExecution.Commands)
-	}
 	if len(cfg.Scan.SkipPaths) != 1 || cfg.Scan.SkipPaths[0] != "examples/**" {
 		t.Fatalf("expected migrated scan.skip_paths, got %#v", cfg.Scan.SkipPaths)
 	}
@@ -242,8 +212,6 @@ func TestSchemaJSONIncludesExpectedKeys(t *testing.T) {
 	for _, expected := range []string{
 		`"$schema"`,
 		`"PatchPilot Policy"`,
-		`"pre_execution"`,
-		`"post_execution"`,
 		`"skip_paths"`,
 		`"cron"`,
 		`"timezone"`,
@@ -444,10 +412,6 @@ func TestLoadWithOptionsMergeModeMergesCentralAndRepoPolicy(t *testing.T) {
 	repo := t.TempDir()
 	repoPolicyPath := filepath.Join(repo, FileName)
 	repoPolicy := `version: 1
-verification:
-  commands:
-    - name: repo-check
-      run: make verify-repo
 exclude:
   cves:
     - CVE-REPO
@@ -465,10 +429,6 @@ registry:
 	centralDir := t.TempDir()
 	centralPath := filepath.Join(centralDir, "central.yaml")
 	centralPolicy := `version: 1
-verification:
-  commands:
-    - name: central-check
-      run: make verify-central
 exclude:
   cves:
     - CVE-CENTRAL
@@ -493,9 +453,6 @@ oci:
 	})
 	if err != nil {
 		t.Fatalf("LoadWithOptions returned error: %v", err)
-	}
-	if len(cfg.Verification.Commands) != 2 {
-		t.Fatalf("expected merged verification commands, got %#v", cfg.Verification.Commands)
 	}
 	if len(cfg.Exclude.CVEs) != 2 || cfg.Exclude.CVEs[0] != "CVE-CENTRAL" || cfg.Exclude.CVEs[1] != "CVE-REPO" {
 		t.Fatalf("unexpected merged cves: %#v", cfg.Exclude.CVEs)
@@ -585,9 +542,9 @@ func TestLoadWithOptionsDoesNotDoubleApplyWhenCentralPathEqualsRepoPolicyPath(t 
 	repo := t.TempDir()
 	repoPolicyPath := filepath.Join(repo, FileName)
 	repoPolicy := `version: 1
-verification:
-  commands:
-    - run: make verify
+scan:
+  skip_paths:
+    - repo/**
 `
 	if err := os.WriteFile(repoPolicyPath, []byte(repoPolicy), 0o644); err != nil {
 		t.Fatalf("write repo policy: %v", err)
@@ -600,8 +557,8 @@ verification:
 	if err != nil {
 		t.Fatalf("LoadWithOptions returned error: %v", err)
 	}
-	if len(cfg.Verification.Commands) != 1 {
-		t.Fatalf("expected policy to be loaded once, got %#v", cfg.Verification.Commands)
+	if len(cfg.Scan.SkipPaths) != 1 {
+		t.Fatalf("expected policy to be loaded once, got %#v", cfg.Scan.SkipPaths)
 	}
 }
 
@@ -618,16 +575,6 @@ func TestLoadWithOptionsRejectsInvalidMode(t *testing.T) {
 
 func TestParseYAMLWithOptionsUntrustedRepoSanitizesExecutableSections(t *testing.T) {
 	content := `version: 1
-pre_execution:
-  commands:
-    - run: echo pre
-verification:
-  mode: replace
-  commands:
-    - run: make verify
-post_execution:
-  commands:
-    - run: echo done
 registry:
   auth:
     mode: bearer
@@ -654,15 +601,6 @@ exclude:
 	if err != nil {
 		t.Fatalf("ParseYAMLWithOptions returned error: %v", err)
 	}
-	if len(cfg.Verification.Commands) != 0 {
-		t.Fatalf("expected verification commands to be stripped, got %#v", cfg.Verification.Commands)
-	}
-	if len(cfg.PreExecution.Commands) != 0 {
-		t.Fatalf("expected pre execution hooks to be stripped, got %#v", cfg.PreExecution.Commands)
-	}
-	if len(cfg.PostExecution.Commands) != 0 {
-		t.Fatalf("expected post execution hooks to be stripped, got %#v", cfg.PostExecution.Commands)
-	}
 	if cfg.Registry.Auth.Mode != RegistryAuthAuto {
 		t.Fatalf("expected registry auth to fall back to default auto mode, got %q", cfg.Registry.Auth.Mode)
 	}
@@ -684,17 +622,6 @@ func TestLoadWithOptionsUntrustedRepoDoesNotOverrideTrustedCentralExecutionPolic
 	repo := t.TempDir()
 	repoPolicyPath := filepath.Join(repo, FileName)
 	repoPolicy := `version: 1
-pre_execution:
-  commands:
-    - run: echo repo-pre
-verification:
-  mode: replace
-  commands:
-    - name: repo-check
-      run: make verify-repo
-post_execution:
-  commands:
-    - run: echo repo
 registry:
   auth:
     mode: none
@@ -713,16 +640,6 @@ agent:
 
 	centralPath := filepath.Join(t.TempDir(), "central.yaml")
 	centralPolicy := `version: 1
-pre_execution:
-  commands:
-    - run: echo central-pre
-verification:
-  commands:
-    - name: central-check
-      run: make verify-central
-post_execution:
-  commands:
-    - run: echo central
 registry:
   auth:
     mode: bearer
@@ -751,15 +668,6 @@ agent:
 	})
 	if err != nil {
 		t.Fatalf("LoadWithOptions returned error: %v", err)
-	}
-	if len(cfg.Verification.Commands) != 1 || cfg.Verification.Commands[0].Name != "central-check" {
-		t.Fatalf("expected trusted central verification command to remain, got %#v", cfg.Verification.Commands)
-	}
-	if len(cfg.PreExecution.Commands) != 1 || cfg.PreExecution.Commands[0].Run != "echo central-pre" {
-		t.Fatalf("expected trusted central pre hook to remain, got %#v", cfg.PreExecution.Commands)
-	}
-	if len(cfg.PostExecution.Commands) != 1 || cfg.PostExecution.Commands[0].Run != "echo central" {
-		t.Fatalf("expected trusted central post hook to remain, got %#v", cfg.PostExecution.Commands)
 	}
 	if cfg.Registry.Auth.Mode != RegistryAuthBearer || cfg.Registry.Auth.TokenEnv != "CENTRAL_TOKEN" {
 		t.Fatalf("expected trusted central registry auth to remain, got %#v", cfg.Registry.Auth)

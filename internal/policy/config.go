@@ -19,13 +19,6 @@ import (
 const (
 	FileName = ".patchpilot.yaml"
 
-	VerificationModeAppend  = "append"
-	VerificationModeReplace = "replace"
-
-	HookWhenAlways  = "always"
-	HookWhenSuccess = "success"
-	HookWhenFailure = "failure"
-
 	RegistryAuthAuto   = "auto"
 	RegistryAuthNone   = "none"
 	RegistryAuthBearer = "bearer"
@@ -50,16 +43,13 @@ const (
 )
 
 type Config struct {
-	Version       int                 `yaml:"version"`
-	PreExecution  PreExecutionPolicy  `yaml:"pre_execution"`
-	Verification  VerificationPolicy  `yaml:"verification"`
-	PostExecution PostExecutionPolicy `yaml:"post_execution"`
-	Exclude       ExcludePolicy       `yaml:"exclude"`
-	Scan          ScanPolicy          `yaml:"scan"`
-	Registry      RegistryPolicy      `yaml:"registry"`
-	Go            GoPolicy            `yaml:"go"`
-	OCI           OCIPolicy           `yaml:"oci"`
-	Agent         AgentPolicy         `yaml:"agent"`
+	Version  int            `yaml:"version"`
+	Exclude  ExcludePolicy  `yaml:"exclude"`
+	Scan     ScanPolicy     `yaml:"scan"`
+	Registry RegistryPolicy `yaml:"registry"`
+	Go       GoPolicy       `yaml:"go"`
+	OCI      OCIPolicy      `yaml:"oci"`
+	Agent    AgentPolicy    `yaml:"agent"`
 }
 
 type AgentPolicy struct {
@@ -98,39 +88,6 @@ type GoPolicy struct {
 
 type GoPatchingPolicy struct {
 	Runtime string `yaml:"runtime"`
-}
-
-type VerificationPolicy struct {
-	Mode     string          `yaml:"mode"`
-	Commands []CommandPolicy `yaml:"commands"`
-}
-
-type CommandPolicy struct {
-	Name    string `yaml:"name"`
-	Run     string `yaml:"run"`
-	Timeout string `yaml:"timeout"`
-}
-
-type PostExecutionPolicy struct {
-	Commands []HookPolicy `yaml:"commands"`
-}
-
-type PreExecutionPolicy struct {
-	Commands []PreHookPolicy `yaml:"commands"`
-}
-
-type PreHookPolicy struct {
-	Name        string `yaml:"name"`
-	Run         string `yaml:"run"`
-	Timeout     string `yaml:"timeout"`
-	FailOnError bool   `yaml:"fail_on_error"`
-}
-
-type HookPolicy struct {
-	Name        string `yaml:"name"`
-	Run         string `yaml:"run"`
-	When        string `yaml:"when"`
-	FailOnError bool   `yaml:"fail_on_error"`
 }
 
 type ExcludePolicy struct {
@@ -214,9 +171,6 @@ type ParseOptions struct {
 func Default() *Config {
 	return &Config{
 		Version: 1,
-		Verification: VerificationPolicy{
-			Mode: VerificationModeAppend,
-		},
 		Scan: ScanPolicy{
 			Cron:     DefaultScanCron,
 			Timezone: DefaultScanTimezone,
@@ -530,25 +484,11 @@ func migrateLegacyPolicyYAML(data []byte) ([]byte, error) {
 
 	changed := false
 
-	if _, ok := root["postExecution"]; ok {
-		if _, exists := root["post_execution"]; !exists {
-			root["post_execution"] = root["postExecution"]
+	for _, key := range []string{"pre_execution", "verification", "post_execution", "postExecution", "verificationMode"} {
+		if _, ok := root[key]; ok {
+			delete(root, key)
+			changed = true
 		}
-		delete(root, "postExecution")
-		changed = true
-	}
-
-	if verificationMode, ok := root["verificationMode"]; ok {
-		verification, _ := mapValue(root["verification"])
-		if verification == nil {
-			verification = map[string]any{}
-		}
-		if _, exists := verification["mode"]; !exists {
-			verification["mode"] = verificationMode
-		}
-		root["verification"] = verification
-		delete(root, "verificationMode")
-		changed = true
 	}
 
 	if topLevelSkip, ok := root["skip_paths"]; ok {
@@ -570,30 +510,6 @@ func migrateLegacyPolicyYAML(data []byte) ([]byte, error) {
 		}
 		delete(root, "excludes")
 		changed = true
-	}
-
-	if rawVerification, ok := root["verification"]; ok {
-		verification, _ := mapValue(rawVerification)
-		if verification != nil {
-			if rawCommands, ok := verification["commands"]; ok {
-				commands, ok := rawCommands.([]any)
-				if ok {
-					for _, item := range commands {
-						commandMap, ok := item.(map[string]any)
-						if !ok {
-							continue
-						}
-						if run, exists := commandMap["command"]; exists {
-							if _, hasRun := commandMap["run"]; !hasRun {
-								commandMap["run"] = run
-							}
-							delete(commandMap, "command")
-							changed = true
-						}
-					}
-				}
-			}
-		}
 	}
 
 	if version, ok := root["version"]; ok {
@@ -636,76 +552,6 @@ func normalizeAndValidate(cfg *Config) error {
 	}
 	if cfg.Version != 1 {
 		return fmt.Errorf("unsupported version %d (expected 1)", cfg.Version)
-	}
-
-	for index := range cfg.PreExecution.Commands {
-		hook := &cfg.PreExecution.Commands[index]
-		hook.Name = strings.TrimSpace(hook.Name)
-		hook.Run = strings.TrimSpace(hook.Run)
-		hook.Timeout = strings.TrimSpace(hook.Timeout)
-		if hook.Run == "" {
-			return fmt.Errorf("pre_execution.commands[%d].run must not be empty", index)
-		}
-		if hook.Name == "" {
-			hook.Name = fmt.Sprintf("pre-hook-%d", index+1)
-		}
-		if hook.Timeout != "" {
-			parsed, err := time.ParseDuration(hook.Timeout)
-			if err != nil {
-				return fmt.Errorf("pre_execution.commands[%d].timeout is invalid: %w", index, err)
-			}
-			if parsed <= 0 {
-				return fmt.Errorf("pre_execution.commands[%d].timeout must be > 0", index)
-			}
-		}
-	}
-
-	cfg.Verification.Mode = normalizeLower(cfg.Verification.Mode)
-	if cfg.Verification.Mode == "" {
-		cfg.Verification.Mode = VerificationModeAppend
-	}
-	if cfg.Verification.Mode != VerificationModeAppend && cfg.Verification.Mode != VerificationModeReplace {
-		return fmt.Errorf("verification.mode must be %q or %q", VerificationModeAppend, VerificationModeReplace)
-	}
-	for index := range cfg.Verification.Commands {
-		cmd := &cfg.Verification.Commands[index]
-		cmd.Run = strings.TrimSpace(cmd.Run)
-		cmd.Name = strings.TrimSpace(cmd.Name)
-		if cmd.Run == "" {
-			return fmt.Errorf("verification.commands[%d].run must not be empty", index)
-		}
-		if cmd.Name == "" {
-			cmd.Name = fmt.Sprintf("custom-%d", index+1)
-		}
-		cmd.Timeout = strings.TrimSpace(cmd.Timeout)
-		if cmd.Timeout != "" {
-			parsed, err := time.ParseDuration(cmd.Timeout)
-			if err != nil {
-				return fmt.Errorf("verification.commands[%d].timeout is invalid: %w", index, err)
-			}
-			if parsed <= 0 {
-				return fmt.Errorf("verification.commands[%d].timeout must be > 0", index)
-			}
-		}
-	}
-
-	for index := range cfg.PostExecution.Commands {
-		hook := &cfg.PostExecution.Commands[index]
-		hook.Name = strings.TrimSpace(hook.Name)
-		hook.Run = strings.TrimSpace(hook.Run)
-		hook.When = normalizeLower(hook.When)
-		if hook.Run == "" {
-			return fmt.Errorf("post_execution.commands[%d].run must not be empty", index)
-		}
-		if hook.Name == "" {
-			hook.Name = fmt.Sprintf("hook-%d", index+1)
-		}
-		if hook.When == "" {
-			hook.When = HookWhenAlways
-		}
-		if hook.When != HookWhenAlways && hook.When != HookWhenSuccess && hook.When != HookWhenFailure {
-			return fmt.Errorf("post_execution.commands[%d].when must be %q, %q, or %q", index, HookWhenAlways, HookWhenSuccess, HookWhenFailure)
-		}
 	}
 
 	cfg.Exclude.CVEs = dedupeNonEmpty(cfg.Exclude.CVEs)

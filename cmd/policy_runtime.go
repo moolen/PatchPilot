@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/moolen/patchpilot/internal/execsafe"
 	"github.com/moolen/patchpilot/internal/fixer"
 	"github.com/moolen/patchpilot/internal/policy"
 	"github.com/moolen/patchpilot/internal/sbom"
@@ -120,26 +119,7 @@ func discoverVerificationDirs(repo string, cfg *policy.Config) ([]string, error)
 }
 
 func runVerificationChecks(ctx context.Context, repo string, dirs []string, cfg *policy.Config) (verifycheck.Report, error) {
-	if cfg == nil || len(cfg.Verification.Commands) == 0 {
-		return verifycheck.RunStandard(ctx, repo, dirs), nil
-	}
-
-	commands := make([]verifycheck.CommandSpec, 0, len(cfg.Verification.Commands))
-	for _, command := range cfg.Verification.Commands {
-		spec := verifycheck.CommandSpec{
-			Name:    command.Name,
-			Command: command.Run,
-		}
-		if strings.TrimSpace(command.Timeout) != "" {
-			timeout, err := time.ParseDuration(command.Timeout)
-			if err != nil {
-				return verifycheck.Report{}, fmt.Errorf("parse verification command timeout for %q: %w", command.Name, err)
-			}
-			spec.Timeout = timeout
-		}
-		commands = append(commands, spec)
-	}
-	return verifycheck.RunWithCommands(ctx, repo, dirs, cfg.Verification.Mode, commands), nil
+	return verifycheck.RunStandard(ctx, repo, dirs), nil
 }
 
 func configureRegistryFromPolicy(repo string, cfg *policy.Config) (func(), error) {
@@ -176,114 +156,4 @@ func configureRegistryFromPolicy(repo string, cfg *policy.Config) (func(), error
 
 	restore := fixer.ConfigureRegistry(options)
 	return restore, nil
-}
-
-func runPreExecutionHooks(ctx context.Context, repo string, cfg *policy.Config) error {
-	if cfg == nil || len(cfg.PreExecution.Commands) == 0 {
-		return nil
-	}
-
-	for _, hook := range cfg.PreExecution.Commands {
-		timeout, err := parseOptionalDuration(hook.Timeout)
-		if err != nil {
-			return fmt.Errorf("pre-execution hook %q timeout invalid: %w", hook.Name, err)
-		}
-		logProgress("pre-exec hook %q: starting", hook.Name)
-		result, err := execsafe.Run(ctx, execsafe.Spec{
-			Name:           "pre-exec-hook",
-			Dir:            repo,
-			ShellCommand:   hook.Run,
-			Timeout:        timeout,
-			ArtifactDir:    filepath.Join(repo, ".patchpilot"),
-			ArtifactPrefix: fmt.Sprintf("pre-hook-%s", sanitizeArtifactName(hook.Name)),
-		})
-		trimmed := strings.TrimSpace(result.Combined)
-		if trimmed != "" {
-			_, _ = fmt.Fprintf(os.Stderr, "[patchpilot] pre-exec %q output:\n%s\n", hook.Name, trimmed)
-		}
-		if err != nil {
-			if hook.FailOnError {
-				return fmt.Errorf("pre-execution hook %q failed: %w", hook.Name, err)
-			}
-			logProgress("pre-exec hook %q failed (ignored): %v", hook.Name, err)
-			continue
-		}
-		logProgress("pre-exec hook %q: completed", hook.Name)
-	}
-
-	return nil
-}
-
-func runPostExecutionHooks(ctx context.Context, repo string, cfg *policy.Config, success bool) error {
-	if cfg == nil || len(cfg.PostExecution.Commands) == 0 {
-		return nil
-	}
-
-	for _, hook := range cfg.PostExecution.Commands {
-		if !shouldRunHook(hook.When, success) {
-			continue
-		}
-		logProgress("post-exec hook %q: starting", hook.Name)
-		result, err := execsafe.Run(ctx, execsafe.Spec{
-			Name:           "post-exec-hook",
-			Dir:            repo,
-			ShellCommand:   hook.Run,
-			ArtifactDir:    filepath.Join(repo, ".patchpilot"),
-			ArtifactPrefix: fmt.Sprintf("post-hook-%s", sanitizeArtifactName(hook.Name)),
-		})
-		trimmed := strings.TrimSpace(result.Combined)
-		if trimmed != "" {
-			_, _ = fmt.Fprintf(os.Stderr, "[patchpilot] post-exec %q output:\n%s\n", hook.Name, trimmed)
-		}
-		if err != nil {
-			if hook.FailOnError {
-				return fmt.Errorf("post-execution hook %q failed: %w", hook.Name, err)
-			}
-			logProgress("post-exec hook %q failed (ignored): %v", hook.Name, err)
-			continue
-		}
-		logProgress("post-exec hook %q: completed", hook.Name)
-	}
-
-	return nil
-}
-
-func parseOptionalDuration(value string) (time.Duration, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, nil
-	}
-	parsed, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, err
-	}
-	if parsed <= 0 {
-		return 0, fmt.Errorf("must be > 0")
-	}
-	return parsed, nil
-}
-
-func sanitizeArtifactName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	replacer := strings.NewReplacer(" ", "-", "/", "-", "\\", "-", ":", "-", "..", "-")
-	name = replacer.Replace(name)
-	name = strings.Trim(name, "-")
-	if name == "" {
-		return "hook"
-	}
-	return name
-}
-
-func shouldRunHook(when string, success bool) bool {
-	when = strings.ToLower(strings.TrimSpace(when))
-	switch when {
-	case "", policy.HookWhenAlways:
-		return true
-	case policy.HookWhenSuccess:
-		return success
-	case policy.HookWhenFailure:
-		return !success
-	default:
-		return false
-	}
 }

@@ -1,19 +1,5 @@
 {
   "version": 1,
-  "verification_mode": "replace",
-  "verification_commands": [
-    {
-      "Name": "unit",
-      "Run": "make test",
-      "Timeout": "5m"
-    },
-    {
-      "Name": "custom-2",
-      "Run": "make verify",
-      "Timeout": "90s"
-    }
-  ],
-  "post_execution_hooks": null,
   "excluded_cves": null,
   "excluded_vulnerabilities": null,
   "scan_skip_paths": null,

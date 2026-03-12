@@ -40,7 +40,7 @@ type registryTagCacheEntry struct {
 var (
 	registryHTTPClient       = &http.Client{Timeout: 20 * time.Second}
 	registryNowFunc          = time.Now
-	registryBaseURL          = func(host string) string { return "https://" + host }
+	registryBaseURL          = func(host string) string { return "https://" + registryAPIHost(host) }
 	registryCacheDir         = defaultRegistryCacheDir
 	registryCacheTTL         = defaultRegistryCacheTTL
 	registryAuthMode         = "auto"
@@ -48,6 +48,16 @@ var (
 	registryCacheDirOverride = ""
 	ecrAuthProvider          = fetchECRBasicCredential
 )
+
+func registryAPIHost(host string) string {
+	normalized := strings.ToLower(strings.TrimSpace(host))
+	switch normalized {
+	case "docker.io", "index.docker.io":
+		return "registry-1.docker.io"
+	default:
+		return normalized
+	}
+}
 
 type RegistryOptions struct {
 	CacheDir  string

@@ -34,6 +34,26 @@ func TestParseImageReferenceWithDigest(t *testing.T) {
 	}
 }
 
+func TestRegistryAPIHostDockerHubAliases(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "docker hub short host", in: "docker.io", want: "registry-1.docker.io"},
+		{name: "docker hub index host", in: "index.docker.io", want: "registry-1.docker.io"},
+		{name: "non docker hub host", in: "ghcr.io", want: "ghcr.io"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := registryAPIHost(tc.in)
+			if got != tc.want {
+				t.Fatalf("registryAPIHost(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestListRegistryTagsUsesDiskCache(t *testing.T) {
 	cacheDir := t.TempDir()
 	oldCacheDir := registryCacheDir

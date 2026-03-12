@@ -1,8 +1,5 @@
 {
   "version": 1,
-  "verification_mode": "append",
-  "verification_commands": null,
-  "post_execution_hooks": null,
   "excluded_cves": [
     "CVE-2026-0001"
   ],
