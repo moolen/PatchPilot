@@ -23,10 +23,6 @@ type baselineScanCycle struct {
 	Logs        string
 }
 
-func applyDeterministicFixes(ctx context.Context, repo string, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
-	return applyDeterministicFixesWithPolicy(ctx, repo, nil, findings, fileOptions, dockerOptions, goRuntimeOptions, allowFailures)
-}
-
 func applyDeterministicFixesWithPolicy(ctx context.Context, repo string, cfg *policy.Config, findings []vuln.Finding, fileOptions fixer.FileOptions, dockerOptions fixer.DockerfileOptions, goRuntimeOptions fixer.GoRuntimeOptions, allowFailures bool) ([]fixer.Patch, []string, map[string]any, error) {
 	engines := filterFixEnginesByPolicy(cfg, fixer.DefaultEngines(fileOptions, dockerOptions, goRuntimeOptions))
 	return applyFixEngines(ctx, repo, findings, engines, allowFailures)

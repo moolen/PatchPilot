@@ -13,6 +13,7 @@ func TestBuiltBinaryBumpsGitHubActionTag(t *testing.T) {
 	toolsDir := installFakeTools(t)
 	env := integrationEnv(toolsDir)
 	repo := newScenarioRepo(t, map[string]string{
+		".patchpilot.yaml":       "version: 1\nfix:\n  updates:\n    - package-ecosystem: github-actions\n      enabled: true\n",
 		".github/workflows/ci.yml": "name: ci\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4.0.0\n",
 	})
 
@@ -38,6 +39,7 @@ func TestBuiltBinaryBumpsGitHubActionSHAPin(t *testing.T) {
 
 	env := integrationEnv(toolsDir)
 	repo := newScenarioRepo(t, map[string]string{
+		".patchpilot.yaml":       "version: 1\nfix:\n  updates:\n    - package-ecosystem: github-actions\n      enabled: true\n",
 		".github/workflows/ci.yml": "name: ci\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
 	})
 

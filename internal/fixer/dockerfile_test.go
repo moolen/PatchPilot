@@ -149,7 +149,15 @@ func TestPatchDockerfileAddsPackageSpecificDebUpgrade(t *testing.T) {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
 
-	patches, changed, err := patchDockerfile(context.Background(), dockerfilePath, dockerNeeds{DebPackages: map[string]string{"openssl": "1.1.4", "libssl3": "3.0.2"}})
+	patches, changed, err := patchDockerfileWithOptions(
+		context.Background(),
+		dockerfilePath,
+		dockerNeeds{DebPackages: map[string]string{"openssl": "1.1.4", "libssl3": "3.0.2"}},
+		DockerfileOptions{
+			BaseImagePatching: false,
+			OSPackagePatching: true,
+		},
+	)
 	if err != nil {
 		t.Fatalf("patchDockerfile returned error: %v", err)
 	}
@@ -179,7 +187,15 @@ func TestPatchDockerfileAddsPackageSpecificAPKUpgrade(t *testing.T) {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
 
-	patches, changed, err := patchDockerfile(context.Background(), dockerfilePath, dockerNeeds{APKPackages: map[string]string{"busybox": "1.36.2"}})
+	patches, changed, err := patchDockerfileWithOptions(
+		context.Background(),
+		dockerfilePath,
+		dockerNeeds{APKPackages: map[string]string{"busybox": "1.36.2"}},
+		DockerfileOptions{
+			BaseImagePatching: false,
+			OSPackagePatching: true,
+		},
+	)
 	if err != nil {
 		t.Fatalf("patchDockerfile returned error: %v", err)
 	}
@@ -207,7 +223,15 @@ func TestPatchDockerfileAddsDebUpgradeFallback(t *testing.T) {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
 
-	patches, changed, err := patchDockerfile(context.Background(), dockerfilePath, dockerNeeds{NeedsDeb: true})
+	patches, changed, err := patchDockerfileWithOptions(
+		context.Background(),
+		dockerfilePath,
+		dockerNeeds{NeedsDeb: true},
+		DockerfileOptions{
+			BaseImagePatching: false,
+			OSPackagePatching: true,
+		},
+	)
 	if err != nil {
 		t.Fatalf("patchDockerfile returned error: %v", err)
 	}
