@@ -106,6 +106,7 @@ docker run --rm \
 The app image includes `patchpilot-app`, `patchpilot`, `git`, `syft`, `grype`, `go`, `node`, `npm`, and `cargo` so the default local job runner can scan and remediate repositories without additional sidecar tooling.
 The scheduler service can also run in explicit-allowlist token mode with `PP_GITHUB_AUTH_MODE=token`, `PP_GITHUB_TOKEN`, and `PP_GITHUB_TOKEN_REPOSITORIES`.
 For mapped OCI image scanning and app-specific AI prompts, point `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE` at an operator-managed YAML file.
+Set `PP_FORCE_RECONCILE_ON_START=true` or run `./bin/patchpilot-app run --force-reconcile-on-start` to force one immediate reconciliation cycle at process start.
 
 GitHub App utility commands:
 

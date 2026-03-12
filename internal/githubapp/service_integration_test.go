@@ -54,6 +54,46 @@ func TestSchedulerCycleCreatesPRAndSkipsUntilNextDueRun(t *testing.T) {
 	}
 }
 
+func TestSchedulerCycleForceReconcileProcessesRepositoryWhenNotDue(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	patchpilotPath := setupSchedulerFakePatchPilot(t, temp, scanCountPath, false)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+	now := time.Now().UTC()
+	repoKey := normalizeRepoName(owner + "/" + repo)
+	if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+		state.ScheduleKey = "* * * * *|UTC"
+		state.NextRunAt = now.Add(time.Hour)
+	}, now); err != nil {
+		t.Fatalf("seed scheduler state: %v", err)
+	}
+
+	service.runSchedulerCycle(context.Background())
+	created, edited := fakeAPI.counts()
+	if created != 0 || edited != 0 {
+		t.Fatalf("unexpected PR counts before force reconcile: created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 0 {
+		t.Fatalf("scan count before force reconcile = %d, want 0", count)
+	}
+
+	service.runSchedulerCycleWithOptions(context.Background(), schedulerCycleOptions{ForceReconcile: true})
+	created, edited = fakeAPI.counts()
+	if created != 1 || edited != 0 {
+		t.Fatalf("unexpected PR counts after force reconcile: created=%d edited=%d", created, edited)
+	}
+	if count := readInvocationCount(t, scanCountPath); count != 1 {
+		t.Fatalf("scan count after force reconcile = %d, want 1", count)
+	}
+}
+
 func TestSchedulerCycleRespectsDisabledSchedule(t *testing.T) {
 	temp := t.TempDir()
 	remoteRoot, owner, repo := setupRemoteRepo(t, temp)

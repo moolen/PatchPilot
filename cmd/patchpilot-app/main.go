@@ -52,7 +52,8 @@ func newRootCommand(stdout, stderr io.Writer) *cobra.Command {
 }
 
 type runOptions struct {
-	requirePolicyFile bool
+	requirePolicyFile     bool
+	forceReconcileOnStart bool
 }
 
 func newRunCommand() *cobra.Command {
@@ -65,6 +66,7 @@ func newRunCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&options.requirePolicyFile, "require-policy-file", false, "Skip repositories that do not contain .patchpilot.yaml")
+	command.Flags().BoolVar(&options.forceReconcileOnStart, "force-reconcile-on-start", false, "Force one immediate repository reconciliation cycle on startup even when repositories are not due")
 	return command
 }
 
@@ -100,6 +102,9 @@ func run(options runOptions) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	cfg.RequirePolicyFile = options.requirePolicyFile
+	if options.forceReconcileOnStart {
+		cfg.ForceReconcileOnStart = true
+	}
 
 	logger := log.New(os.Stdout, "[patchpilot-app] ", log.LstdFlags)
 	service, err := githubapp.NewService(cfg, logger)

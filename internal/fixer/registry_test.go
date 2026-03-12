@@ -2,11 +2,13 @@ package fixer
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -178,7 +180,110 @@ func TestConfigureRegistryOverridesRuntimeSettings(t *testing.T) {
 	if registryCacheTTL != time.Minute {
 		t.Fatalf("expected overridden cache ttl, got %s", registryCacheTTL)
 	}
-	if token := initialRegistryToken(); token != "token-123" {
+	if token := initialRegistryAuthorization(); token != "Bearer token-123" {
 		t.Fatalf("expected bearer token from config, got %q", token)
+	}
+}
+
+func TestFetchRegistryTagsSupportsBasicChallengeFromDockerAuthConfig(t *testing.T) {
+	cacheDir := t.TempDir()
+	oldCacheDir := registryCacheDir
+	oldBaseURL := registryBaseURL
+	defer func() {
+		registryCacheDir = oldCacheDir
+		registryBaseURL = oldBaseURL
+	}()
+	registryCacheDir = func() (string, error) { return cacheDir, nil }
+
+	credential := base64.StdEncoding.EncodeToString([]byte("AWS:secret"))
+	t.Setenv("DOCKER_AUTH_CONFIG", fmt.Sprintf(`{"auths":{"example.com":{"auth":"%s"}}}`, credential))
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got == "" {
+			w.Header().Set("Www-Authenticate", `Basic realm="https://example.com/"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		} else if got != "Basic "+credential {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"tags":["1.2.3"]}`)
+	}))
+	defer server.Close()
+	registryBaseURL = func(host string) string { return server.URL }
+
+	ref := imageReference{
+		Registry:           "example.com",
+		Repository:         "team/service",
+		OriginalRepository: "example.com/team/service",
+		Tag:                "1.2.0",
+	}
+	tags, err := fetchRegistryTags(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("fetchRegistryTags returned error: %v", err)
+	}
+	if len(tags) != 1 || tags[0] != "1.2.3" {
+		t.Fatalf("unexpected tags: %#v", tags)
+	}
+}
+
+func TestFetchRegistryTagsSupportsBasicChallengeFromDockerCredentialHelper(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper script uses POSIX shell")
+	}
+	cacheDir := t.TempDir()
+	oldCacheDir := registryCacheDir
+	oldBaseURL := registryBaseURL
+	defer func() {
+		registryCacheDir = oldCacheDir
+		registryBaseURL = oldBaseURL
+	}()
+	registryCacheDir = func() (string, error) { return cacheDir, nil }
+
+	helperDir := t.TempDir()
+	helperPath := filepath.Join(helperDir, "docker-credential-test")
+	script := `#!/bin/sh
+if [ "$1" != "get" ]; then
+  exit 1
+fi
+read server
+if [ "$server" != "example.com" ] && [ "$server" != "https://example.com" ]; then
+  exit 1
+fi
+printf '{"Username":"AWS","Secret":"secret"}'
+`
+	if err := os.WriteFile(helperPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper script: %v", err)
+	}
+	t.Setenv("PATH", helperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DOCKER_AUTH_CONFIG", `{"credsStore":"test","auths":{}}`)
+
+	expected := "Basic " + base64.StdEncoding.EncodeToString([]byte("AWS:secret"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got == "" {
+			w.Header().Set("Www-Authenticate", `Basic realm="https://example.com/"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		} else if got != expected {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"tags":["1.2.4"]}`)
+	}))
+	defer server.Close()
+	registryBaseURL = func(host string) string { return server.URL }
+
+	ref := imageReference{
+		Registry:           "example.com",
+		Repository:         "team/service",
+		OriginalRepository: "example.com/team/service",
+		Tag:                "1.2.0",
+	}
+	tags, err := fetchRegistryTags(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("fetchRegistryTags returned error: %v", err)
+	}
+	if len(tags) != 1 || tags[0] != "1.2.4" {
+		t.Fatalf("unexpected tags: %#v", tags)
 	}
 }

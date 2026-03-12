@@ -29,6 +29,10 @@ type Service struct {
 	jobRunner patchPilotJobRunner
 }
 
+type schedulerCycleOptions struct {
+	ForceReconcile bool
+}
+
 type scanRunResult struct {
 	ExitCode           int
 	Stdout             string
@@ -106,12 +110,13 @@ func NewService(cfg Config, logger *log.Logger) (*Service, error) {
 
 func (service *Service) Run(ctx context.Context) error {
 	service.log("info", "scheduler started", map[string]interface{}{
-		"tick":             service.cfg.SchedulerTick.String(),
-		"repo_run_timeout": service.cfg.RepoRunTimeout.String(),
-		"job_runner":       service.jobRunner.Description(),
+		"tick":                     service.cfg.SchedulerTick.String(),
+		"repo_run_timeout":         service.cfg.RepoRunTimeout.String(),
+		"job_runner":               service.jobRunner.Description(),
+		"force_reconcile_on_start": service.cfg.ForceReconcileOnStart,
 	})
 
-	service.runSchedulerCycle(ctx)
+	service.runSchedulerCycleWithOptions(ctx, schedulerCycleOptions{ForceReconcile: service.cfg.ForceReconcileOnStart})
 
 	ticker := time.NewTicker(service.cfg.SchedulerTick)
 	defer ticker.Stop()
@@ -128,6 +133,10 @@ func (service *Service) Run(ctx context.Context) error {
 }
 
 func (service *Service) runSchedulerCycle(ctx context.Context) {
+	service.runSchedulerCycleWithOptions(ctx, schedulerCycleOptions{})
+}
+
+func (service *Service) runSchedulerCycleWithOptions(ctx context.Context, options schedulerCycleOptions) {
 	started := time.Now()
 	status := "completed"
 	if service.metrics != nil {
@@ -153,7 +162,11 @@ func (service *Service) runSchedulerCycle(ctx context.Context) {
 		return
 	}
 
-	service.log("info", "scheduler cycle started", map[string]interface{}{"repositories": len(repositories), "auth_mode": service.cfg.AuthMode})
+	service.log("info", "scheduler cycle started", map[string]interface{}{
+		"repositories":    len(repositories),
+		"auth_mode":       service.cfg.AuthMode,
+		"force_reconcile": options.ForceReconcile,
+	})
 
 	now := time.Now().UTC()
 	for _, repository := range repositories {
@@ -164,13 +177,17 @@ func (service *Service) runSchedulerCycle(ctx context.Context) {
 		if service.metrics != nil {
 			service.metrics.IncSchedulerRepositoryState("discovered")
 		}
-		service.runRepositoryCycle(ctx, repository.Client, repository.Token, repository.Repository, now)
+		service.runRepositoryCycleWithOptions(ctx, repository.Client, repository.Token, repository.Repository, now, options)
 	}
 
 	service.log("info", "scheduler cycle finished", map[string]interface{}{"repositories": len(repositories), "duration_ms": time.Since(started).Milliseconds()})
 }
 
 func (service *Service) runRepositoryCycle(parentCtx context.Context, client *github.Client, token string, repository *github.Repository, now time.Time) {
+	service.runRepositoryCycleWithOptions(parentCtx, client, token, repository, now, schedulerCycleOptions{})
+}
+
+func (service *Service) runRepositoryCycleWithOptions(parentCtx context.Context, client *github.Client, token string, repository *github.Repository, now time.Time, options schedulerCycleOptions) {
 	owner := ownerFromRepository(repository)
 	repo := repository.GetName()
 	defaultBranch := strings.TrimSpace(repository.GetDefaultBranch())
@@ -319,7 +336,7 @@ func (service *Service) runRepositoryCycle(parentCtx context.Context, client *gi
 		})
 		return
 	}
-	scheduledFor, due, err := service.claimRepositoryRun(repoKey, schedule, now)
+	scheduledFor, due, err := service.claimRepositoryRun(repoKey, schedule, now, options.ForceReconcile)
 	if err != nil {
 		if service.metrics != nil {
 			service.metrics.IncFailure("scheduler_state")
@@ -705,8 +722,18 @@ func (service *Service) loadRepositoryPolicy(ctx context.Context, client *github
 	return cfg, schedule, enabled, true, nil
 }
 
-func (service *Service) claimRepositoryRun(repoKey string, schedule *repositoryCronSchedule, now time.Time) (time.Time, bool, error) {
+func (service *Service) claimRepositoryRun(repoKey string, schedule *repositoryCronSchedule, now time.Time, force bool) (time.Time, bool, error) {
 	state := service.state.Get(repoKey)
+	if force {
+		nextRunAt := schedule.next(now)
+		if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {
+			state.ScheduleKey = schedule.Key
+			state.NextRunAt = nextRunAt.UTC()
+		}, now); err != nil {
+			return time.Time{}, false, err
+		}
+		return now, true, nil
+	}
 	if state.ScheduleKey != schedule.Key || state.NextRunAt.IsZero() {
 		nextRunAt := schedule.next(now)
 		if err := service.updateRepositoryState(repoKey, func(state *scheduledRepositoryState) {

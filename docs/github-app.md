@@ -70,6 +70,7 @@ Common optional settings:
 - `PP_REPOSITORY_IGNORE_LABEL_SELECTOR`: comma-separated repository topic selectors that force PatchPilot to skip a repository even if it matches the opt-in selector.
 - `PP_LISTEN_ADDR`: HTTP listen address if you expose health/metrics endpoints.
 - `PP_METRICS_PATH`: metrics endpoint path. Defaults to `/metrics`.
+- `PP_FORCE_RECONCILE_ON_START`: force one immediate repository reconciliation cycle on process start, even when persisted scheduler state says a repository is not due yet.
 - `PP_PR_STATUS_POLL_INTERVAL`: polling interval while waiting on PR CI. Defaults to `30s`.
 - `PP_GITHUB_RETRY_MAX_ATTEMPTS`, `PP_GITHUB_RETRY_INITIAL_BACKOFF`, `PP_GITHUB_RETRY_MAX_BACKOFF`: GitHub API retry controls.
 
@@ -120,6 +121,16 @@ PP_PRIVATE_KEY_PATH=./private-key.pem \
 ```
 
 With `--require-policy-file`, repositories that do not contain `.patchpilot.yaml` are skipped entirely instead of inheriting the default scan schedule.
+
+Force one immediate reconcile pass on startup:
+
+```bash
+PP_APP_ID=123 \
+PP_PRIVATE_KEY_PATH=./private-key.pem \
+./bin/patchpilot-app run --force-reconcile-on-start
+```
+
+This bypasses only the persisted `NextRunAt` gate for the initial startup cycle. Policy loading, topic selectors, and `scan.cron: disabled` still apply.
 
 Container image:
 

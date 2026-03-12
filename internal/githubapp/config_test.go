@@ -112,6 +112,7 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	t.Setenv("PP_GITHUB_RETRY_INITIAL_BACKOFF", "3s")
 	t.Setenv("PP_GITHUB_RETRY_MAX_BACKOFF", "20s")
 	t.Setenv("PP_PR_STATUS_POLL_INTERVAL", "45s")
+	t.Setenv("PP_FORCE_RECONCILE_ON_START", "true")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
@@ -137,6 +138,9 @@ func TestLoadConfigFromEnvParsesSafetyFields(t *testing.T) {
 	}
 	if cfg.EnableAutoMerge {
 		t.Fatalf("EnableAutoMerge = true, want false")
+	}
+	if !cfg.ForceReconcileOnStart {
+		t.Fatalf("ForceReconcileOnStart = false, want true")
 	}
 	if len(cfg.DisallowedPaths) != 2 {
 		t.Fatalf("DisallowedPaths len = %d, want 2", len(cfg.DisallowedPaths))

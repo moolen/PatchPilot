@@ -3,6 +3,7 @@ package fixer
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -239,15 +241,15 @@ func fetchRegistryTags(ctx context.Context, ref imageReference) ([]string, error
 	nextURL := registryBaseURL(ref.Registry) + "/v2/" + ref.Repository + "/tags/list?n=100"
 	tags := make([]string, 0)
 	seen := map[string]struct{}{}
-	token := initialRegistryToken()
+	authorization := initialRegistryAuthorization()
 
 	for nextURL != "" {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
 		if err != nil {
 			return nil, err
 		}
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
+		if authorization != "" {
+			request.Header.Set("Authorization", authorization)
 		}
 
 		response, err := registryHTTPClient.Do(request)
@@ -261,7 +263,7 @@ func fetchRegistryTags(ctx context.Context, ref imageReference) ([]string, error
 			}
 			authHeader := response.Header.Get("Www-Authenticate")
 			_ = response.Body.Close()
-			token, err = fetchRegistryToken(ctx, authHeader)
+			authorization, err = fetchRegistryAuthorization(ctx, nextURL, authHeader)
 			if err != nil {
 				return nil, err
 			}
@@ -296,17 +298,36 @@ func fetchRegistryTags(ctx context.Context, ref imageReference) ([]string, error
 	return tags, nil
 }
 
-func fetchRegistryToken(ctx context.Context, header string) (string, error) {
-	realm, params := parseRegistryAuthHeader(header)
-	if realm == "" {
+func fetchRegistryAuthorization(ctx context.Context, requestURL, header string) (string, error) {
+	challenge := parseRegistryAuthHeader(header)
+	switch challenge.scheme {
+	case "bearer":
+		token, err := fetchRegistryBearerToken(ctx, challenge)
+		if err != nil {
+			return "", err
+		}
+		return "Bearer " + token, nil
+	case "basic":
+		credential, err := lookupRegistryBasicCredential(requestURL, challenge.realm)
+		if err != nil {
+			return "", err
+		}
+		return "Basic " + credential, nil
+	default:
 		return "", fmt.Errorf("unsupported registry auth header: %q", header)
 	}
-	tokenURL, err := url.Parse(realm)
+}
+
+func fetchRegistryBearerToken(ctx context.Context, challenge registryAuthChallenge) (string, error) {
+	if challenge.realm == "" {
+		return "", fmt.Errorf("unsupported registry auth header: %q", challenge.rawHeader)
+	}
+	tokenURL, err := url.Parse(challenge.realm)
 	if err != nil {
 		return "", fmt.Errorf("parse auth realm: %w", err)
 	}
 	query := tokenURL.Query()
-	for key, value := range params {
+	for key, value := range challenge.params {
 		query.Set(key, value)
 	}
 	tokenURL.RawQuery = query.Encode()
@@ -337,28 +358,44 @@ func fetchRegistryToken(ctx context.Context, header string) (string, error) {
 	return payload.Token, nil
 }
 
-func parseRegistryAuthHeader(header string) (string, map[string]string) {
+type registryAuthChallenge struct {
+	rawHeader string
+	scheme    string
+	realm     string
+	params    map[string]string
+}
+
+func parseRegistryAuthHeader(header string) registryAuthChallenge {
 	header = strings.TrimSpace(header)
-	if !strings.HasPrefix(strings.ToLower(header), "bearer ") {
-		return "", nil
+	if header == "" {
+		return registryAuthChallenge{}
 	}
-	fields := strings.Split(header[len("Bearer "):], ",")
+	scheme := strings.ToLower(header)
+	fields := ""
+	if index := strings.IndexByte(header, ' '); index != -1 {
+		scheme = strings.ToLower(strings.TrimSpace(header[:index]))
+		fields = strings.TrimSpace(header[index+1:])
+	}
 	params := map[string]string{}
-	realm := ""
-	for _, field := range fields {
+	for _, field := range strings.Split(fields, ",") {
 		parts := strings.SplitN(strings.TrimSpace(field), "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
 		value := strings.Trim(strings.TrimSpace(parts[1]), "\"")
-		if key == "realm" {
-			realm = value
-			continue
+		if key != "" {
+			params[key] = value
 		}
-		params[key] = value
 	}
-	return realm, params
+	realm := strings.TrimSpace(params["realm"])
+	delete(params, "realm")
+	return registryAuthChallenge{
+		rawHeader: header,
+		scheme:    scheme,
+		realm:     realm,
+		params:    params,
+	}
 }
 
 func parseRegistryNextURL(linkHeader, registry string) string {
@@ -435,7 +472,7 @@ func fetchRegistryManifestDigest(ctx context.Context, ref imageReference, tag st
 }
 
 func doRegistryRequestWithAuth(ctx context.Context, method, requestURL string, headers map[string]string) (*http.Response, error) {
-	token := initialRegistryToken()
+	authorization := initialRegistryAuthorization()
 	for attempts := 0; attempts < 3; attempts++ {
 		request, err := http.NewRequestWithContext(ctx, method, requestURL, nil)
 		if err != nil {
@@ -444,8 +481,8 @@ func doRegistryRequestWithAuth(ctx context.Context, method, requestURL string, h
 		for key, value := range headers {
 			request.Header.Set(key, value)
 		}
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
+		if authorization != "" {
+			request.Header.Set("Authorization", authorization)
 		}
 
 		response, err := registryHTTPClient.Do(request)
@@ -461,7 +498,7 @@ func doRegistryRequestWithAuth(ctx context.Context, method, requestURL string, h
 
 		authHeader := response.Header.Get("Www-Authenticate")
 		_ = response.Body.Close()
-		token, err = fetchRegistryToken(ctx, authHeader)
+		authorization, err = fetchRegistryAuthorization(ctx, requestURL, authHeader)
 		if err != nil {
 			return nil, err
 		}
@@ -469,11 +506,251 @@ func doRegistryRequestWithAuth(ctx context.Context, method, requestURL string, h
 	return nil, fmt.Errorf("registry request unauthorized after retries")
 }
 
-func initialRegistryToken() string {
+func initialRegistryAuthorization() string {
 	if registryAuthMode == "bearer" {
-		return strings.TrimSpace(registryAuthToken)
+		token := strings.TrimSpace(registryAuthToken)
+		if token == "" {
+			return ""
+		}
+		return "Bearer " + token
 	}
 	return ""
+}
+
+type dockerConfig struct {
+	Auths       map[string]dockerAuthEntry `json:"auths"`
+	CredsStore  string                     `json:"credsStore"`
+	CredHelpers map[string]string          `json:"credHelpers"`
+}
+
+type dockerAuthEntry struct {
+	Auth     string `json:"auth"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func lookupRegistryBasicCredential(requestURL, realm string) (string, error) {
+	hosts := registryAuthHosts(requestURL, realm)
+	if len(hosts) == 0 {
+		return "", fmt.Errorf("registry basic auth challenge missing host information")
+	}
+
+	cfg, err := loadDockerConfig()
+	if err != nil {
+		return "", err
+	}
+	for _, host := range hosts {
+		credential, ok, err := dockerCredentialForHost(cfg, host)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return credential, nil
+		}
+	}
+	return "", fmt.Errorf("registry basic auth credentials not found for %s", strings.Join(hosts, ", "))
+}
+
+func registryAuthHosts(requestURL, realm string) []string {
+	hosts := make([]string, 0, 2)
+	seen := map[string]struct{}{}
+	addHost := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		hosts = append(hosts, value)
+	}
+	if parsed, err := url.Parse(requestURL); err == nil {
+		addHost(parsed.Host)
+	}
+	if parsed, err := url.Parse(realm); err == nil {
+		addHost(parsed.Host)
+	}
+	return hosts
+}
+
+func loadDockerConfig() (dockerConfig, error) {
+	if raw := strings.TrimSpace(os.Getenv("DOCKER_AUTH_CONFIG")); raw != "" {
+		var cfg dockerConfig
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			return dockerConfig{}, fmt.Errorf("parse DOCKER_AUTH_CONFIG: %w", err)
+		}
+		if cfg.Auths == nil {
+			cfg.Auths = map[string]dockerAuthEntry{}
+		}
+		return cfg, nil
+	}
+
+	configPath, err := dockerConfigPath()
+	if err != nil {
+		return dockerConfig{}, err
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return dockerConfig{Auths: map[string]dockerAuthEntry{}}, nil
+		}
+		return dockerConfig{}, fmt.Errorf("read docker config %q: %w", configPath, err)
+	}
+
+	var cfg dockerConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return dockerConfig{}, fmt.Errorf("parse docker config %q: %w", configPath, err)
+	}
+	if cfg.Auths == nil {
+		cfg.Auths = map[string]dockerAuthEntry{}
+	}
+	return cfg, nil
+}
+
+func dockerConfigPath() (string, error) {
+	if override := strings.TrimSpace(os.Getenv("DOCKER_CONFIG")); override != "" {
+		return filepath.Join(override, "config.json"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir for docker config: %w", err)
+	}
+	return filepath.Join(home, ".docker", "config.json"), nil
+}
+
+func dockerCredentialForHost(cfg dockerConfig, targetHost string) (string, bool, error) {
+	targetHost = strings.ToLower(strings.TrimSpace(targetHost))
+	if targetHost == "" {
+		return "", false, nil
+	}
+	for key, auth := range cfg.Auths {
+		if normalizeDockerAuthHost(key) != targetHost {
+			continue
+		}
+		if credential, ok := dockerAuthCredential(auth); ok {
+			return credential, true, nil
+		}
+	}
+	helper := dockerCredentialHelperForHost(cfg, targetHost)
+	if helper == "" {
+		return "", false, nil
+	}
+	credential, ok, err := dockerCredentialFromHelper(helper, targetHost)
+	if err != nil {
+		return "", false, fmt.Errorf("resolve docker credential helper %q for %q: %w", helper, targetHost, err)
+	}
+	if ok {
+		return credential, true, nil
+	}
+	return "", false, nil
+}
+
+func dockerCredentialHelperForHost(cfg dockerConfig, targetHost string) string {
+	for key, helper := range cfg.CredHelpers {
+		if normalizeDockerAuthHost(key) != targetHost {
+			continue
+		}
+		return strings.TrimSpace(helper)
+	}
+	return strings.TrimSpace(cfg.CredsStore)
+}
+
+func dockerCredentialFromHelper(helper, targetHost string) (string, bool, error) {
+	for _, server := range []string{targetHost, "https://" + targetHost} {
+		credential, ok, err := invokeDockerCredentialHelper(helper, server)
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			return credential, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func invokeDockerCredentialHelper(helper, server string) (string, bool, error) {
+	helper = strings.TrimSpace(helper)
+	if helper == "" {
+		return "", false, nil
+	}
+	command := exec.Command("docker-credential-"+helper, "get")
+	command.Stdin = strings.NewReader(server)
+	output, err := command.Output()
+	if err != nil {
+		if _, isExitError := err.(*exec.ExitError); isExitError {
+			return "", false, nil
+		}
+		if strings.Contains(strings.ToLower(err.Error()), "executable file not found") {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	var response struct {
+		Username string `json:"Username"`
+		Secret   string `json:"Secret"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", false, fmt.Errorf("decode helper response: %w", err)
+	}
+	if strings.TrimSpace(response.Username) == "" || strings.TrimSpace(response.Secret) == "" {
+		return "", false, nil
+	}
+	return encodeBasicCredential(response.Username, response.Secret), true, nil
+}
+
+func normalizeDockerAuthHost(key string) string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(key); err == nil && parsed.Host != "" {
+		return strings.ToLower(parsed.Host)
+	}
+	if slash := strings.IndexByte(key, '/'); slash != -1 {
+		key = key[:slash]
+	}
+	return strings.ToLower(strings.TrimSpace(key))
+}
+
+func dockerAuthCredential(entry dockerAuthEntry) (string, bool) {
+	if entry.Username != "" && entry.Password != "" {
+		return encodeBasicCredential(entry.Username, entry.Password), true
+	}
+	decoded, ok := decodeDockerAuthEntry(entry.Auth)
+	if !ok {
+		return "", false
+	}
+	return encodeBasicCredential(decoded.username, decoded.password), true
+}
+
+type basicAuthValue struct {
+	username string
+	password string
+}
+
+func decodeDockerAuthEntry(raw string) (basicAuthValue, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return basicAuthValue{}, false
+	}
+	decodedBytes, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		decodedBytes, err = base64.RawStdEncoding.DecodeString(raw)
+		if err != nil {
+			return basicAuthValue{}, false
+		}
+	}
+	decoded := string(decodedBytes)
+	username, password, ok := strings.Cut(decoded, ":")
+	if !ok || username == "" || password == "" {
+		return basicAuthValue{}, false
+	}
+	return basicAuthValue{username: username, password: password}, true
+}
+
+func encodeBasicCredential(username, password string) string {
+	return base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
 }
 
 func readRegistryTagsFromCache(ref imageReference) ([]string, bool) {

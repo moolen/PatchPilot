@@ -31,6 +31,7 @@ type Config struct {
 	GitHubUploadAPIURL             string
 	EnableAutoMerge                bool
 	RequirePolicyFile              bool
+	ForceReconcileOnStart          bool
 	DisallowedPaths                []string
 	RepositoryLabelSelectors       []string
 	RepositoryIgnoreLabelSelectors []string
@@ -97,6 +98,7 @@ func LoadConfigFromEnv() (Config, error) {
 		JobContainerNetwork:            firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_NETWORK")), "bridge"),
 		GitHubBaseWebURL:               firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
 		EnableAutoMerge:                parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", false),
+		ForceReconcileOnStart:          parseBoolWithDefault("PP_FORCE_RECONCILE_ON_START", false),
 		DisallowedPaths:                parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
 		RepositoryLabelSelectors:       parseLabelSelectors(os.Getenv("PP_REPOSITORY_LABEL_SELECTOR")),
 		RepositoryIgnoreLabelSelectors: parseLabelSelectors(os.Getenv("PP_REPOSITORY_IGNORE_LABEL_SELECTOR")),

@@ -166,3 +166,10 @@ func TestRunCommandDefinesRequirePolicyFileFlag(t *testing.T) {
 		t.Fatalf("execute returned error: %v", err)
 	}
 }
+
+func TestRunCommandDefinesForceReconcileOnStartFlag(t *testing.T) {
+	command := newRunCommand()
+	if command.Flags().Lookup("force-reconcile-on-start") == nil {
+		t.Fatalf("force-reconcile-on-start flag is not defined")
+	}
+}
