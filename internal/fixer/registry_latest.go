@@ -9,8 +9,8 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// ResolveLatestSemverImageTag returns the highest semver tag found for the
-// given image repository, ignoring non-semver tags such as "latest".
+// ResolveLatestSemverImageTag returns the highest stable semver tag found for
+// the given image repository. Only plain x.y.z or vx.y.z tags are considered.
 func ResolveLatestSemverImageTag(ctx context.Context, imageRepository string) (string, error) {
 	ref, err := parseImageRepository(imageRepository)
 	if err != nil {
@@ -26,7 +26,7 @@ func ResolveLatestSemverImageTag(ctx context.Context, imageRepository string) (s
 	}
 	candidates := make([]candidate, 0, len(tags))
 	for _, tag := range tags {
-		version, ok := extractImageTagSemver(tag)
+		version, ok := extractStableImageTagSemver(tag)
 		if !ok {
 			continue
 		}
@@ -43,6 +43,26 @@ func ResolveLatestSemverImageTag(ctx context.Context, imageRepository string) (s
 		return comparison > 0
 	})
 	return candidates[0].tag, nil
+}
+
+func extractStableImageTagSemver(tag string) (string, bool) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", false
+	}
+	tag = strings.TrimPrefix(tag, "v")
+	if strings.ContainsAny(tag, "-+") {
+		return "", false
+	}
+	segments := strings.Split(tag, ".")
+	if len(segments) != 3 {
+		return "", false
+	}
+	canonical := "v" + strings.Join(segments, ".")
+	if !semver.IsValid(canonical) {
+		return "", false
+	}
+	return canonical, true
 }
 
 func parseImageRepository(imageRepository string) (imageReference, error) {
