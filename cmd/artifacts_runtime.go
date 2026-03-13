@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -200,7 +201,7 @@ type mappedExternalImageSpec struct {
 }
 
 func mergeExternalImageSpecs(base []policy.OCIExternalImageSpec, overlay []policy.OCIExternalImageSpec) []mappedExternalImageSpec {
-	result := make([]mappedExternalImageSpec, 0, len(base)+len(overlay))
+	result := make([]mappedExternalImageSpec, 0, mergedExternalImageSpecCapacity(len(base), len(overlay)))
 	indexBySource := map[string]int{}
 	add := func(spec policy.OCIExternalImageSpec, origin string) {
 		key := normalizeImageSourceKey(spec.Source)
@@ -222,6 +223,13 @@ func mergeExternalImageSpecs(base []policy.OCIExternalImageSpec, overlay []polic
 		add(spec, "repo-policy")
 	}
 	return result
+}
+
+func mergedExternalImageSpecCapacity(baseLen, overlayLen int) int {
+	if overlayLen >= 0 && baseLen <= math.MaxInt-overlayLen {
+		return baseLen + overlayLen
+	}
+	return baseLen
 }
 
 func normalizeImageSourceKey(source string) string {

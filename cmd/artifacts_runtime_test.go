@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,6 +82,36 @@ func TestMergeExternalImageSpecsRepoPolicyOverridesMappingFile(t *testing.T) {
 	}
 	if merged[0].Spec.Tag != "v1.2.3" {
 		t.Fatalf("expected overlay tag to win, got %q", merged[0].Spec.Tag)
+	}
+}
+
+func TestMergedExternalImageSpecCapacity(t *testing.T) {
+	tests := []struct {
+		name       string
+		baseLen    int
+		overlayLen int
+		want       int
+	}{
+		{
+			name:       "combined length fits",
+			baseLen:    2,
+			overlayLen: 3,
+			want:       5,
+		},
+		{
+			name:       "combined length overflows",
+			baseLen:    math.MaxInt - 1,
+			overlayLen: 2,
+			want:       math.MaxInt - 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mergedExternalImageSpecCapacity(test.baseLen, test.overlayLen); got != test.want {
+				t.Fatalf("mergedExternalImageSpecCapacity(%d, %d) = %d, want %d", test.baseLen, test.overlayLen, got, test.want)
+			}
+		})
 	}
 }
 
