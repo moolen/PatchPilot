@@ -121,6 +121,38 @@ func TestMaybePatchFromUpdatesDigestPinnedBaseImage(t *testing.T) {
 	}
 }
 
+func TestMaybePatchFromKeepsSuffixFamilyWithStageAlias(t *testing.T) {
+	cacheDir := t.TempDir()
+	oldCacheDir := registryCacheDir
+	oldBaseURL := registryBaseURL
+	defer func() {
+		registryCacheDir = oldCacheDir
+		registryBaseURL = oldBaseURL
+	}()
+	registryCacheDir = func() (string, error) { return cacheDir, nil }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"tags":["1.36.2","1.37.0-musl"]}`)
+	}))
+	defer server.Close()
+	registryBaseURL = func(host string) string { return server.URL }
+
+	updated, patch, ok := maybePatchFrom(
+		context.Background(),
+		"FROM acme/busybox:1.34.1 AS busybox",
+		"/tmp/Dockerfile",
+		DockerfileOptions{},
+	)
+	if !ok {
+		t.Fatalf("expected FROM line to be patched")
+	}
+	if updated != "FROM acme/busybox:1.36.2 AS busybox" {
+		t.Fatalf("unexpected updated line: %q", updated)
+	}
+	if patch.Manager != "dockerfile" || patch.Package != "acme/busybox" || patch.From != "1.34.1" || patch.To != "1.36.2" {
+		t.Fatalf("unexpected patch: %+v", patch)
+	}
+}
+
 func TestCollectDockerRequirementsTracksPackageTargets(t *testing.T) {
 	dockerfile := "/repo/Dockerfile"
 	reqs := collectDockerRequirements([]string{dockerfile}, []vuln.Finding{

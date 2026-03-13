@@ -2,11 +2,11 @@ package fixer
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"os"
-	"fmt"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"golang.org/x/mod/semver"
@@ -121,15 +121,13 @@ func matchingOCIPolicies(source string, policies []OCIImagePolicy) []OCIImagePol
 
 func selectLatestSemverTagByDefault(currentTag string, tags []string) string {
 	candidates := make([]tagCandidate, 0, len(tags))
-	_, currentSuffix := splitTagSuffix(currentTag)
 	for _, tag := range tags {
-		core, suffix := splitTagSuffix(tag)
-		version, ok := extractImageTagSemver(core)
-		if !ok {
+		if !matchesTagSuffixFamily(currentTag, tag) {
 			continue
 		}
-		// Default guardrail: when current tag has a suffix family, require exact suffix matching.
-		if strings.TrimSpace(currentSuffix) != "" && suffix != currentSuffix {
+		core, _ := splitTagSuffix(tag)
+		version, ok := extractImageTagSemver(core)
+		if !ok {
 			continue
 		}
 		candidates = append(candidates, tagCandidate{Tag: tag, Version: version})
@@ -155,6 +153,9 @@ func selectLatestSemverTagByPolicy(currentTag string, tags []string, policy OCII
 
 	stageSemver := make([]tagCandidate, 0, len(stageAllow))
 	for _, tag := range stageAllow {
+		if !matchesTagSuffixFamily(currentTag, tag) {
+			continue
+		}
 		core, _ := splitTagSuffix(tag)
 		version, ok := extractImageTagSemver(core)
 		if !ok {
@@ -313,6 +314,9 @@ func resolveRuleDrivenImageTag(ctx context.Context, image string, rule BaseImage
 	bestTag := ""
 	bestVersion := ""
 	for _, tag := range tags {
+		if !matchesTagSuffixFamily(ref.Tag, tag) {
+			continue
+		}
 		version, ok := extractImageTagSemver(tag)
 		if !ok {
 			continue
@@ -329,6 +333,12 @@ func resolveRuleDrivenImageTag(ctx context.Context, image string, rule BaseImage
 		}
 	}
 	return bestTag
+}
+
+func matchesTagSuffixFamily(currentTag, candidateTag string) bool {
+	_, currentSuffix := splitTagSuffix(currentTag)
+	_, candidateSuffix := splitTagSuffix(candidateTag)
+	return candidateSuffix == currentSuffix
 }
 
 func compileBaseImageRule(rule BaseImageRule) (compiledBaseImageRule, bool) {

@@ -185,6 +185,16 @@ func TestSelectLatestSemverTagByDefaultKeepsSuffixFamilyForMajorOnlyTag(t *testi
 	}
 }
 
+func TestSelectLatestSemverTagByDefaultKeepsEmptySuffixFamily(t *testing.T) {
+	got := selectLatestSemverTagByDefault(
+		"1.34.1",
+		[]string{"1.36.2", "1.37.0-musl"},
+	)
+	if got != "1.36.2" {
+		t.Fatalf("expected tag without suffix family change, got %q", got)
+	}
+}
+
 func TestSelectLatestSemverTagByDefaultSkipsDifferentSuffixFamilyWhenNoExactMatch(t *testing.T) {
 	got := selectLatestSemverTagByDefault(
 		"25-alpine",
@@ -209,8 +219,20 @@ func TestSelectLatestSemverTagByPolicyRespectsPrereleaseAllow(t *testing.T) {
 			},
 		},
 	}
-	got := selectLatestSemverTagByPolicy("1.2.0", []string{"1.3.0-rc.1", "1.3.0-beta.1", "1.2.9"}, policy)
+	got := selectLatestSemverTagByPolicy("1.2.0-rc.1", []string{"1.3.0-rc.1", "1.3.0-beta.1", "1.2.9"}, policy)
 	if got != "1.3.0-rc.1" {
 		t.Fatalf("expected rc tag, got %q", got)
+	}
+}
+
+func TestSelectLatestSemverTagByPolicyKeepsEmptySuffixFamily(t *testing.T) {
+	policy := OCIImagePolicy{
+		Name:   "busybox-policy",
+		Source: "example.com/repo/busybox",
+		Tags:   OCIImageTagPolicy{},
+	}
+	got := selectLatestSemverTagByPolicy("1.34.1", []string{"1.36.2", "1.37.0-musl"}, policy)
+	if got != "1.36.2" {
+		t.Fatalf("expected suffix family to stay unchanged, got %q", got)
 	}
 }
