@@ -27,6 +27,15 @@ type Options struct {
 	Exclude []string
 }
 
+var readGitHead = func(ctx context.Context, dir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "rev-parse", "--verify", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 func Generate(ctx context.Context, repo string) (string, error) {
 	return GenerateWithOptions(ctx, repo, Options{})
 }
@@ -57,6 +66,12 @@ func GenerateForSourceWithOptions(ctx context.Context, repo, source, outputPath 
 
 	args := []string{source, "-o", "cyclonedx-json"}
 	if strings.HasPrefix(strings.ToLower(source), "dir:") {
+		if sourceName := deriveDirectorySourceName(repo, source); sourceName != "" {
+			args = append(args, "--source-name", sourceName)
+		}
+		if sourceVersion := deriveDirectorySourceVersion(ctx, repo, source); sourceVersion != "" {
+			args = append(args, "--source-version", sourceVersion)
+		}
 		for _, exclude := range buildExcludes(options.Exclude) {
 			args = append(args, "--exclude", exclude)
 		}
@@ -143,4 +158,58 @@ func formatCapturedStderr(stderr string) string {
 		return ""
 	}
 	return "\nsyft stderr:\n" + stderr
+}
+
+func deriveDirectorySourceName(repo, source string) string {
+	trimmedRepo := strings.TrimSpace(repo)
+	if trimmedRepo != "" {
+		base := filepath.Base(trimmedRepo)
+		if base != "." && base != string(filepath.Separator) {
+			return base
+		}
+	}
+
+	trimmedSource := strings.TrimSpace(source)
+	if len(trimmedSource) > len("dir:") && strings.EqualFold(trimmedSource[:len("dir:")], "dir:") {
+		rawPath := strings.TrimSpace(trimmedSource[len("dir:"):])
+		if rawPath != "" {
+			base := filepath.Base(rawPath)
+			if base != "." && base != string(filepath.Separator) {
+				return base
+			}
+		}
+	}
+
+	return "source-dir"
+}
+
+func deriveDirectorySourceVersion(ctx context.Context, repo, source string) string {
+	candidates := []string{strings.TrimSpace(repo), directorySourcePath(source)}
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		head, err := readGitHead(ctx, candidate)
+		if err != nil {
+			continue
+		}
+		head = strings.TrimSpace(head)
+		if head != "" {
+			return head
+		}
+	}
+	return ""
+}
+
+func directorySourcePath(source string) string {
+	trimmedSource := strings.TrimSpace(source)
+	if len(trimmedSource) <= len("dir:") || !strings.EqualFold(trimmedSource[:len("dir:")], "dir:") {
+		return ""
+	}
+	return strings.TrimSpace(trimmedSource[len("dir:"):])
 }
