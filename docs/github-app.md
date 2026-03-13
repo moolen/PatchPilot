@@ -38,7 +38,35 @@ Install the app on the repositories you want PatchPilot to manage. Installed rep
 
 For gradual rollout, PatchPilot can gate scheduled work on repository topics. GitHub does not have first-class repository labels, so PatchPilot treats repository topics as rollout labels.
 
-## Environment
+## Configuration
+
+`patchpilot-app run` exposes most non-secret runtime settings as CLI flags.
+
+- Precedence: `CLI flag > environment variable > default`.
+- Secrets remain environment-only: `PP_GITHUB_TOKEN` and `PP_PRIVATE_KEY_PEM`.
+- Run `./bin/patchpilot-app run --help` for the full flag list.
+
+Common `run` flags:
+
+- `--github-auth-mode` (`PP_GITHUB_AUTH_MODE`)
+- `--app-id` (`PP_APP_ID`)
+- `--private-key-path` (`PP_PRIVATE_KEY_PATH`)
+- `--github-token-repositories` (`PP_GITHUB_TOKEN_REPOSITORIES`)
+- `--runtime-config-file` (`PP_GITHUB_APP_CONFIG_FILE`)
+- `--workdir` (`PP_WORKDIR`)
+- `--patchpilot-binary` (`PP_PATCHPILOT_BINARY`)
+- `--agent-command` (`PP_AGENT_COMMAND`)
+- `--job-runner`, `--job-container-runtime`, `--job-container-image`, `--job-container-binary`, `--job-container-network`
+- `--listen-addr`, `--metrics-path`
+- `--enable-auto-merge`
+- `--force-reconcile-on-start`
+- `--disallowed-paths`
+- `--repository-label-selector`, `--repository-ignore-label-selector`
+- `--scheduler-tick`, `--repo-run-timeout`, `--pr-status-poll-interval`
+- `--github-retry-max-attempts`, `--github-retry-initial-backoff`, `--github-retry-max-backoff`
+- `--github-web-base-url`, `--github-api-base-url`, `--github-upload-api-url`
+
+## Environment Variables
 
 Required:
 
@@ -112,9 +140,18 @@ PP_REPOSITORY_IGNORE_LABEL_SELECTOR=patchpilot-ignore \
 
 ```bash
 make build
-PP_APP_ID=123 \
-PP_PRIVATE_KEY_PATH=./private-key.pem \
-./bin/patchpilot-app
+./bin/patchpilot-app run \
+  --app-id 123 \
+  --private-key-path ./private-key.pem
+```
+
+Token mode example (token stays env-only):
+
+```bash
+PP_GITHUB_TOKEN=ghp_xxx \
+./bin/patchpilot-app run \
+  --github-auth-mode token \
+  --github-token-repositories acme/service,acme/api
 ```
 
 Require an in-repo policy file before the scheduler will process a repository:

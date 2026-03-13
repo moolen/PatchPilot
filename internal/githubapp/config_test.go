@@ -1,6 +1,9 @@
 package githubapp
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadConfigFromEnvSuccess(t *testing.T) {
 	t.Setenv("PP_APP_ID", "123")
@@ -204,5 +207,51 @@ func TestLoadConfigFromEnvRequiresContainerImageInContainerMode(t *testing.T) {
 
 	if _, err := LoadConfigFromEnv(); err == nil {
 		t.Fatalf("expected error for missing PP_JOB_CONTAINER_IMAGE")
+	}
+}
+
+func TestLoadConfigFromEnvWithOverridesUsesFlagPrecedence(t *testing.T) {
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+	t.Setenv("PP_ENABLE_AUTO_MERGE", "true")
+	t.Setenv("PP_SCHEDULER_TICK", "1h")
+	t.Setenv("PP_GITHUB_APP_CONFIG_FILE", "/tmp/env-runtime.yaml")
+
+	cfg, err := LoadConfigFromEnvWithOverrides(map[string]string{
+		"PP_APP_ID":                 "456",
+		"PP_ENABLE_AUTO_MERGE":      "false",
+		"PP_SCHEDULER_TICK":         "2h",
+		"PP_GITHUB_APP_CONFIG_FILE": "/tmp/flag-runtime.yaml",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AppID != 456 {
+		t.Fatalf("AppID = %d, want 456", cfg.AppID)
+	}
+	if cfg.EnableAutoMerge {
+		t.Fatalf("EnableAutoMerge = true, want false")
+	}
+	if cfg.SchedulerTick != 2*time.Hour {
+		t.Fatalf("SchedulerTick = %s, want 2h", cfg.SchedulerTick)
+	}
+	if cfg.RuntimeConfigPath != "/tmp/flag-runtime.yaml" {
+		t.Fatalf("RuntimeConfigPath = %q, want /tmp/flag-runtime.yaml", cfg.RuntimeConfigPath)
+	}
+}
+
+func TestLoadConfigFromEnvWithOverridesCanDisableForceReconcile(t *testing.T) {
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+	t.Setenv("PP_FORCE_RECONCILE_ON_START", "true")
+
+	cfg, err := LoadConfigFromEnvWithOverrides(map[string]string{
+		"PP_FORCE_RECONCILE_ON_START": "false",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ForceReconcileOnStart {
+		t.Fatalf("ForceReconcileOnStart = true, want false")
 	}
 }

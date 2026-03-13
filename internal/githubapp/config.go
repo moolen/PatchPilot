@@ -53,30 +53,43 @@ const (
 )
 
 func LoadConfigFromEnv() (Config, error) {
-	schedulerTick, err := parseDurationWithDefault("PP_SCHEDULER_TICK", time.Hour)
+	return LoadConfigFromEnvWithOverrides(nil)
+}
+
+func LoadConfigFromEnvWithOverrides(overrides map[string]string) (Config, error) {
+	lookup := func(key string) string {
+		if overrides != nil {
+			if value, exists := overrides[key]; exists {
+				return value
+			}
+		}
+		return os.Getenv(key)
+	}
+
+	schedulerTick, err := parseDurationWithDefault(lookup, "PP_SCHEDULER_TICK", time.Hour)
 	if err != nil {
 		return Config{}, err
 	}
-	repoRunTimeout, err := parseDurationWithDefault("PP_REPO_RUN_TIMEOUT", 30*time.Minute)
+	repoRunTimeout, err := parseDurationWithDefault(lookup, "PP_REPO_RUN_TIMEOUT", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
-	prStatusPollInterval, err := parseDurationWithDefault("PP_PR_STATUS_POLL_INTERVAL", 30*time.Second)
+	prStatusPollInterval, err := parseDurationWithDefault(lookup, "PP_PR_STATUS_POLL_INTERVAL", 30*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
-	retryMaxAttempts, err := parseIntWithDefault("PP_GITHUB_RETRY_MAX_ATTEMPTS", 5)
+	retryMaxAttempts, err := parseIntWithDefault(lookup, "PP_GITHUB_RETRY_MAX_ATTEMPTS", 5)
 	if err != nil {
 		return Config{}, err
 	}
 	if retryMaxAttempts <= 0 {
 		return Config{}, fmt.Errorf("PP_GITHUB_RETRY_MAX_ATTEMPTS must be >= 1")
 	}
-	retryInitialBackoff, err := parseDurationWithDefault("PP_GITHUB_RETRY_INITIAL_BACKOFF", 2*time.Second)
+	retryInitialBackoff, err := parseDurationWithDefault(lookup, "PP_GITHUB_RETRY_INITIAL_BACKOFF", 2*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
-	retryMaxBackoff, err := parseDurationWithDefault("PP_GITHUB_RETRY_MAX_BACKOFF", 30*time.Second)
+	retryMaxBackoff, err := parseDurationWithDefault(lookup, "PP_GITHUB_RETRY_MAX_BACKOFF", 30*time.Second)
 	if err != nil {
 		return Config{}, err
 	}
@@ -85,24 +98,24 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	cfg := Config{
-		AuthMode:                       firstNonEmpty(strings.ToLower(strings.TrimSpace(os.Getenv("PP_GITHUB_AUTH_MODE"))), AuthModeAuto),
-		ListenAddr:                     firstNonEmpty(strings.TrimSpace(os.Getenv("PP_LISTEN_ADDR")), ":8080"),
-		WorkDir:                        firstNonEmpty(strings.TrimSpace(os.Getenv("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
-		PatchPilotBinary:               firstNonEmpty(strings.TrimSpace(os.Getenv("PP_PATCHPILOT_BINARY")), "patchpilot"),
-		AgentCommand:                   firstNonEmpty(strings.TrimSpace(os.Getenv("PP_AGENT_COMMAND")), defaultAgentCommand),
-		RuntimeConfigPath:              firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_APP_CONFIG_FILE")), strings.TrimSpace(os.Getenv("PP_OCI_MAPPING_FILE"))),
-		JobRunner:                      firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_RUNNER")), "local"),
-		JobContainerRuntime:            firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_RUNTIME")), "docker"),
-		JobContainerImage:              strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_IMAGE")),
-		JobContainerBinary:             firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_BINARY")), "patchpilot"),
-		JobContainerNetwork:            firstNonEmpty(strings.TrimSpace(os.Getenv("PP_JOB_CONTAINER_NETWORK")), "bridge"),
-		GitHubBaseWebURL:               firstNonEmpty(strings.TrimSpace(os.Getenv("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
-		EnableAutoMerge:                parseBoolWithDefault("PP_ENABLE_AUTO_MERGE", false),
-		ForceReconcileOnStart:          parseBoolWithDefault("PP_FORCE_RECONCILE_ON_START", false),
-		DisallowedPaths:                parseCSVList(os.Getenv("PP_DISALLOWED_PATHS")),
-		RepositoryLabelSelectors:       parseLabelSelectors(os.Getenv("PP_REPOSITORY_LABEL_SELECTOR")),
-		RepositoryIgnoreLabelSelectors: parseLabelSelectors(os.Getenv("PP_REPOSITORY_IGNORE_LABEL_SELECTOR")),
-		MetricsPath:                    firstNonEmpty(strings.TrimSpace(os.Getenv("PP_METRICS_PATH")), "/metrics"),
+		AuthMode:                       firstNonEmpty(strings.ToLower(strings.TrimSpace(lookup("PP_GITHUB_AUTH_MODE"))), AuthModeAuto),
+		ListenAddr:                     firstNonEmpty(strings.TrimSpace(lookup("PP_LISTEN_ADDR")), ":8080"),
+		WorkDir:                        firstNonEmpty(strings.TrimSpace(lookup("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
+		PatchPilotBinary:               firstNonEmpty(strings.TrimSpace(lookup("PP_PATCHPILOT_BINARY")), "patchpilot"),
+		AgentCommand:                   firstNonEmpty(strings.TrimSpace(lookup("PP_AGENT_COMMAND")), defaultAgentCommand),
+		RuntimeConfigPath:              firstNonEmpty(strings.TrimSpace(lookup("PP_GITHUB_APP_CONFIG_FILE")), strings.TrimSpace(lookup("PP_OCI_MAPPING_FILE"))),
+		JobRunner:                      firstNonEmpty(strings.TrimSpace(lookup("PP_JOB_RUNNER")), "local"),
+		JobContainerRuntime:            firstNonEmpty(strings.TrimSpace(lookup("PP_JOB_CONTAINER_RUNTIME")), "docker"),
+		JobContainerImage:              strings.TrimSpace(lookup("PP_JOB_CONTAINER_IMAGE")),
+		JobContainerBinary:             firstNonEmpty(strings.TrimSpace(lookup("PP_JOB_CONTAINER_BINARY")), "patchpilot"),
+		JobContainerNetwork:            firstNonEmpty(strings.TrimSpace(lookup("PP_JOB_CONTAINER_NETWORK")), "bridge"),
+		GitHubBaseWebURL:               firstNonEmpty(strings.TrimSpace(lookup("PP_GITHUB_WEB_BASE_URL")), "https://github.com"),
+		EnableAutoMerge:                parseBoolWithDefault(lookup, "PP_ENABLE_AUTO_MERGE", false),
+		ForceReconcileOnStart:          parseBoolWithDefault(lookup, "PP_FORCE_RECONCILE_ON_START", false),
+		DisallowedPaths:                parseCSVList(lookup("PP_DISALLOWED_PATHS")),
+		RepositoryLabelSelectors:       parseLabelSelectors(lookup("PP_REPOSITORY_LABEL_SELECTOR")),
+		RepositoryIgnoreLabelSelectors: parseLabelSelectors(lookup("PP_REPOSITORY_IGNORE_LABEL_SELECTOR")),
+		MetricsPath:                    firstNonEmpty(strings.TrimSpace(lookup("PP_METRICS_PATH")), "/metrics"),
 		SchedulerTick:                  schedulerTick,
 		RepoRunTimeout:                 repoRunTimeout,
 		PRStatusPollInterval:           prStatusPollInterval,
@@ -111,24 +124,28 @@ func LoadConfigFromEnv() (Config, error) {
 		RetryMaxBackoff:                retryMaxBackoff,
 	}
 
-	cfg.GitHubToken = strings.TrimSpace(os.Getenv("PP_GITHUB_TOKEN"))
-	cfg.GitHubTokenRepositories = parseRepositoryAllowlist(os.Getenv("PP_GITHUB_TOKEN_REPOSITORIES"))
+	appIDText := strings.TrimSpace(lookup("PP_APP_ID"))
+	privateKeyPath := strings.TrimSpace(lookup("PP_PRIVATE_KEY_PATH"))
+	privateKeyPEM := strings.TrimSpace(lookup("PP_PRIVATE_KEY_PEM"))
+
+	cfg.GitHubToken = strings.TrimSpace(lookup("PP_GITHUB_TOKEN"))
+	cfg.GitHubTokenRepositories = parseRepositoryAllowlist(lookup("PP_GITHUB_TOKEN_REPOSITORIES"))
 	switch cfg.AuthMode {
 	case "", AuthModeAuto:
-		cfg.AuthMode = deriveAuthMode(cfg)
+		cfg.AuthMode = deriveAuthMode(cfg, appIDText, privateKeyPath, privateKeyPEM)
 	case AuthModeApp, AuthModeToken:
 	default:
 		return Config{}, fmt.Errorf("PP_GITHUB_AUTH_MODE must be one of: %s, %s, %s", AuthModeAuto, AuthModeApp, AuthModeToken)
 	}
-	if err := validateAuthConfig(&cfg); err != nil {
+	if err := validateAuthConfig(&cfg, appIDText, privateKeyPath, privateKeyPEM); err != nil {
 		return Config{}, err
 	}
 	if cfg.RuntimeConfigPath != "" {
 		cfg.RuntimeConfigPath = filepath.Clean(cfg.RuntimeConfigPath)
 	}
 
-	cfg.GitHubAPIBaseURL = strings.TrimSpace(os.Getenv("PP_GITHUB_API_BASE_URL"))
-	cfg.GitHubUploadAPIURL = strings.TrimSpace(os.Getenv("PP_GITHUB_UPLOAD_API_URL"))
+	cfg.GitHubAPIBaseURL = strings.TrimSpace(lookup("PP_GITHUB_API_BASE_URL"))
+	cfg.GitHubUploadAPIURL = strings.TrimSpace(lookup("PP_GITHUB_UPLOAD_API_URL"))
 	if (cfg.GitHubAPIBaseURL == "") != (cfg.GitHubUploadAPIURL == "") {
 		return Config{}, fmt.Errorf("PP_GITHUB_API_BASE_URL and PP_GITHUB_UPLOAD_API_URL must be set together")
 	}
@@ -147,10 +164,7 @@ func LoadConfigFromEnv() (Config, error) {
 	return cfg, nil
 }
 
-func deriveAuthMode(cfg Config) string {
-	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
-	privateKeyPath := strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PATH"))
-	privateKeyPEM := strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PEM"))
+func deriveAuthMode(cfg Config, appIDText, privateKeyPath, privateKeyPEM string) string {
 	switch {
 	case strings.TrimSpace(cfg.GitHubToken) != "":
 		return AuthModeToken
@@ -161,13 +175,12 @@ func deriveAuthMode(cfg Config) string {
 	}
 }
 
-func validateAuthConfig(cfg *Config) error {
+func validateAuthConfig(cfg *Config, appIDText, privateKeyPath, privateKeyPEM string) error {
 	if cfg == nil {
 		return fmt.Errorf("config is nil")
 	}
-	appIDText := strings.TrimSpace(os.Getenv("PP_APP_ID"))
-	cfg.PrivateKeyPath = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PATH"))
-	cfg.PrivateKeyPEM = strings.TrimSpace(os.Getenv("PP_PRIVATE_KEY_PEM"))
+	cfg.PrivateKeyPath = strings.TrimSpace(privateKeyPath)
+	cfg.PrivateKeyPEM = strings.TrimSpace(privateKeyPEM)
 	if cfg.PrivateKeyPath != "" {
 		cfg.PrivateKeyPath = filepath.Clean(cfg.PrivateKeyPath)
 	}
@@ -266,8 +279,8 @@ func parseRepositoryAllowlist(input string) []string {
 	return result
 }
 
-func parseBoolEnv(key string) bool {
-	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+func parseBool(text string) bool {
+	value := strings.ToLower(strings.TrimSpace(text))
 	switch value {
 	case "1", "true", "yes", "on":
 		return true
@@ -276,16 +289,16 @@ func parseBoolEnv(key string) bool {
 	}
 }
 
-func parseBoolWithDefault(key string, defaultValue bool) bool {
-	value := strings.TrimSpace(os.Getenv(key))
+func parseBoolWithDefault(lookup func(string) string, key string, defaultValue bool) bool {
+	value := strings.TrimSpace(lookup(key))
 	if value == "" {
 		return defaultValue
 	}
-	return parseBoolEnv(key)
+	return parseBool(value)
 }
 
-func parseIntWithDefault(key string, defaultValue int) (int, error) {
-	text := strings.TrimSpace(os.Getenv(key))
+func parseIntWithDefault(lookup func(string) string, key string, defaultValue int) (int, error) {
+	text := strings.TrimSpace(lookup(key))
 	if text == "" {
 		return defaultValue, nil
 	}
@@ -299,8 +312,8 @@ func parseIntWithDefault(key string, defaultValue int) (int, error) {
 	return value, nil
 }
 
-func parseDurationWithDefault(key string, defaultValue time.Duration) (time.Duration, error) {
-	text := strings.TrimSpace(os.Getenv(key))
+func parseDurationWithDefault(lookup func(string) string, key string, defaultValue time.Duration) (time.Duration, error) {
+	text := strings.TrimSpace(lookup(key))
 	if text == "" {
 		return defaultValue, nil
 	}

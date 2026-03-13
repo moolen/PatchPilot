@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 func TestRunManifest(t *testing.T) {
@@ -72,7 +74,7 @@ func TestRunDoctor(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runDoctor(&stdout, &stderr)
+	code := runDoctor(&stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("runDoctor code = %d, stderr = %s", code, stderr.String())
 	}
@@ -108,7 +110,7 @@ func TestRunDoctorContainerMode(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runDoctor(&stdout, &stderr)
+	code := runDoctor(&stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("runDoctor code = %d, stderr = %s", code, stderr.String())
 	}
@@ -149,7 +151,7 @@ func TestRunDoctorTokenMode(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runDoctor(&stdout, &stderr)
+	code := runDoctor(&stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("runDoctor code = %d, stderr = %s", code, stderr.String())
 	}
@@ -171,5 +173,57 @@ func TestRunCommandDefinesForceReconcileOnStartFlag(t *testing.T) {
 	command := newRunCommand()
 	if command.Flags().Lookup("force-reconcile-on-start") == nil {
 		t.Fatalf("force-reconcile-on-start flag is not defined")
+	}
+}
+
+func TestRunCommandDefinesRuntimeConfigFlags(t *testing.T) {
+	command := newRunCommand()
+	for _, flag := range []string{
+		"github-auth-mode",
+		"app-id",
+		"private-key-path",
+		"github-token-repositories",
+		"runtime-config-file",
+		"job-runner",
+		"enable-auto-merge",
+		"scheduler-tick",
+		"github-retry-max-attempts",
+	} {
+		if command.Flags().Lookup(flag) == nil {
+			t.Fatalf("%s flag is not defined", flag)
+		}
+	}
+}
+
+func TestRuntimeConfigFlagOverrides(t *testing.T) {
+	options := runOptions{}
+	command := &cobra.Command{Use: "test"}
+	addRuntimeConfigFlags(command, &options)
+
+	if err := command.ParseFlags([]string{
+		"--app-id", "321",
+		"--enable-auto-merge=true",
+		"--runtime-config-file", "/tmp/runtime.yaml",
+		"--scheduler-tick", "2h",
+		"--force-reconcile-on-start=false",
+	}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+
+	overrides := options.envOverrides(command)
+	if overrides["PP_APP_ID"] != "321" {
+		t.Fatalf("PP_APP_ID override = %q", overrides["PP_APP_ID"])
+	}
+	if overrides["PP_ENABLE_AUTO_MERGE"] != "true" {
+		t.Fatalf("PP_ENABLE_AUTO_MERGE override = %q", overrides["PP_ENABLE_AUTO_MERGE"])
+	}
+	if overrides["PP_GITHUB_APP_CONFIG_FILE"] != "/tmp/runtime.yaml" {
+		t.Fatalf("PP_GITHUB_APP_CONFIG_FILE override = %q", overrides["PP_GITHUB_APP_CONFIG_FILE"])
+	}
+	if overrides["PP_SCHEDULER_TICK"] != "2h" {
+		t.Fatalf("PP_SCHEDULER_TICK override = %q", overrides["PP_SCHEDULER_TICK"])
+	}
+	if overrides["PP_FORCE_RECONCILE_ON_START"] != "false" {
+		t.Fatalf("PP_FORCE_RECONCILE_ON_START override = %q", overrides["PP_FORCE_RECONCILE_ON_START"])
 	}
 }
