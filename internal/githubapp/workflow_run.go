@@ -93,7 +93,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 		"stderr_preview": previewLogText(stderr),
 	})
 	if runErr != nil {
-		return fixRunResult{}, fmt.Errorf("run PatchPilot fix (exit %d): %w\nstderr:\n%s", exitCode, runErr, truncateForComment(stderr))
+		return fixRunResult{}, fmt.Errorf("run PatchPilot fix (exit %d): %w\nstderr:\n%s", exitCode, runErr, fullForComment(stderr))
 	}
 
 	changed, err := hasRepositoryChanges(ctx, repoPath)
@@ -196,14 +196,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 
 func previewLogText(text string) string {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	const max = 400
-	if len(trimmed) <= max {
-		return trimmed
-	}
-	return trimmed[:max] + "... (truncated)"
+	return trimmed
 }
 
 func remoteBranchHeadFromLSRemote(lsRemoteOutput, remoteRef string) string {

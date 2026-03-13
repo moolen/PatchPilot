@@ -685,7 +685,7 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKe
 		"stderr_preview": previewLogText(stderr),
 	})
 	if runErr != nil && exitCode != 23 {
-		return scanRunResult{}, fmt.Errorf("run PatchPilot scan (exit %d): %w\nstderr:\n%s", exitCode, runErr, truncateForComment(stderr))
+		return scanRunResult{}, fmt.Errorf("run PatchPilot scan (exit %d): %w\nstderr:\n%s", exitCode, runErr, fullForComment(stderr))
 	}
 
 	findingsReport, err := vuln.ReadNormalized(repoPath)

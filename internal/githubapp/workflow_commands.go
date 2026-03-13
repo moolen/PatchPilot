@@ -226,6 +226,14 @@ func truncateForComment(text string) string {
 	return trimmed[:max] + "\n... (truncated)"
 }
 
+func fullForComment(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "(empty)"
+	}
+	return trimmed
+}
+
 func parseStatusPaths(statusOutput string) []string {
 	lines := strings.Split(statusOutput, "\n")
 	result := make([]string, 0, len(lines))
