@@ -184,6 +184,8 @@ func TestRunCommandDefinesRuntimeConfigFlags(t *testing.T) {
 		"private-key-path",
 		"github-token-repositories",
 		"runtime-config-file",
+		"patchpilot-policy",
+		"patchpilot-policy-mode",
 		"job-runner",
 		"enable-auto-merge",
 		"scheduler-tick",
@@ -204,6 +206,8 @@ func TestRuntimeConfigFlagOverrides(t *testing.T) {
 		"--app-id", "321",
 		"--enable-auto-merge=true",
 		"--runtime-config-file", "/tmp/runtime.yaml",
+		"--patchpilot-policy", "/etc/patchpilot/central.yaml",
+		"--patchpilot-policy-mode", "override",
 		"--scheduler-tick", "2h",
 		"--force-reconcile-on-start=false",
 	}); err != nil {
@@ -219,6 +223,12 @@ func TestRuntimeConfigFlagOverrides(t *testing.T) {
 	}
 	if overrides["PP_GITHUB_APP_CONFIG_FILE"] != "/tmp/runtime.yaml" {
 		t.Fatalf("PP_GITHUB_APP_CONFIG_FILE override = %q", overrides["PP_GITHUB_APP_CONFIG_FILE"])
+	}
+	if overrides["PP_PATCHPILOT_POLICY"] != "/etc/patchpilot/central.yaml" {
+		t.Fatalf("PP_PATCHPILOT_POLICY override = %q", overrides["PP_PATCHPILOT_POLICY"])
+	}
+	if overrides["PP_PATCHPILOT_POLICY_MODE"] != "override" {
+		t.Fatalf("PP_PATCHPILOT_POLICY_MODE override = %q", overrides["PP_PATCHPILOT_POLICY_MODE"])
 	}
 	if overrides["PP_SCHEDULER_TICK"] != "2h" {
 		t.Fatalf("PP_SCHEDULER_TICK override = %q", overrides["PP_SCHEDULER_TICK"])

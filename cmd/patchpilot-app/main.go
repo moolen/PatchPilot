@@ -60,6 +60,8 @@ type runOptions struct {
 	listenAddr                    string
 	workDir                       string
 	patchPilotBinary              string
+	patchPilotPolicy              string
+	patchPilotPolicyMode          string
 	agentCommand                  string
 	runtimeConfigFile             string
 	jobRunner                     string
@@ -239,6 +241,10 @@ func runDoctor(stdout, stderr io.Writer, envOverrides map[string]string) int {
 		_, err := os.ReadFile(cfg.RuntimeConfigPath)
 		check("app runtime config file", err)
 	}
+	if strings.TrimSpace(cfg.PatchPilotPolicyPath) != "" {
+		_, err := os.ReadFile(cfg.PatchPilotPolicyPath)
+		check("central patchpilot policy file", err)
+	}
 
 	if errorsFound {
 		return 1
@@ -325,6 +331,8 @@ func addRuntimeConfigFlags(command *cobra.Command, options *runOptions) {
 	flags.StringVar(&options.listenAddr, "listen-addr", "", "HTTP listen address (env: PP_LISTEN_ADDR)")
 	flags.StringVar(&options.workDir, "workdir", "", "Temporary working directory root (env: PP_WORKDIR)")
 	flags.StringVar(&options.patchPilotBinary, "patchpilot-binary", "", "Path to PatchPilot binary (env: PP_PATCHPILOT_BINARY)")
+	flags.StringVar(&options.patchPilotPolicy, "patchpilot-policy", "", "Path to central PatchPilot policy merged with repo policy (env: PP_PATCHPILOT_POLICY)")
+	flags.StringVar(&options.patchPilotPolicyMode, "patchpilot-policy-mode", "", "Central policy layering mode: merge|override (env: PP_PATCHPILOT_POLICY_MODE)")
 	flags.StringVar(&options.agentCommand, "agent-command", "", "External agent command for remediation (env: PP_AGENT_COMMAND)")
 	flags.StringVar(&options.runtimeConfigFile, "runtime-config-file", "", "Path to app runtime config file with oci.mappings/remediation settings (env: PP_GITHUB_APP_CONFIG_FILE)")
 	flags.StringVar(&options.jobRunner, "job-runner", "", "Repo job runner: local|container (env: PP_JOB_RUNNER)")
@@ -370,6 +378,8 @@ func (options runOptions) envOverrides(command *cobra.Command) map[string]string
 	set("listen-addr", "PP_LISTEN_ADDR", options.listenAddr)
 	set("workdir", "PP_WORKDIR", options.workDir)
 	set("patchpilot-binary", "PP_PATCHPILOT_BINARY", options.patchPilotBinary)
+	set("patchpilot-policy", "PP_PATCHPILOT_POLICY", options.patchPilotPolicy)
+	set("patchpilot-policy-mode", "PP_PATCHPILOT_POLICY_MODE", options.patchPilotPolicyMode)
 	set("agent-command", "PP_AGENT_COMMAND", options.agentCommand)
 	if flags.Changed("runtime-config-file") {
 		overrides["PP_GITHUB_APP_CONFIG_FILE"] = options.runtimeConfigFile

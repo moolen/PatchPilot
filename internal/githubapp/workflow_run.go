@@ -68,6 +68,7 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 	if command := strings.TrimSpace(service.cfg.AgentCommand); command != "" {
 		args = append(args, "--agent-command", command)
 	}
+	args = appendPatchPilotPolicyArgs(args, service.cfg)
 	service.log("info", "running patchpilot fix", map[string]interface{}{
 		"owner": owner,
 		"repo":  repo,

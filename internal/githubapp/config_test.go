@@ -255,3 +255,31 @@ func TestLoadConfigFromEnvWithOverridesCanDisableForceReconcile(t *testing.T) {
 		t.Fatalf("ForceReconcileOnStart = true, want false")
 	}
 }
+
+func TestLoadConfigFromEnvParsesPatchPilotPolicySettings(t *testing.T) {
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+	t.Setenv("PP_PATCHPILOT_POLICY", "/etc/patchpilot/central.yaml")
+	t.Setenv("PP_PATCHPILOT_POLICY_MODE", "override")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.PatchPilotPolicyPath != "/etc/patchpilot/central.yaml" {
+		t.Fatalf("PatchPilotPolicyPath = %q", cfg.PatchPilotPolicyPath)
+	}
+	if cfg.PatchPilotPolicyMode != "override" {
+		t.Fatalf("PatchPilotPolicyMode = %q", cfg.PatchPilotPolicyMode)
+	}
+}
+
+func TestLoadConfigFromEnvRejectsInvalidPatchPilotPolicyMode(t *testing.T) {
+	t.Setenv("PP_APP_ID", "123")
+	t.Setenv("PP_PRIVATE_KEY_PEM", "pem")
+	t.Setenv("PP_PATCHPILOT_POLICY_MODE", "invalid")
+
+	if _, err := LoadConfigFromEnv(); err == nil {
+		t.Fatalf("expected error for invalid PP_PATCHPILOT_POLICY_MODE")
+	}
+}

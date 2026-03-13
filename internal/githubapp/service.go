@@ -660,6 +660,7 @@ func (service *Service) runScanWorkflow(ctx context.Context, owner, repo, repoKe
 	}
 
 	args := []string{"scan", "--dir", repoPath, "--untrusted-repo-policy", "--repository-key", repoKey}
+	args = appendPatchPilotPolicyArgs(args, service.cfg)
 	runtimeMappingPath, err := service.materializeRepositoryOCIMapping(repoPath, repoKey)
 	if err != nil {
 		return scanRunResult{}, err

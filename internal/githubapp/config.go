@@ -19,6 +19,8 @@ type Config struct {
 	ListenAddr                     string
 	WorkDir                        string
 	PatchPilotBinary               string
+	PatchPilotPolicyPath           string
+	PatchPilotPolicyMode           string
 	AgentCommand                   string
 	RuntimeConfigPath              string
 	JobRunner                      string
@@ -102,6 +104,8 @@ func LoadConfigFromEnvWithOverrides(overrides map[string]string) (Config, error)
 		ListenAddr:                     firstNonEmpty(strings.TrimSpace(lookup("PP_LISTEN_ADDR")), ":8080"),
 		WorkDir:                        firstNonEmpty(strings.TrimSpace(lookup("PP_WORKDIR")), filepath.Join(os.TempDir(), "patchpilot-app")),
 		PatchPilotBinary:               firstNonEmpty(strings.TrimSpace(lookup("PP_PATCHPILOT_BINARY")), "patchpilot"),
+		PatchPilotPolicyPath:           strings.TrimSpace(lookup("PP_PATCHPILOT_POLICY")),
+		PatchPilotPolicyMode:           firstNonEmpty(strings.ToLower(strings.TrimSpace(lookup("PP_PATCHPILOT_POLICY_MODE"))), "merge"),
 		AgentCommand:                   firstNonEmpty(strings.TrimSpace(lookup("PP_AGENT_COMMAND")), defaultAgentCommand),
 		RuntimeConfigPath:              firstNonEmpty(strings.TrimSpace(lookup("PP_GITHUB_APP_CONFIG_FILE")), strings.TrimSpace(lookup("PP_OCI_MAPPING_FILE"))),
 		JobRunner:                      firstNonEmpty(strings.TrimSpace(lookup("PP_JOB_RUNNER")), "local"),
@@ -142,6 +146,16 @@ func LoadConfigFromEnvWithOverrides(overrides map[string]string) (Config, error)
 	}
 	if cfg.RuntimeConfigPath != "" {
 		cfg.RuntimeConfigPath = filepath.Clean(cfg.RuntimeConfigPath)
+	}
+	if cfg.PatchPilotPolicyPath != "" {
+		cfg.PatchPilotPolicyPath = filepath.Clean(cfg.PatchPilotPolicyPath)
+	}
+	switch cfg.PatchPilotPolicyMode {
+	case "", "merge":
+		cfg.PatchPilotPolicyMode = "merge"
+	case "override":
+	default:
+		return Config{}, fmt.Errorf("PP_PATCHPILOT_POLICY_MODE must be one of: merge, override")
 	}
 
 	cfg.GitHubAPIBaseURL = strings.TrimSpace(lookup("PP_GITHUB_API_BASE_URL"))

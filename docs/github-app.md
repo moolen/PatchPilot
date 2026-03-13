@@ -55,6 +55,8 @@ Common `run` flags:
 - `--runtime-config-file` (`PP_GITHUB_APP_CONFIG_FILE`)
 - `--workdir` (`PP_WORKDIR`)
 - `--patchpilot-binary` (`PP_PATCHPILOT_BINARY`)
+- `--patchpilot-policy` (`PP_PATCHPILOT_POLICY`)
+- `--patchpilot-policy-mode` (`PP_PATCHPILOT_POLICY_MODE`)
 - `--agent-command` (`PP_AGENT_COMMAND`)
 - `--job-runner`, `--job-container-runtime`, `--job-container-image`, `--job-container-binary`, `--job-container-network`
 - `--listen-addr`, `--metrics-path`
@@ -84,6 +86,8 @@ Common optional settings:
 - `PP_GITHUB_APP_CONFIG_FILE` or `PP_OCI_MAPPING_FILE`: operator-managed YAML file for external OCI mappings (`oci.mappings`) and optional app remediation settings.
 - `PP_WORKDIR`: temporary working directory root.
 - `PP_PATCHPILOT_BINARY`: path to the PatchPilot binary.
+- `PP_PATCHPILOT_POLICY`: optional central PatchPilot policy file path passed to all `scan`/`fix` invocations as `--policy`.
+- `PP_PATCHPILOT_POLICY_MODE`: optional central policy layering mode passed to all `scan`/`fix` invocations as `--policy-mode` (`merge` or `override`). Defaults to `merge`.
 - `PP_AGENT_COMMAND`: external agent command used for container OS patching and CI failure triage/repair.
 - `PP_JOB_RUNNER`: `local` or `container`. Defaults to `local`.
 - `PP_JOB_CONTAINER_RUNTIME`: container runtime for repo jobs when `PP_JOB_RUNNER=container`. Defaults to `docker`.

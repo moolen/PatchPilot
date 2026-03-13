@@ -1,6 +1,7 @@
 package githubapp
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,7 +47,7 @@ func TestContainerPatchPilotRunnerInvocation(t *testing.T) {
 func TestRewritePatchPilotArgsForContainer(t *testing.T) {
 	repoPath := t.TempDir()
 
-	args := rewritePatchPilotArgsForContainer(repoPath, []string{
+	args, mounts := rewritePatchPilotArgsForContainer(repoPath, []string{
 		"fix",
 		"--dir=" + repoPath,
 		"--enable-agent=false",
@@ -55,11 +56,61 @@ func TestRewritePatchPilotArgsForContainer(t *testing.T) {
 		"--other",
 	})
 
+	if len(mounts) != 0 {
+		t.Fatalf("expected no extra mounts, got %#v", mounts)
+	}
 	joined := strings.Join(args, " ")
 	if strings.Count(joined, containerWorkspacePath) != 2 {
 		t.Fatalf("expected two rewritten repo paths, got %q", joined)
 	}
 	if strings.Contains(joined, repoPath) {
 		t.Fatalf("expected host repo path to be rewritten, got %q", joined)
+	}
+}
+
+func TestRewritePatchPilotArgsForContainerPolicyOutsideRepoAddsMount(t *testing.T) {
+	repoPath := t.TempDir()
+	policyDir := t.TempDir()
+	policyPath := filepath.Join(policyDir, "central.yaml")
+
+	args, mounts := rewritePatchPilotArgsForContainer(repoPath, []string{
+		"scan",
+		"--dir",
+		repoPath,
+		"--policy",
+		policyPath,
+		"--policy-mode",
+		"merge",
+	})
+
+	if len(mounts) != 1 {
+		t.Fatalf("expected one extra mount, got %#v", mounts)
+	}
+	expectedContainerPolicyPath := "/workspace/policy/central.yaml"
+	if mounts[0] != policyPath+":"+expectedContainerPolicyPath+":ro" {
+		t.Fatalf("unexpected mount spec: %q", mounts[0])
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--policy "+expectedContainerPolicyPath) {
+		t.Fatalf("expected policy path rewrite, got %q", joined)
+	}
+}
+
+func TestRewritePatchPilotArgsForContainerPolicyInsideRepoUsesRepoMount(t *testing.T) {
+	repoPath := t.TempDir()
+	policyPath := filepath.Join(repoPath, "configs", "central.yaml")
+
+	args, mounts := rewritePatchPilotArgsForContainer(repoPath, []string{
+		"scan",
+		"--dir",
+		repoPath,
+		"--policy=" + policyPath,
+	})
+	if len(mounts) != 0 {
+		t.Fatalf("expected no extra mounts, got %#v", mounts)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--policy="+containerWorkspacePath+"/configs/central.yaml") {
+		t.Fatalf("expected repo-local policy path rewrite, got %q", joined)
 	}
 }

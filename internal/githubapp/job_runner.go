@@ -88,18 +88,28 @@ func (runner containerPatchPilotRunner) invocation(repoPath string, patchpilotAr
 		"-e", "TMPDIR=/tmp",
 		"-e", "GIT_TERMINAL_PROMPT=0",
 		"-v", absRepoPath + ":" + containerWorkspacePath + ":rw",
-		image,
-		binary,
 	}
-	args = append(args, rewritePatchPilotArgsForContainer(absRepoPath, patchpilotArgs)...)
+	rewrittenArgs, extraMounts := rewritePatchPilotArgsForContainer(absRepoPath, patchpilotArgs)
+	for _, mount := range extraMounts {
+		args = append(args, "-v", mount)
+	}
+	args = append(args, image, binary)
+	args = append(args, rewrittenArgs...)
 	return runtime, args, nil
 }
 
-func rewritePatchPilotArgsForContainer(repoPath string, patchpilotArgs []string) []string {
+func rewritePatchPilotArgsForContainer(repoPath string, patchpilotArgs []string) ([]string, []string) {
 	if len(patchpilotArgs) == 0 {
-		return nil
+		return nil, nil
 	}
 	rewritten := make([]string, 0, len(patchpilotArgs))
+	mounts := map[string]struct{}{}
+	addMount := func(spec string) {
+		if strings.TrimSpace(spec) == "" {
+			return
+		}
+		mounts[spec] = struct{}{}
+	}
 	for i := 0; i < len(patchpilotArgs); i++ {
 		arg := patchpilotArgs[i]
 		switch {
@@ -109,11 +119,25 @@ func rewritePatchPilotArgsForContainer(repoPath string, patchpilotArgs []string)
 		case strings.HasPrefix(arg, "--dir="):
 			value := strings.TrimPrefix(arg, "--dir=")
 			rewritten = append(rewritten, "--dir="+rewriteRepoPathArg(repoPath, value))
+		case arg == "--policy" && i+1 < len(patchpilotArgs):
+			value, mount := rewritePolicyPathArg(repoPath, patchpilotArgs[i+1])
+			rewritten = append(rewritten, arg, value)
+			addMount(mount)
+			i++
+		case strings.HasPrefix(arg, "--policy="):
+			value := strings.TrimPrefix(arg, "--policy=")
+			rewrittenValue, mount := rewritePolicyPathArg(repoPath, value)
+			rewritten = append(rewritten, "--policy="+rewrittenValue)
+			addMount(mount)
 		default:
 			rewritten = append(rewritten, arg)
 		}
 	}
-	return rewritten
+	extraMounts := make([]string, 0, len(mounts))
+	for spec := range mounts {
+		extraMounts = append(extraMounts, spec)
+	}
+	return rewritten, extraMounts
 }
 
 func rewriteRepoPathArg(repoPath, value string) string {
@@ -121,6 +145,45 @@ func rewriteRepoPathArg(repoPath, value string) string {
 		return containerWorkspacePath
 	}
 	return value
+}
+
+func rewritePolicyPathArg(repoPath, value string) (string, string) {
+	if strings.TrimSpace(value) == "" || !filepath.IsAbs(value) {
+		return value, ""
+	}
+	if rewritten, ok := rewritePathWithinRepoForContainer(repoPath, value); ok {
+		return rewritten, ""
+	}
+	containerPath := "/workspace/policy/" + filepath.Base(value)
+	return containerPath, value + ":" + containerPath + ":ro"
+}
+
+func rewritePathWithinRepoForContainer(repoPath, value string) (string, bool) {
+	if strings.TrimSpace(repoPath) == "" || strings.TrimSpace(value) == "" {
+		return "", false
+	}
+	absRepoPath, err := filepath.Abs(repoPath)
+	if err != nil {
+		return "", false
+	}
+	absValue, err := filepath.Abs(value)
+	if err != nil {
+		return "", false
+	}
+	if samePath(absRepoPath, absValue) {
+		return containerWorkspacePath, true
+	}
+	rel, err := filepath.Rel(absRepoPath, absValue)
+	if err != nil {
+		return "", false
+	}
+	if rel == "." {
+		return containerWorkspacePath, true
+	}
+	if strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "", false
+	}
+	return filepath.ToSlash(filepath.Join(containerWorkspacePath, rel)), true
 }
 
 func samePath(left, right string) bool {
