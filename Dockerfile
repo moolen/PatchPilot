@@ -8,7 +8,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/patchpilot ./cmd/patchpilot
 
-FROM alpine:3.22
+FROM alpine:3.23.3
 
 SHELL ["/bin/sh", "-euxo", "pipefail", "-c"]
 RUN apk add --no-cache ca-certificates git bash curl tar
