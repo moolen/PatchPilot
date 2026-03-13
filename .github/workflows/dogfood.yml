@@ -107,9 +107,13 @@ jobs:
 
           for attempt in $(seq 1 60); do
             set +e
-            gh pr checks "$pr_number" --required
+            output=$(gh pr checks "$pr_number" --required 2>&1)
             status=$?
             set -e
+
+            if [[ -n "$output" ]]; then
+              echo "$output"
+            fi
 
             if [[ "$status" -eq 0 ]]; then
               echo "Checks passed, merging PR #$pr_number"
@@ -117,13 +121,19 @@ jobs:
               exit 0
             fi
 
+            if [[ "$status" -eq 8 || "$output" == *"no checks reported"* ]]; then
+              echo "Checks not ready for PR #$pr_number yet (attempt $attempt/60)"
+              sleep 30
+              continue
+            fi
+
             if [[ "$status" -eq 1 ]]; then
               echo "Required checks failed for PR #$pr_number"
               exit 1
             fi
 
-            echo "Checks still pending for PR #$pr_number (attempt $attempt/60)"
-            sleep 30
+            echo "Unexpected gh pr checks exit code $status for PR #$pr_number"
+            exit "$status"
           done
 
           echo "Timed out waiting for required checks on PR #$pr_number"
