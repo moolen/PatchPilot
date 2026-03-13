@@ -36,9 +36,9 @@ func TestFixIdempotency(t *testing.T) {
 			files: map[string]string{
 				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 			},
-			expectedExitCode: 23,
+			expectedExitCode: 0,
 			expectedAfter:    1,
-			expectedStatus:   "failed",
+			expectedStatus:   "success",
 		},
 		{
 			name: "npm idempotent",

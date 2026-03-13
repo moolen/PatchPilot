@@ -352,9 +352,6 @@ func runFix(ctx context.Context, repo string, cfg *policy.Config, options fixOpt
 	if agentSucceeded {
 		return nil
 	}
-	if summary.After > 0 {
-		return vulnsRemainError(summary.After)
-	}
 	if options.EnableAgent && len(deterministicIssues) > 0 {
 		return wrapWithExitCode(ExitCodePatchFailed, fmt.Errorf("deterministic patching failed and agent loop did not resolve all issues"))
 	}

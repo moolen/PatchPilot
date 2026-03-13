@@ -205,7 +205,7 @@ func TestFixScenarios(t *testing.T) {
 			files: map[string]string{
 				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 			},
-			expectedExitCode: 23,
+			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
 			expectNotContains: map[string]string{
 				"Dockerfile": "apt-get install --only-upgrade",
@@ -216,7 +216,7 @@ func TestFixScenarios(t *testing.T) {
 			files: map[string]string{
 				"Dockerfile": "# patchpilot:apk-busybox\nFROM alpine\nRUN echo baseline\n",
 			},
-			expectedExitCode: 23,
+			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
 			expectNotContains: map[string]string{
 				"Dockerfile": "apk upgrade --no-cache",
@@ -246,7 +246,7 @@ func TestFixScenarios(t *testing.T) {
 			files: map[string]string{
 				"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 			},
-			expectedExitCode: 23,
+			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
 			expectNotContains: map[string]string{
 				"Dockerfile": "apt-get install --only-upgrade",
@@ -265,7 +265,7 @@ func TestFixScenarios(t *testing.T) {
 					Tags:       []string{"1.21.0-alpine", "1.21.1-alpine"},
 				},
 			},
-			expectedExitCode: 23,
+			expectedExitCode: 0,
 			expectSummary:    &summarySnapshot{Before: 1, Fixed: 0, After: 1},
 			expectContains: map[string]string{
 				"Dockerfile": "FROM golang:1.21.0-alpine",
@@ -405,11 +405,11 @@ func TestScanScenarios(t *testing.T) {
 		expectFindings   int
 	}{
 		{
-			name: "scan exits 23 when vulnerabilities remain",
+			name: "scan succeeds when vulnerabilities remain",
 			files: map[string]string{
 				"go.mod": "module example.com/service\n\ngo 1.22\n\nrequire github.com/example/lib v1.0.0\n",
 			},
-			expectedExitCode: 23,
+			expectedExitCode: 0,
 			expectFindings:   1,
 		},
 		{
@@ -464,14 +464,14 @@ func TestVerifyScenarios(t *testing.T) {
 		}
 	})
 
-	t.Run("verify returns 23 when vulnerabilities remain", func(t *testing.T) {
+	t.Run("fix succeeds and verify returns 23 when vulnerabilities remain", func(t *testing.T) {
 		repo := newScenarioRepo(t, map[string]string{
 			"Dockerfile": "# patchpilot:deb-openssl\nFROM debian\nRUN echo baseline\n",
 		})
 
 		fixResult := runBinary(t, env, "--dir", repo, "fix", "--enable-agent=false")
-		if fixResult.exitCode != 23 {
-			t.Fatalf("expected fix exit code 23, got %d\nstdout:\n%s\nstderr:\n%s", fixResult.exitCode, fixResult.stdout, fixResult.stderr)
+		if fixResult.exitCode != 0 {
+			t.Fatalf("expected fix to succeed, got %d\nstdout:\n%s\nstderr:\n%s", fixResult.exitCode, fixResult.stdout, fixResult.stderr)
 		}
 
 		verifyResult := runBinary(t, env, "--dir", repo, "verify")

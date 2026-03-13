@@ -51,8 +51,5 @@ func runScan(ctx context.Context, repo string, cfg *policy.Config, jsonOutput bo
 	report.PrintCurrent(os.Stdout, repo, vulnReport)
 	tracker.endStageSuccess(stage, nil)
 
-	if len(vulnReport.Findings) > 0 {
-		return vulnsRemainError(len(vulnReport.Findings))
-	}
 	return nil
 }
