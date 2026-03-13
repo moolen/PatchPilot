@@ -338,6 +338,63 @@ func TestSchedulerCycleReconcilesMergedPullRequestMetrics(t *testing.T) {
 	assertHistogramCount(t, service.metrics, "patchpilot_remediation_time_to_merge_seconds", nil, 1)
 }
 
+func TestSchedulerCyclePassesOCIMappingFileToScanAndFix(t *testing.T) {
+	temp := t.TempDir()
+	remoteRoot, owner, repo := setupRemoteRepo(t, temp)
+	scanCountPath := filepath.Join(temp, "scan-count.txt")
+	invocationsPath := filepath.Join(temp, "patchpilot-invocations.log")
+	patchpilotPath := setupSchedulerFakePatchPilotWithInvocationLog(t, temp, scanCountPath, false, invocationsPath)
+
+	fakeAPI := newFakeSchedulerGitHubAPI(owner, repo)
+	fakeAPI.policyContent = "version: 1\nscan:\n  cron: \"* * * * *\"\n  timezone: UTC\n"
+	server := httptest.NewServer(fakeAPI)
+	defer server.Close()
+
+	service := newSchedulerTestService(t, temp, remoteRoot, patchpilotPath, server.URL)
+
+	runtimeConfigPath := filepath.Join(temp, "runtime-oci.yaml")
+	runtimeConfig := "oci:\n" +
+		"  mappings:\n" +
+		"    - repo: " + owner + "/" + repo + "\n" +
+		"      images:\n" +
+		"        - source: ghcr.io/acme/demo\n" +
+		"          dockerfiles:\n" +
+		"            - Dockerfile\n"
+	if err := os.WriteFile(runtimeConfigPath, []byte(runtimeConfig), 0o644); err != nil {
+		t.Fatalf("write runtime config: %v", err)
+	}
+	loadedRuntimeConfig, err := LoadAppRuntimeConfig(runtimeConfigPath)
+	if err != nil {
+		t.Fatalf("load runtime config: %v", err)
+	}
+	service.setRuntimeConfig(loadedRuntimeConfig)
+
+	service.runSchedulerCycle(context.Background())
+
+	invocations, err := os.ReadFile(invocationsPath)
+	if err != nil {
+		t.Fatalf("read invocation log: %v", err)
+	}
+	hasOCIFlag := func(command string) bool {
+		for _, line := range strings.Split(strings.TrimSpace(string(invocations)), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" {
+				continue
+			}
+			if strings.HasPrefix(trimmed, command+" ") && strings.Contains(trimmed, "--oci-mapping-file") {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasOCIFlag("scan") {
+		t.Fatalf("expected scan invocation with --oci-mapping-file, got:\n%s", string(invocations))
+	}
+	if !hasOCIFlag("fix") {
+		t.Fatalf("expected fix invocation with --oci-mapping-file, got:\n%s", string(invocations))
+	}
+}
+
 func newSchedulerTestService(t *testing.T, temp, remoteRoot, patchpilotPath, serverURL string) *Service {
 	t.Helper()
 
@@ -375,6 +432,10 @@ func generateTestPrivateKeyPEM(t *testing.T) string {
 }
 
 func setupSchedulerFakePatchPilot(t *testing.T, root, scanCountPath string, artifactOnly bool) string {
+	return setupSchedulerFakePatchPilotWithInvocationLog(t, root, scanCountPath, artifactOnly, "")
+}
+
+func setupSchedulerFakePatchPilotWithInvocationLog(t *testing.T, root, scanCountPath string, artifactOnly bool, invocationLogPath string) string {
 	t.Helper()
 	binDir := filepath.Join(root, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
@@ -391,6 +452,12 @@ func setupSchedulerFakePatchPilot(t *testing.T, root, scanCountPath string, arti
 
 	script := "#!/bin/sh\nset -eu\n" +
 		"command=\"$1\"\nshift\n" +
+		func() string {
+			if strings.TrimSpace(invocationLogPath) == "" {
+				return ""
+			}
+			return "echo \"$command $*\" >> \"" + invocationLogPath + "\"\n"
+		}() +
 		"dir=\"\"\n" +
 		"while [ \"$#\" -gt 0 ]; do\n" +
 		"  case \"$1\" in\n" +

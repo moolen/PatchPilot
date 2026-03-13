@@ -69,6 +69,13 @@ func (service *Service) runFixWorkflow(ctx context.Context, owner, repo, repoKey
 		args = append(args, "--agent-command", command)
 	}
 	args = appendPatchPilotPolicyArgs(args, service.cfg)
+	runtimeMappingPath, err := service.materializeRepositoryOCIMapping(repoPath, repoKey)
+	if err != nil {
+		return fixRunResult{}, err
+	}
+	if strings.TrimSpace(runtimeMappingPath) != "" {
+		args = append(args, "--oci-mapping-file", runtimeMappingPath)
+	}
 	service.log("info", "running patchpilot fix", map[string]interface{}{
 		"owner": owner,
 		"repo":  repo,
